@@ -40,14 +40,14 @@ Human-in-the-loop incident copilot, natural-language status-history query, and w
 
 | Area | Choice |
 |---|---|
-| Runtime | TypeScript on Node >= 24 with native type-stripping; no build step or transpiler |
+| Runtime | TypeScript on Node >= 24, run through `tsx` in development and compiled with `tsc` + `resolve-tspaths` for production |
 | Framework | Fastify 5, Awilix DI, Pino logs, Clean Architecture / DDD / CQRS / vertical slices |
 | Data | PostgreSQL, raw SQL through `postgres.js`, repository ports/adapters, DBMate migrations and seeds; status values stored as `text` with `CHECK` constraints |
 | API | REST under `/api` with TypeBox schemas and Swagger at `/api-docs`; GraphQL through Mercurius |
 | Realtime | Public REST + SSE; admin GraphQL subscriptions; Postgres `LISTEN/NOTIFY` for cross-process fanout |
 | Auth | Better Auth as a self-hosted Fastify plugin, outside the CQRS bus |
 | Testing | `node:test` unit/integration specs beside source, Cucumber/Gherkin E2E, k6 load tests |
-| Tooling | pnpm monorepo, Biome lint/format, OpenTelemetry off by default |
+| Tooling | pnpm, single package (not a workspace), Biome lint/format, OpenTelemetry off by default |
 | Packaging | Multi-stage Alpine Dockerfile, non-root runtime, healthcheck, Docker Compose |
 
 ## Architecture at a glance
@@ -59,12 +59,12 @@ For the full architecture, see [ARCHITECTURE.md](./docs/genesis/ARCHITECTURE.md)
 ## Quickstart
 
 ```bash
-npx degit marcoturi/fastify-boilerplate watch-dog
-cd watch-dog
+git clone https://github.com/sanaullahmohammed/watchdog.git
+cd watchdog
 
 corepack enable
 pnpm install
-pnpm create:env
+pnpm run create:env
 
 docker compose up
 ```
@@ -78,18 +78,18 @@ Use this variant when developing the API process outside Compose while still usi
 ```bash
 docker compose up postgres mailpit migrate
 
-# In a separate shell, after confirming the scaffolded script name:
-DATABASE_URL=postgres://watchdog_app:watchdog_app_dev_password@localhost:5432/watchdog \
+# In a separate shell:
+DATABASE_URL=postgres://watchdog_app:watchdog_app_dev_password@localhost:5432/watchdog?sslmode=disable \
 BETTER_AUTH_URL=http://localhost:3000 \
-pnpm run dev:api
+pnpm run dev
 ```
 
-> TODO(human): Confirm whether `pnpm create:env`, `pnpm run dev:api`, `pnpm dbmate up`, and the final Compose command names are the exact script names inherited from the boilerplate.
+Confirmed against the scaffold: `pnpm run create:env`, `pnpm run dev`, `pnpm run build`, `pnpm run start:prod`, `pnpm run check`, `pnpm run test:unit`, `pnpm run test:e2e`, `pnpm run test:k6:smoke`, and `pnpm run db:migrate` (DBMate reads `DBMATE_DATABASE_URL`, not `DATABASE_URL`). `dev:api`, `start:api`, and `start:worker` do not exist yet; they arrive with the two-entrypoint split in phase 1.
 
 ## Repo layout
 
 ```text
-watch-dog/
+watchdog/
 ├── .github/
 │   └── workflows/
 ├── db/
@@ -102,10 +102,12 @@ watch-dog/
 │       ├── ARCHITECTURE.md
 │       ├── DOMAIN.md
 │       └── ROADMAP.md
+├── biome.json
 ├── docker-compose.yml
 ├── Dockerfile
 ├── package.json
 ├── pnpm-lock.yaml
+├── pnpm-workspace.yaml
 ├── README.md
 ├── src/
 │   ├── modules/
@@ -119,12 +121,14 @@ watch-dog/
 │   │   └── status-page/
 │   └── ...
 ├── tests/
+│   ├── load/          # k6 smoke + load profiles
+│   ├── support/       # Cucumber world and hooks
 │   └── ...
 ```
 
 `auth` is not a domain module. It is implemented as a Better Auth Fastify plugin plus CQRS context middleware.
 
-> TODO(human): Confirm the exact boilerplate top-level folders after scaffolding.
+Confirmed after scaffolding. `pnpm-workspace.yaml` carries pnpm >= 12 settings only; it declares no `packages:` key, so this stays a single package.
 
 ## Scope & non-goals
 

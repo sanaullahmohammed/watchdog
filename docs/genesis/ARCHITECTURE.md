@@ -147,11 +147,16 @@ WatchDog builds one Docker image and runs two commands from it:
 The image is shared so dependency graph, configuration, migrations, and module code remain identical. Runtime behavior is selected by command, for example:
 
 ```text
-node src/main.ts api
-node src/main.ts worker
+# development
+tsx src/index.ts api
+tsx src/index.ts worker
+
+# production, after `pnpm run build`
+node ./dist/index.js api
+node ./dist/index.js worker
 ```
 
-> TODO(human): confirm the exact Node 24 native type-stripping CLI flags used by the selected boilerplate. Node >= 23.6 strips types by default, so explicit experimental flags may be unnecessary.
+Resolved: the project keeps the boilerplate's `tsx` (development) and `tsc` + `resolve-tspaths` (production) toolchain rather than Node 24 native type-stripping. Native stripping cannot resolve the `@/*` tsconfig path alias at runtime and forbids `enum`, which `src/config/env.ts` uses for `NodeEnv` and `LogLevel`. The Dockerfile therefore carries a build stage.
 
 The in-process event bus cannot be the cross-process backplane because `api` and `worker` are separate OS processes. A domain event emitted in the worker after a monitor threshold breach cannot reach SSE clients connected to the API process through memory. Likewise, an incident update created through the API cannot trigger worker-side notification dispatch in another process through an in-memory bus.
 
@@ -741,7 +746,9 @@ services:
       WATCHDOG_NOTIFY_CHANNEL: watchdog_events
       PUBLIC_BASE_URL: http://localhost:3000
       LOG_LEVEL: info
-      # > TODO(human): confirm final env names used by the boilerplate config loader.
+      # Confirmed: the config loader reads DATABASE_URL, LOG_LEVEL, NODE_ENV,
+      # HOST and PORT. DBMate reads DBMATE_DATABASE_URL separately, which is
+      # what keeps the owner/app role split expressible. See .env.example.
     ports:
       - "3000:3000"
     depends_on:
@@ -750,7 +757,7 @@ services:
       mailpit:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/live"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -813,6 +820,7 @@ on:
   pull_request:
   push:
     branches:
+      - master
       - main
 
 jobs:
@@ -837,20 +845,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+      - run: corepack enable
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm check
+      - run: pnpm run check
 
-      - run: pnpm test:unit
+      - run: pnpm run test:unit
 
       - name: Create app database role
         run: |
@@ -886,7 +892,14 @@ jobs:
       - run: docker build -t watch-dog:ci .
 ```
 
-> TODO(human): align script names with the final `package.json` from the scaffolded boilerplate.
+Script names confirmed against the scaffolded `package.json`: `pnpm run check` (Biome format + Biome lint + `tsc --noEmit` + dependency-cruiser),
+`pnpm run test:unit`, `pnpm run test:e2e`, `pnpm run test:k6:smoke`, `pnpm run db:migrate`.
+The `create app database role`, `dbmate up`, integration, E2E, k6 and docker-build steps above are the target shape; the committed
+`.github/workflows/ci.yml` currently runs only install, `check`, and `test:unit`, and grows per ROADMAP phase as the things they verify exist.
+
+Two CI details that differ from the sketch above and are already committed: `corepack enable` plus `node-version-file: .nvmrc` replaces
+`pnpm/action-setup`, because `packageManager` is pinned in `package.json`; and pnpm >= 12 reads settings from `pnpm-workspace.yaml`
+(`allowBuilds`) rather than a `pnpm` key in `package.json`, which the runner needs in order to build `esbuild`.
 
 CI does not deploy. Deployment is explicitly outside v1 genesis scope.
 

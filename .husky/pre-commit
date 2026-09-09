@@ -1,0 +1,4 @@
+pnpm lint-staged --allow-empty
+pnpm type:check
+pnpm deps:validate
+pnpm test
