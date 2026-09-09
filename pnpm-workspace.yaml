@@ -1,0 +1,4 @@
+# Settings file for pnpm >= 12. This project is a single package, not a
+# workspace, so no `packages:` key is declared here.
+allowBuilds:
+  esbuild: true

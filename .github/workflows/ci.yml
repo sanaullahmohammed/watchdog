@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Static checks (Biome, tsc, dependency-cruiser)
+        run: pnpm run check
+
+      - name: Unit tests
+        run: pnpm run test:unit
+
+  # Added per ROADMAP phase, as the things they verify come into existence:
+  #   phase 1 - watchdog_app role creation, dbmate up, RLS integration tests
+  #   phase 3 - Cucumber E2E against the Postgres service container
+  #   phase 5 - k6 smoke (`pnpm run test:k6:smoke`) against a booted api
+  #   phase 6 - docker build validation for the shared api/worker image
+  # Full target shape: docs/genesis/ARCHITECTURE.md section 9.
