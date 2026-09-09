@@ -1260,6 +1260,6 @@ Rationale: the status ladders are tunable. A `CHECK` constraint update is a one-
 ## Cross-links
 
 - Runtime architecture, CQRS middleware, API/worker entrypoints, and real-time topology: [ARCHITECTURE.md](./ARCHITECTURE.md)
-- Product overview, stack table, quickstart, scripts, and repo layout: [README.md](./README.md)
+- Product overview, stack table, quickstart, scripts, and repo layout: [README.md](../../README.md)
 - Agentic-AI product spec, provider-port contract, and human-in-the-loop gates: [AI.md](./AI.md)
 - v1 definition of done, roadmap items, and non-goals: [ROADMAP.md](./ROADMAP.md)

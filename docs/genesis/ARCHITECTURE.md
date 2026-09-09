@@ -895,6 +895,6 @@ CI does not deploy. Deployment is explicitly outside v1 genesis scope.
 ## Cross-links
 
 - Domain model, entity relationships, RLS policy detail, state machines, status resolution, monitoring persistence, retention, and event catalog: [DOMAIN.md](./DOMAIN.md)
-- Product overview, stack table, quickstart, scripts, and repo layout: [README.md](./README.md)
+- Product overview, stack table, quickstart, scripts, and repo layout: [README.md](../../README.md)
 - Agentic-AI product spec, provider port, prompt/IO shapes, and human-in-the-loop gates: [AI.md](./AI.md)
 - v1 definition of done, phased milestones, roadmap, and non-goals: [ROADMAP.md](./ROADMAP.md)
