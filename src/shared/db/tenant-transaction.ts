@@ -5,9 +5,19 @@ import sql from '@/shared/db/postgres';
  * Tenant scoping for every repository operation.
  *
  * `SET LOCAL` is transaction-scoped, so tenant-scoped SQL must run inside a
- * transaction or the GUC is simply absent. That failure is silent but safe:
- * `current_setting(..., true)` yields NULL when unset, and `org_id = NULL` is
- * NULL, so an unscoped query returns no rows rather than every row.
+ * transaction or the GUC is absent. That failure is silent but safe, though not
+ * for the reason it first appears.
+ *
+ * `current_setting(..., true)` yields NULL only on a connection that has never
+ * set the GUC. Once any transaction has set it, the value reverts to the
+ * setting's reset value, which for a custom GUC never given a global value is
+ * the empty string. Under a connection pool either is possible, so the observed
+ * value depends on pool state.
+ *
+ * Both fail closed - `org_id = NULL` is NULL, `org_id = ''` is false, and
+ * neither matches a row - but the distinction is a rule rather than a footnote:
+ * a policy must never treat unset as unrestricted. No `is null` branch, no
+ * `coalesce` over the GUC.
  *
  * See ARCHITECTURE.md section 6 and DOMAIN.md's GUC contract.
  */
