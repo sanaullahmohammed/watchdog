@@ -42,12 +42,12 @@ function captureCookie(headers: Record<string, unknown>): string {
   return values.map((value) => value.split(';')[0]).join('; ');
 }
 
-describe('Better Auth over HTTP', () => {
-  before(async () => {
-    app = await buildApp({ logger: false });
-    await app.ready();
-  });
+before(async () => {
+  app = await buildApp({ logger: false });
+  await app.ready();
+});
 
+describe('Better Auth over HTTP', () => {
   after(async () => {
     if (orgId) {
       await sql`delete from "organization" where "id" = ${orgId}`;
@@ -55,8 +55,6 @@ describe('Better Auth over HTTP', () => {
     if (userId) {
       await sql`delete from "user" where "id" = ${userId}`;
     }
-    await app.close();
-    await sql.end({ timeout: 5 });
   });
 
   it('signs a new user up and issues a session cookie', async () => {
@@ -158,4 +156,138 @@ describe('Better Auth over HTTP', () => {
       where "organizationId" = ${orgId} and "userId" = ${userId}
     `;
   });
+});
+
+/**
+ * Story 1.1 — Switch the active organization.
+ *
+ * Closes the clause of FR1 that had no coverage: switching is the only path
+ * that writes `session.activeOrganizationId`, which every later epic reads to
+ * decide which tenant a request belongs to.
+ */
+describe('Switching the active organization', () => {
+  const switcher = `switch-${randomBytes(4).toString('hex')}`;
+  const switcherEmail = `${switcher}@example.test`;
+  const outsiderEmail = `outsider-${switcher}@example.test`;
+
+  let cookie = '';
+  let outsiderCookie = '';
+  let switcherUserId = '';
+  let outsiderUserId = '';
+  let firstOrgId = '';
+  let secondOrgId = '';
+  let foreignOrgId = '';
+
+  async function signUp(email: string): Promise<string> {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-up/email',
+      payload: { email, password, name: email },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    return captureCookie(response.headers as Record<string, unknown>);
+  }
+
+  async function createOrg(
+    sessionCookie: string,
+    slug: string,
+  ): Promise<string> {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/auth/organization/create',
+      headers: { cookie: sessionCookie, origin: ORIGIN },
+      payload: { name: slug, slug },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    return JSON.parse(response.body).id;
+  }
+
+  function setActive(sessionCookie: string, organizationId: string) {
+    return app.inject({
+      method: 'POST',
+      url: '/api/auth/organization/set-active',
+      headers: { cookie: sessionCookie, origin: ORIGIN },
+      payload: { organizationId },
+    });
+  }
+
+  async function activeOrganizationIdOf(userId: string) {
+    const rows = await sql<{ activeOrganizationId: string | null }[]>`
+      select "activeOrganizationId" from "session" where "userId" = ${userId}
+    `;
+    return rows[0]?.activeOrganizationId ?? null;
+  }
+
+  before(async () => {
+    cookie = await signUp(switcherEmail);
+    [{ id: switcherUserId }] = await sql<{ id: string }[]>`
+      select "id" from "user" where "email" = ${switcherEmail}
+    `;
+    firstOrgId = await createOrg(cookie, `${switcher}-first`);
+    secondOrgId = await createOrg(cookie, `${switcher}-second`);
+
+    // An organization this operator has no membership of.
+    outsiderCookie = await signUp(outsiderEmail);
+    [{ id: outsiderUserId }] = await sql<{ id: string }[]>`
+      select "id" from "user" where "email" = ${outsiderEmail}
+    `;
+    foreignOrgId = await createOrg(outsiderCookie, `${switcher}-foreign`);
+  });
+
+  after(async () => {
+    await sql`
+      delete from "organization"
+      where "id" in (${firstOrgId}, ${secondOrgId}, ${foreignOrgId})
+    `;
+    await sql`
+      delete from "user" where "id" in (${switcherUserId}, ${outsiderUserId})
+    `;
+  });
+
+  it('updates the session and the resolved context when switching', async () => {
+    const response = await setActive(cookie, firstOrgId);
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(await activeOrganizationIdOf(switcherUserId), firstOrgId);
+    assert.deepEqual(await resolveOrganizationContext({ cookie }), {
+      userId: switcherUserId,
+      orgId: firstOrgId,
+      orgRole: 'owner',
+    });
+
+    const back = await setActive(cookie, secondOrgId);
+
+    assert.equal(back.statusCode, 200, back.body);
+    assert.equal(await activeOrganizationIdOf(switcherUserId), secondOrgId);
+    assert.deepEqual(await resolveOrganizationContext({ cookie }), {
+      userId: switcherUserId,
+      orgId: secondOrgId,
+      orgRole: 'owner',
+    });
+  });
+
+  it('refuses to activate an organization the operator does not belong to', async () => {
+    await setActive(cookie, secondOrgId);
+
+    const response = await setActive(cookie, foreignOrgId);
+
+    // Better Auth answers 403 USER_IS_NOT_A_MEMBER_OF_THE_ORGANIZATION.
+    // Asserted precisely rather than as "not 200", so that a 500 from some
+    // unrelated fault cannot masquerade as an authorization refusal.
+    assert.equal(response.statusCode, 403, response.body);
+
+    // The important half: the refusal must not leave the session pointing at it.
+    assert.notEqual(await activeOrganizationIdOf(switcherUserId), foreignOrgId);
+
+    const context = await resolveOrganizationContext({ cookie });
+    assert.notEqual(context?.orgId, foreignOrgId);
+  });
+});
+
+// File-level lifecycle. Every suite in this file shares one Fastify instance
+// and the postgres.js singleton, so both are opened once and closed once here.
+// Closing either inside a suite's teardown breaks whichever suite runs next.
+after(async () => {
+  await app.close();
+  await sql.end({ timeout: 5 });
 });
