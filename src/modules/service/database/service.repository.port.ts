@@ -12,7 +12,30 @@ import type { TenantTransaction } from '@/shared/db/tenant-transaction';
  * nothing. Every method here takes the transaction instead, so a caller cannot
  * reach tenant data without having gone through `withTenantTransaction`.
  */
+/**
+ * The two independent axes of exclusion.
+ *
+ * `archived` and `is_public` are separate concerns: a live service can be
+ * hidden from the public page without being retired, and an archived one is
+ * absent from every surface. Conflating them is how a non-public service leaks
+ * onto a public read model.
+ */
+export interface ListServicesFilter {
+  /**
+   * Admin surfaces only, and ignored when `publicOnly` is set. It widens an
+   * admin list so an archived service can be found and restored; it must never
+   * reopen a public surface.
+   */
+  includeArchived?: boolean;
+  /** Restricts to `is_public`. Set when composing a public read model. */
+  publicOnly?: boolean;
+}
+
 export interface ServiceRepository {
+  list(
+    tx: TenantTransaction,
+    filter: ListServicesFilter,
+  ): Promise<ServiceEntity[]>;
   insert(tx: TenantTransaction, service: ServiceEntity): Promise<void>;
   /** Returns the updated entity, or undefined when the row is out of scope. */
   update(
