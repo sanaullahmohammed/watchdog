@@ -702,6 +702,20 @@ Two consequences worth stating plainly:
 
 RBAC v1 uses Better Auth's built-in organization roles: `owner`, `admin`, and `member`. All three can perform v1 write actions. Finer editor/viewer roles are roadmap.
 
+
+### 7.1 REST and GraphQL parity
+
+The two surfaces have no shared source. REST validation is authored as TypeBox in `*.schema.ts` and drives Swagger; GraphQL is hand-written SDL in `*.graphql-schema.ts`, discovered by `loadFiles` and merged with `throwOnConflict: true`. A capability is therefore described twice, by hand.
+
+**Decision: neither surface generates the other.** They stay independently authored, and `src/shared/api/contract/api-surface-parity.spec.ts` is the contract between them. If generation is ever introduced it runs TypeBox to SDL, never the reverse, because TypeBox already carries the length, format and example constraints Swagger needs and SDL cannot express them.
+
+The contract makes two assertions, and runs with the unit suite because it needs no database:
+
+- **Coverage.** A capability reachable over one surface must be reachable over both. Every `<module>/<commands|queries>/<name>/` directory holding a `.route.ts` must hold a `.resolver.ts`, and the reverse.
+- **Fields.** Where a capability describes a payload on both surfaces, the field names must agree. A field added to one and forgotten on the other fails the build, naming the field and both files.
+
+This was verified against the repository as it stood: the boilerplate's `delete-user` shipped a route and no resolver, and the check reported it on its first run rather than tolerating it.
+
 ---
 
 ## 8. Compose topology
