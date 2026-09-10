@@ -31,14 +31,14 @@ Shared database, `org_id` row-scoping, Postgres RLS with `FORCE`. Path-based pub
 ### FR1: Auth + organizations
 
 - **Requirement:** Better Auth is mounted as a Fastify plugin; users can sign up, sign in, create organizations, switch active orgs, and belong to multiple orgs.
-- **Verification:** Integration tests cover signup/login/org creation/active-org resolution.
+- **Verification:** Integration tests cover signup, login, organization creation, active-org resolution, switching the active organization, and a user belonging to multiple organizations.
 - **Phase:** 1
-- **Current status:** Done - Better Auth is mounted at `/api/auth/*`; signup, signin and organization creation are covered by integration tests through the same Fastify instance the api entrypoint builds, and verified end to end against the Compose stack.
+- **Current status:** Partial - Better Auth is mounted at `/api/auth/*`, and signup, signin, organization creation and active-org resolution are covered by integration tests through the same Fastify instance the api entrypoint builds, verified end to end against the Compose stack. Two clauses of this requirement are not yet covered: switching the active organization, and a user belonging to more than one organization. Both exercise the code path every later epic depends on - switching is the only route that writes `session.activeOrganizationId`, and multi-org membership is what makes the `firstMembershipOf` fallback non-trivial.
 
 ### FR2: Teams + membership
 
 - **Requirement:** Teams and memberships are provided by the Better Auth organization plugin; WatchDog consumes them for active-org context and authorization.
-- **Verification:** Unit and integration tests validate role lookup, membership-based org resolution, and access checks through Better Auth-owned tables.
+- **Verification:** Unit and integration tests validate role lookup including different roles held by the same user in different organizations, membership-based org resolution, and access checks through Better Auth-owned tables.
 - **Phase:** 1
 - **Current status:** Done - `src/server/auth/organization-context.ts` resolves session to active organization to role, falling back to membership when the session carries no active org, and rejects a role outside the owner/admin/member ladder. Covered by integration tests.
 
