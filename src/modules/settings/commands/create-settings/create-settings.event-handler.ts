@@ -1,16 +1,13 @@
-import {
-  createUserCommand,
-  type createUserEvent,
-} from '@/modules/user/commands/create-user/create-user.handler';
+import { userCreatedEvent } from '@/shared/events/user.events';
 
 export default function makeCreateSettings({ eventBus, logger }: Dependencies) {
   return {
-    handler(action: ReturnType<typeof createUserEvent>) {
+    handler(action: ReturnType<typeof userCreatedEvent>) {
       logger.info(action);
       // todo: add some logic here to create default settings for the user
     },
     init() {
-      eventBus.on(createUserCommand.type, this.handler);
+      eventBus.on(userCreatedEvent.type, this.handler);
     },
   };
 }
