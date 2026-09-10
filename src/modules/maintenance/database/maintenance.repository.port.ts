@@ -29,4 +29,17 @@ export interface MaintenanceRepository {
     tx: TenantTransaction,
     id: string,
   ): Promise<MaintenanceEntity | undefined>;
+  /** Returns the removed window, or undefined when it is out of scope. */
+  remove(
+    tx: TenantTransaction,
+    id: string,
+  ): Promise<MaintenanceEntity | undefined>;
+  /**
+   * Moves a window to `completed`, stamping completed_at, only if it is not
+   * already there. Undefined means already completed or out of scope.
+   */
+  complete(
+    tx: TenantTransaction,
+    id: string,
+  ): Promise<MaintenanceEntity | undefined>;
 }

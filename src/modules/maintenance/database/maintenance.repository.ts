@@ -140,6 +140,30 @@ export default function maintenanceRepository({
       }
     },
 
+    async remove(tx: TenantTransaction, id: string) {
+      // maintenance_services rows go with it through ON DELETE CASCADE.
+      const rows = await tx.sql<MaintenanceModel[]>`
+        delete from maintenance where id = ${id} returning *
+      `;
+      return rows[0] ? maintenanceMapper.toDomain(rows[0]) : undefined;
+    },
+
+    async complete(tx: TenantTransaction, id: string) {
+      // The `status <> 'completed'` guard makes this idempotent at the
+      // database rather than in a read-then-write two callers could both pass.
+      const rows = await tx.sql<MaintenanceModel[]>`
+        update maintenance
+        set status = 'completed', completed_at = now(), updated_at = now()
+        where id = ${id} and status <> 'completed'
+        returning *
+      `;
+      if (!rows[0]) return undefined;
+      return maintenanceMapper.toDomain(
+        rows[0],
+        await affectedServiceIds(tx, id),
+      );
+    },
+
     async findById(tx: TenantTransaction, id: string) {
       const rows = await tx.sql<MaintenanceModel[]>`
         select * from maintenance where id = ${id} limit 1
