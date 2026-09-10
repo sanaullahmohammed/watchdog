@@ -264,7 +264,7 @@ An operator can describe what they run, and tell customers what is happening to 
 
 > Two commands named in ARCHITECTURE's `incident` module are deliberately absent here. `ConfirmDraftIncidentCommand` and `DismissDraftIncidentCommand` act on draft incidents, which only exist once monitoring creates them under FR13. Building them in this epic would mean writing commands with nothing to act on and criteria that could not be derived from FR6's verification line. They move to Epic 5. The incident state machine, including transitions out of `draft`, stays here: it is a pure function and FR6's verification line names it directly.
 
-> These 17 stories were derived from ROADMAP's verification column rather than from the 26-command surface. FR4's line already names five capabilities — create/update, grouping, archive/restore, archived exclusion, manual override — so the story boundaries were settled during the original review rounds. Deriving from commands instead would have produced 23 stories with worse seams.
+> These 18 stories were derived from ROADMAP's verification column rather than from the 26-command surface. FR4's line already names five capabilities — create/update, grouping, archive/restore, archived exclusion, manual override — so the story boundaries were settled during the original review rounds. Deriving from commands instead would have produced 23 stories with worse seams.
 
 ### Story 2.1: Derive REST and GraphQL from one schema
 
@@ -305,7 +305,7 @@ So that the status page reflects what we actually run.
 
 **Acceptance Criteria:**
 
-**Given** the `services` table is created, carrying `service_group_id` as a nullable FK to the `service_groups` table that already exists from the tenant-isolation work
+**Given** the `services` table is created, carrying `service_group_id` as a nullable FK to the `service_groups` table that already exists from the tenant-isolation work, and `last_known_status` defaulting to `operational` under the same CHECK ladder as the manual override
 **When** the migration is applied
 **Then** row level security is enabled and `FORCE`d
 **And** a policy compares `org_id` to `current_setting('app.current_org_id', true)`
@@ -348,8 +348,14 @@ So that a visitor reads the status page by area rather than as a flat list.
 **Acceptance Criteria:**
 
 **Given** an organization with services
-**When** a group is created, renamed, or given a new display order
-**Then** the change is scoped to that organization only
+**When** a group is created
+**Then** it is scoped to that organization only
+**And** `service_group.created` is emitted
+
+**Given** an existing group
+**When** it is renamed or given a new display order
+**Then** the change persists
+**And** `service_group.updated` is emitted
 
 **Given** a group containing services
 **When** the group is deleted
@@ -565,6 +571,11 @@ So that customers can see whether we are still investigating or have fixed it.
 **When** the command succeeds
 **Then** `resolved_at` is set and `incident.resolved` is emitted
 
+**Given** an open incident
+**When** its title, impact or affected services are edited without a status change
+**Then** the change persists
+**And** `incident.updated` is emitted, which is distinct from `incident.state_changed`
+
 **Given** an incident belonging to another organization
 **When** any transition is attempted against it
 **Then** zero rows are affected
@@ -756,7 +767,43 @@ So that the same answer is given on the public page, the admin surface and in no
 **When** each is evaluated
 **Then** the reduction holds with no input silently dropped
 
-### Story 2.16: Serve resolved status through the service queries
+### Story 2.16: Recompute and announce service status
+
+As the system,
+I want a service's status recomputed whenever an input to it changes,
+So that `service.status_changed` fires exactly when the answer actually moves.
+
+**Actor:** system — an event handler in the `service` module
+**Satisfies:** DOMAIN's `service.status_changed` catalog entry and its Status recomputation section; the FR5 resolution rule reaching its consumers
+**Files:** `src/modules/service/commands/recompute-service-status/`, `src/shared/events/` (the cross-module contracts it subscribes to)
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** the `service` module
+**When** any of `incident.created`, `incident.confirmed`, `incident.state_changed`, `incident.resolved`, `incident.dismissed`, `maintenance.started`, `maintenance.completed`, `maintenance.deleted`, `service.manual_override_set` or `service.manual_override_cleared` is emitted
+**Then** effective status is resolved for each affected service using story 2.15's function
+**And** the handler reaches those events through `src/shared/events/`, never by importing the `incident` or `maintenance` module
+
+**Given** a service whose recomputed status differs from `last_known_status`
+**When** the handler runs
+**Then** the new value is written
+**And** `service.status_changed` is emitted
+
+**Given** a service whose recomputed status matches `last_known_status`
+**When** the handler runs
+**Then** nothing is written and no event is emitted
+**And** running the handler repeatedly over the same input produces no further events
+
+**Given** an archived service affected by an incident
+**When** the handler runs
+**Then** it is skipped, since it appears on no public or active list
+
+**Given** services in several organizations affected by one worker pass
+**When** the handler runs
+**Then** each is recomputed under its own tenant context
+
+### Story 2.17: Serve resolved status through the service queries
 
 As a visitor,
 I want to receive each service's effective status rather than its raw fields,
@@ -771,7 +818,8 @@ So that I do not have to reimplement the precedence rule to understand the page.
 
 **Given** services in each of the four precedence conditions
 **When** they are listed
-**Then** each carries its effective status as resolved by story 2.15
+**Then** each carries `last_known_status`, maintained by story 2.16
+**And** the query does not recompute across incidents, maintenance and monitor results per request
 
 **Given** an incident is opened or resolved against a service
 **When** the service is read again
@@ -781,7 +829,7 @@ So that I do not have to reimplement the precedence rule to understand the page.
 **When** both are called
 **Then** the effective status field is identical, as story 2.1's contract test requires
 
-### Story 2.17: Seed a demonstrable organization
+### Story 2.18: Seed a demonstrable organization
 
 As an operator or reviewer,
 I want one command that fills an empty database with something realistic,
