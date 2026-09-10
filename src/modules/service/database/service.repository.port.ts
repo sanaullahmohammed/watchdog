@@ -1,5 +1,6 @@
 import type {
   ServiceEntity,
+  ServiceStatus,
   UpdateServiceProps,
 } from '@/modules/service/domain/service.types';
 import type { TenantTransaction } from '@/shared/db/tenant-transaction';
@@ -53,6 +54,20 @@ export interface ServiceRepository {
    * either already archived or out of scope; `findById` separates the two.
    */
   archive(
+    tx: TenantTransaction,
+    id: string,
+  ): Promise<ServiceEntity | undefined>;
+  /**
+   * Writes the override only when it differs from the current value, so
+   * setting the same status twice emits nothing.
+   */
+  setManualOverride(
+    tx: TenantTransaction,
+    id: string,
+    status: ServiceStatus,
+  ): Promise<ServiceEntity | undefined>;
+  /** Clears the override only if one is currently set. */
+  clearManualOverride(
     tx: TenantTransaction,
     id: string,
   ): Promise<ServiceEntity | undefined>;

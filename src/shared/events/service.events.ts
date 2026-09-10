@@ -22,6 +22,12 @@ export const serviceCreatedEvent =
 export const serviceUpdatedEvent =
   serviceEventCreator<ServiceEventPayload>('updated');
 
+export const serviceManualOverrideSetEvent =
+  serviceEventCreator<ServiceEventPayload>('manual_override_set');
+
+export const serviceManualOverrideClearedEvent =
+  serviceEventCreator<ServiceEventPayload>('manual_override_cleared');
+
 export const serviceArchivedEvent =
   serviceEventCreator<ServiceEventPayload>('archived');
 
