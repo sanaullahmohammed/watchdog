@@ -34,6 +34,7 @@ const schema = Type.Object({
     default: '/tmp/watchdog-worker-heartbeat',
   }),
   WORKER_HEARTBEAT_MAX_AGE_MS: Type.Number({ default: 60_000 }),
+  WORKER_MAINTENANCE_INTERVAL_MS: Type.Number({ default: 30_000 }),
 });
 
 const env = envSchema<Static<typeof schema>>({
@@ -63,5 +64,6 @@ export default {
   worker: {
     heartbeatPath: env.WORKER_HEARTBEAT_PATH,
     heartbeatMaxAgeMs: env.WORKER_HEARTBEAT_MAX_AGE_MS,
+    maintenanceIntervalMs: env.WORKER_MAINTENANCE_INTERVAL_MS,
   },
 };

@@ -140,6 +140,35 @@ export default function maintenanceRepository({
       }
     },
 
+    async startDue(tx: TenantTransaction, now: Date) {
+      // `scheduled_end_at > now` matters: a window whose whole span already
+      // elapsed must not be started first and completed on a later pass. It
+      // goes straight to completed, which DOMAIN lists as legal.
+      const rows = await tx.sql<MaintenanceModel[]>`
+        update maintenance
+        set status = 'in_progress', started_at = ${now}, updated_at = now()
+        where status = 'scheduled'
+          and scheduled_start_at <= ${now}
+          and scheduled_end_at > ${now}
+        returning *
+      `;
+      return rows.map((row) => maintenanceMapper.toDomain(row));
+    },
+
+    async completeDue(tx: TenantTransaction, now: Date) {
+      const rows = await tx.sql<MaintenanceModel[]>`
+        update maintenance
+        set status = 'completed',
+            completed_at = ${now},
+            started_at = coalesce(started_at, ${now}),
+            updated_at = now()
+        where status in ('scheduled', 'in_progress')
+          and scheduled_end_at <= ${now}
+        returning *
+      `;
+      return rows.map((row) => maintenanceMapper.toDomain(row));
+    },
+
     async remove(tx: TenantTransaction, id: string) {
       // maintenance_services rows go with it through ON DELETE CASCADE.
       const rows = await tx.sql<MaintenanceModel[]>`

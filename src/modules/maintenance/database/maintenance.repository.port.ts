@@ -29,6 +29,17 @@ export interface MaintenanceRepository {
     tx: TenantTransaction,
     id: string,
   ): Promise<MaintenanceEntity | undefined>;
+  /**
+   * Starts every scheduled window whose start time has passed and whose end
+   * has not. Guarded in SQL so a second pass moves nothing.
+   */
+  startDue(tx: TenantTransaction, now: Date): Promise<MaintenanceEntity[]>;
+  /**
+   * Completes every window whose end time has passed, whether it was started
+   * or is still scheduled. DOMAIN allows scheduled to completed directly, for
+   * a window whose whole span elapsed before any pass ran.
+   */
+  completeDue(tx: TenantTransaction, now: Date): Promise<MaintenanceEntity[]>;
   /** Returns the removed window, or undefined when it is out of scope. */
   remove(
     tx: TenantTransaction,
