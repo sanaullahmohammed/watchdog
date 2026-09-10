@@ -30,6 +30,8 @@ Self-hosted, multi-tenant status page platform. TypeScript on Node 24, Fastify 5
 
 ## Conventions that differ from defaults
 
+- REST routes live under `/api`, applied by the `prefix` option `@fastify/autoload` hands each plugin. `autoPrefix` is a property a plugin file exports, not a loader option; the boilerplate passed it as one and served everything at `/v1` instead.
+- Tenant-scoped repositories take a `TenantTransaction` per call rather than closing over the global connection, which has no `app.current_org_id` set and would see nothing. They deliberately do not implement `RepositoryPort`.
 - Every read or write of a tenant-scoped table goes through `withTenantTransaction`. `SET LOCAL` is transaction-scoped, so SQL issued outside one silently sees nothing.
 - Double-quote every Better Auth identifier. `"user"` is a reserved word in Postgres, `"teamMember"` is camelCase, and every Better Auth column is camelCase. WatchDog's own tables stay snake_case, so a join across the two quotes one side only.
 - `org_id` is `text` because Better Auth ids are 32-character strings; WatchDog-native primary keys are `uuid`. Policies compare text to text and need no `::uuid` cast.

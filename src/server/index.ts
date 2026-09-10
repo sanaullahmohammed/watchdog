@@ -45,8 +45,12 @@ export default async function createServer(fastify: FastifyInstance) {
   await fastify.register(AutoLoad, {
     dir: path.join(__dirname, '../modules'),
     dirNameRoutePrefix: false,
+    // `autoPrefix` is a property a plugin file exports, not an option the
+    // loader accepts, so passing it here did nothing and every route was
+    // served at /v1 despite FR26 requiring /api. Fastify honours `prefix` in
+    // the options it hands each plugin, which does apply.
     options: {
-      autoPrefix: 'api',
+      prefix: '/api',
     },
     matchFilter: (path) => {
       const regex = env.isProduction

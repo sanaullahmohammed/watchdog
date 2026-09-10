@@ -178,6 +178,10 @@ Therefore:
 | In-process event bus | Same process only | Local domain reactions, same-command follow-up handlers, decoupled module reactions inside `api` or inside `worker`. | API-to-worker communication, worker-to-API communication, SSE fanout, GraphQL subscription fanout. |
 | Postgres `LISTEN/NOTIFY` | Cross-process | API/worker coordination, public SSE, admin GraphQL subscriptions, notification dispatch triggers. | Durable job queue, large payload transport, event store. |
 
+The in-process bus delivers one event to **every** handler registered for its type, and treats an event with no handler as a no-op. Both matter and neither was true of the boilerplate's implementation, which kept a single handler per type and threw on an unsubscribed event.
+
+Several reactions to one event is the design here, not an edge case: the NOTIFY bridge fans an event out to clients while a module recomputes derived state from the same event. A map to one handler would let the second registration silently replace the first. And a domain event with no in-process subscriber is normal rather than an error, since most of the catalog exists to be bridged or simply to be part of the record.
+
 `NOTIFY` payloads are intentionally small. Subscribers re-query read models by `orgId`, `aggregateType`, and `aggregateId` under the appropriate tenant context.
 
 ### 5.2 Fanout path

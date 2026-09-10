@@ -2,6 +2,7 @@ import { ExceptionBase } from './exception-base';
 
 enum ExceptionError {
   BAD_REQUEST = 'Bad Request',
+  UNAUTHORIZED = 'Unauthorized',
   CONFLICT = 'Conflict',
   NOT_FOUND = 'Not Found',
   INTERNAL_SERVER_ERROR = 'Internal Server Error',
@@ -25,6 +26,24 @@ export class ArgumentInvalidException extends ExceptionBase {
  * @class ConflictException
  * @extends {ExceptionBase}
  */
+/**
+ * Used when a request carries no usable session or no organization context.
+ * Every tenant-scoped route needs this: an unauthenticated caller must be
+ * refused before any repository sets `app.current_org_id`.
+ *
+ * @class UnauthorizedException
+ * @extends {ExceptionBase}
+ */
+export class UnauthorizedException extends ExceptionBase {
+  static readonly message = 'Authentication required';
+  readonly error = ExceptionError.UNAUTHORIZED;
+  readonly statusCode = 401;
+
+  constructor(message: string = UnauthorizedException.message) {
+    super(message);
+  }
+}
+
 export class ConflictException extends ExceptionBase {
   readonly error = ExceptionError.CONFLICT;
   readonly statusCode = 409;

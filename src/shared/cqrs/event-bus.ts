@@ -7,7 +7,11 @@ import type {
 } from '@/shared/cqrs/bus.types';
 
 export function eventBus(): EventBus {
-  const handlers = new Map<string, EventHandler>();
+  // A list per type, not a single handler. ARCHITECTURE.md section 5.2 needs
+  // several independent reactions to one event - the NOTIFY bridge fans out to
+  // clients while a module recomputes derived state - and a Map to one handler
+  // would let the second registration silently replace the first.
+  const handlers = new Map<string, EventHandler[]>();
   const middlewares: Middleware[] = [];
 
   function on<T extends string = string>(type: T, handler: EventHandler): void {
@@ -17,7 +21,7 @@ export function eventBus(): EventBus {
     if (typeof handler !== 'function') {
       throw new TypeError('handler must be a function');
     }
-    handlers.set(type, handler);
+    handlers.set(type, [...(handlers.get(type) ?? []), handler]);
   }
 
   function emit(event: Action<unknown>): void {
@@ -27,16 +31,20 @@ export function eventBus(): EventBus {
     if (typeof event.type !== 'string') {
       throw new TypeError('event.type must be a string');
     }
-    const handler = handlers.get(event.type);
-    if (!handler) {
-      throw new Error(`Event type of ${event.type} is not registered`);
-    }
 
-    if (middlewares.length > 0) {
-      const list = (pipe as any)(...middlewares);
-      list(event, handler);
-    } else {
-      handler(event);
+    // No subscriber is not an error. Domain events are fire-and-forget: an
+    // event is emitted because it happened, not because something is listening.
+    // Most of DOMAIN.md's catalog has no in-process reaction at all - it exists
+    // to be bridged to NOTIFY, or simply to be part of the record.
+    const registered = handlers.get(event.type) ?? [];
+
+    for (const handler of registered) {
+      if (middlewares.length > 0) {
+        const list = (pipe as any)(...middlewares);
+        list(event, handler);
+      } else {
+        handler(event);
+      }
     }
   }
 
