@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { type Dirent, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, it } from 'node:test';
-import { parse } from 'graphql';
+import { parse, type TypeNode } from 'graphql';
 
 /**
  * Story 2.1 — REST and GraphQL must not drift apart.
@@ -74,28 +74,59 @@ function discoverCapabilities(): Capability[] {
   return found.sort((a, b) => a.label.localeCompare(b.label));
 }
 
-/** Field names of every object and input type declared in an SDL fragment. */
-function sdlFieldNames(sdl: string): Map<string, string[]> {
-  const byType = new Map<string, string[]>();
+/**
+ * The field names of the request payload an SDL fragment describes.
+ *
+ * The payload is the input type named by the operation's argument, not simply
+ * the first type declared. Picking by declaration order was the original
+ * heuristic and it produced a false positive the moment a file declared a
+ * nested input type before its payload, as create-incident does with
+ * AffectedServiceInput.
+ *
+ * Scalar arguments such as `id: ID!` are skipped; only a type defined in the
+ * same fragment can be the payload.
+ */
+function sdlPayloadFields(sdl: string): string[] | undefined {
+  const document = parse(sdl);
 
-  for (const def of parse(sdl).definitions) {
+  const declared = new Map<string, string[]>();
+  const operations: string[] = [];
+
+  const OPERATION_TYPES = ['Mutation', 'Query', 'Subscription'];
+
+  for (const def of document.definitions) {
+    // Operation types carry the arguments that name the payload.
     if (
-      def.kind !== 'ObjectTypeDefinition' &&
-      def.kind !== 'InputObjectTypeDefinition'
+      def.kind === 'ObjectTypeDefinition' &&
+      OPERATION_TYPES.includes(def.name.value)
     ) {
+      for (const field of def.fields ?? []) {
+        for (const arg of field.arguments ?? []) {
+          let type: TypeNode = arg.type;
+          while (type.kind !== 'NamedType') type = type.type;
+          operations.push(type.name.value);
+        }
+      }
       continue;
     }
-    // Mutation and Query are the entrypoint types, not payload shapes.
-    if (['Mutation', 'Query', 'Subscription'].includes(def.name.value))
-      continue;
 
-    byType.set(
-      def.name.value,
-      (def.fields ?? []).map((field) => field.name.value),
-    );
+    if (
+      def.kind === 'ObjectTypeDefinition' ||
+      def.kind === 'InputObjectTypeDefinition'
+    ) {
+      declared.set(
+        def.name.value,
+        (def.fields ?? []).map((field) => field.name.value),
+      );
+    }
   }
 
-  return byType;
+  for (const named of operations) {
+    const fields = declared.get(named);
+    if (fields) return fields;
+  }
+
+  return undefined;
 }
 
 /** Property names of every TypeBox object exported by a schema module. */
@@ -157,15 +188,15 @@ describe('REST and GraphQL surface parity', () => {
       )) as { default: string };
 
       const restShapes = [...typeBoxFieldNames(schemaModule).values()];
-      const sdlShapes = [...sdlFieldNames(graphqlModule.default).values()];
+      const sdlPayload = sdlPayloadFields(graphqlModule.default);
 
-      if (restShapes.length === 0 || sdlShapes.length === 0) continue;
+      if (restShapes.length === 0 || sdlPayload === undefined) continue;
 
       // Compare the request payload each surface accepts. Both are authored by
       // hand, so a field added to one and forgotten on the other is the exact
       // drift this test exists to catch.
       const rest = new Set(restShapes[0]);
-      const sdl = new Set(sdlShapes[0]);
+      const sdl = new Set(sdlPayload);
 
       const onlyRest = [...rest].filter((f) => !sdl.has(f));
       const onlySdl = [...sdl].filter((f) => !rest.has(f));
