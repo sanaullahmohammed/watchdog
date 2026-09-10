@@ -56,6 +56,7 @@ A customer-visible component on the status page.
 | `manual_status_override` | `text null` | CHECK: `operational`, `degraded`, `partial_outage`, `major_outage`, `maintenance`; manual override wins over computed status |
 | `is_public` | `boolean` | Whether shown on public page |
 | `display_order` | `integer` | Public ordering |
+| `last_known_status` | `text` | Not null, default `operational`; CHECK as the ladder above. Last result of `resolveServiceStatus`, written only by the recomputation handler. See Status recomputation. |
 | `archived_at` | `timestamptz null` | Set when archived; null when active |
 | `created_at` | `timestamptz` | Required |
 | `updated_at` | `timestamptz` | Required |
@@ -868,6 +869,34 @@ function worstOf(statuses: ServiceStatus[]): ServiceStatus {
   }, 'operational');
 }
 ```
+
+
+### Status recomputation and `service.status_changed`
+
+`resolveServiceStatus` above is a pure function over live inputs. Emitting `service.status_changed` requires comparing a new result against a previous one, and a pure function has no previous one to compare against. The mechanism is therefore recorded here rather than left to the implementer.
+
+**The shape is forced, not chosen.** Effective status reads four inputs owned by three modules: the manual override and monitor-derived state reach the `service` module, active incident impact belongs to `incident`, and active maintenance to `maintenance`. Modules do not import each other, so `incident` cannot compute a service's status. Recomputation is therefore event-driven and lives in the `service` module, which `ARCHITECTURE.md` section 2 already names as the owner of status recomputation orchestration.
+
+**Services carry their last resolved status.**
+
+| Field | Type | Constraints / Notes |
+|---|---:|---|
+| `last_known_status` | `text` | Not null, default `operational`. CHECK: `operational`, `degraded`, `partial_outage`, `major_outage`, `maintenance`. The most recent result of `resolveServiceStatus`, written only by the recomputation handler. |
+
+This is a derived value held for two reasons: it is the only way to diff, and it lets the public read model return status without recomputing across incidents, maintenance windows and monitor results on every request.
+
+**Recomputation is triggered by events, never by a direct call across a module boundary.** The `service` module subscribes to every event that can move a service's status:
+
+- `incident.created`, `incident.confirmed`, `incident.state_changed`, `incident.resolved`, `incident.dismissed`
+- `maintenance.started`, `maintenance.completed`, `maintenance.deleted`
+- `service.manual_override_set`, `service.manual_override_cleared`
+- `monitor.check_succeeded`, `monitor.check_failed`, `monitor.recovered`, `monitor.threshold_breached`
+
+On each, the handler resolves status for the affected services, and where the result differs from `last_known_status` it writes the new value and emits `service.status_changed`. Where it does not differ, nothing is written and nothing is emitted; the handler is idempotent and safe to run repeatedly.
+
+Archived services are skipped. They appear on no public or active list, so announcing their status changes would fan out events nobody can act on.
+
+**The known risk** is a derived column drifting from its inputs if some future write path moves an input without emitting one of the events above. The event catalog is the guard: a command that changes status without emitting is already a defect by the definition of done. A periodic reconciliation pass in the worker would close the gap entirely and is deliberately left to post-v1 rather than built speculatively.
 
 ---
 
