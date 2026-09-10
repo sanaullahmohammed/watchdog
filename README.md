@@ -69,7 +69,16 @@ pnpm run create:env
 docker compose up
 ```
 
-`docker compose up` is expected to run Postgres, Mailpit, the one-shot `migrate` service, `api`, and `worker`. Migrations run inside Compose through the `migrate` service before `api` and `worker` start, so the Compose path does not need a separate local migration command and does not start a second server on port 3000.
+`docker compose up` runs Postgres, Mailpit, the one-shot `migrate` service, `api`, and `worker` from a single image. Migrations run through `migrate` before `api` and `worker` start, so the Compose path needs no separate local migration command and does not start a second server on port 3000.
+
+Once the stack reports healthy:
+
+```bash
+curl http://localhost:3000/live      # liveness, from @gquittet/graceful-server
+curl http://localhost:3000/ready     # readiness
+open http://localhost:3000/api-docs  # Swagger
+open http://localhost:8025           # Mailpit
+```
 
 ### Run the API locally against Compose Postgres
 
@@ -78,13 +87,26 @@ Use this variant when developing the API process outside Compose while still usi
 ```bash
 docker compose up postgres mailpit migrate
 
-# In a separate shell:
-DATABASE_URL=postgres://watchdog_app:watchdog_app_dev_password@localhost:5432/watchdog?sslmode=disable \
-BETTER_AUTH_URL=http://localhost:3000 \
-pnpm run dev
+# In a separate shell. Configuration comes from .env; env-schema validates it
+# and fails fast naming any missing variable.
+pnpm run dev:api
 ```
 
-Confirmed against the scaffold: `pnpm run create:env`, `pnpm run dev`, `pnpm run build`, `pnpm run start:prod`, `pnpm run check`, `pnpm run test:unit`, `pnpm run test:e2e`, `pnpm run test:k6:smoke`, and `pnpm run db:migrate` (DBMate reads `DBMATE_DATABASE_URL`, not `DATABASE_URL`). `dev:api`, `start:api`, and `start:worker` do not exist yet; they arrive with the two-entrypoint split in phase 1.
+Script names, confirmed against the scaffold:
+
+| Script | Does |
+|---|---|
+| `pnpm run create:env` | Copies `.env.example` to `.env`, failing if one exists |
+| `pnpm run dev` / `dev:api` / `dev:worker` | Watch mode; bare `dev` defaults to the `api` entrypoint |
+| `pnpm run build` | `tsc` to `dist`, then `resolve-tspaths` rewrites the `@/*` alias |
+| `pnpm run start:api` / `start:worker` | Production entrypoints over `dist` |
+| `pnpm run check` | Biome format + lint, `tsc --noEmit`, dependency-cruiser |
+| `pnpm run test` / `test:unit` / `test:e2e` | `node:test` specs and Cucumber |
+| `pnpm run test:k6:smoke` / `test:k6:load` | k6 profiles in `tests/load` |
+| `pnpm run db:migrate` | DBMate, reading `DBMATE_DATABASE_URL` rather than `DATABASE_URL` |
+| `pnpm run auth:schema:check` | Fails if Better Auth expects schema no migration provides |
+
+Configuration is read only through `src/config/env.ts`. env-schema validates `.env` and returns an object; it never writes to `process.env`, so a module reading `process.env` directly sees nothing from `.env`.
 
 ## Repo layout
 
@@ -93,7 +115,7 @@ watchdog/
 ├── .github/
 │   └── workflows/
 ├── db/
-│   ├── init/
+│   ├── init/          # role bootstrap, run once by the postgres container
 │   ├── migrations/
 │   └── seeds/
 ├── docs/
@@ -102,6 +124,7 @@ watchdog/
 │       ├── ARCHITECTURE.md
 │       ├── DOMAIN.md
 │       └── ROADMAP.md
+├── scripts/           # auth schema drift check
 ├── biome.json
 ├── docker-compose.yml
 ├── Dockerfile

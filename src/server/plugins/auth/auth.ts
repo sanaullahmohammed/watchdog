@@ -1,31 +1,27 @@
 import { betterAuth } from 'better-auth';
 import { organization } from 'better-auth/plugins';
 import { Pool } from 'pg';
+import env from '../../../config/env';
 
 /**
  * Better Auth owns identity, organizations, teams, memberships and invitations.
  * It sits outside the CQRS bus and outside WatchDog's tenant RLS policies;
  * see ARCHITECTURE.md sections 6.4 and 7.
  *
- * This module reads `process.env` directly rather than going through
- * `@/config`, because the Better Auth CLI loads it standalone to generate the
- * schema and cannot resolve the `@/*` tsconfig path alias.
+ * The config import is relative rather than the usual `@/config`, because the
+ * Better Auth CLI loads this file standalone to generate the schema and cannot
+ * resolve the `@/*` tsconfig path alias. Going through `@/config` matters:
+ * env-schema validates `.env` and returns an object without ever writing to
+ * `process.env`, so a module reading `process.env` directly sees nothing from
+ * `.env` and only works when variables are exported by hand.
  *
  * Better Auth speaks to Postgres through Kysely over `pg`. WatchDog's own data
  * access stays on raw `postgres.js`; the two never share a connection.
  */
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
-}
-
 export const auth = betterAuth({
-  database: new Pool({ connectionString: required('DATABASE_URL') }),
-  secret: required('BETTER_AUTH_SECRET'),
-  baseURL: process.env.BETTER_AUTH_URL ?? 'http://localhost:3000',
+  database: new Pool({ connectionString: env.db.url }),
+  secret: env.auth.secret,
+  baseURL: env.auth.baseUrl,
   emailAndPassword: {
     enabled: true,
   },

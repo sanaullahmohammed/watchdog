@@ -1,0 +1,10 @@
+node_modules
+dist
+reports
+.git
+.github
+.husky
+docs
+tests
+.env
+*.log

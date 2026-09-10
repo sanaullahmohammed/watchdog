@@ -712,109 +712,15 @@ Services:
 
 One image is built for `migrate`, `api`, and `worker`; command decides runtime mode.
 
-```yaml
-services:
-  postgres:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: watchdog
-      POSTGRES_USER: watchdog_owner
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-watchdog_owner_dev_password}
-      WATCHDOG_APP_PASSWORD: ${WATCHDOG_APP_PASSWORD:-watchdog_app_dev_password}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./db/init/001-create-watchdog-app.sh:/docker-entrypoint-initdb.d/001-create-watchdog-app.sh:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U watchdog_owner -d watchdog"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+`docker-compose.yml` is the source of truth for this topology and is no longer duplicated here; a second copy in prose is exactly the drift this document set is trying to avoid. What the file encodes, and why:
 
-  mailpit:
-    image: axllent/mailpit:latest
-    ports:
-      - "1025:1025"
-      - "8025:8025"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8025"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
-  migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: ["dbmate", "up"]
-    environment:
-      DATABASE_URL: postgres://watchdog_owner:${POSTGRES_PASSWORD:-watchdog_owner_dev_password}@postgres:5432/watchdog
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: ["pnpm", "start:api"]
-    environment:
-      NODE_ENV: development
-      DATABASE_URL: postgres://watchdog_app:${WATCHDOG_APP_PASSWORD:-watchdog_app_dev_password}@postgres:5432/watchdog
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev_only_change_me}
-      BETTER_AUTH_URL: http://localhost:3000
-      SMTP_HOST: mailpit
-      SMTP_PORT: "1025"
-      WATCHDOG_NOTIFY_CHANNEL: watchdog_events
-      PUBLIC_BASE_URL: http://localhost:3000
-      LOG_LEVEL: info
-      # Confirmed: the config loader reads DATABASE_URL, LOG_LEVEL, NODE_ENV,
-      # HOST and PORT. DBMate reads DBMATE_DATABASE_URL separately, which is
-      # what keeps the owner/app role split expressible. See .env.example.
-    ports:
-      - "3000:3000"
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      mailpit:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: ["pnpm", "start:worker"]
-    environment:
-      NODE_ENV: development
-      DATABASE_URL: postgres://watchdog_app:${WATCHDOG_APP_PASSWORD:-watchdog_app_dev_password}@postgres:5432/watchdog
-      SMTP_HOST: mailpit
-      SMTP_PORT: "1025"
-      WATCHDOG_NOTIFY_CHANNEL: watchdog_events
-      MONITORING_POLL_INTERVAL_SECONDS: "10"
-      CHECK_RESULTS_RETENTION_DAYS: "30"
-      ROLLUP_RETENTION_DAYS: "400"
-      LOG_LEVEL: info
-      # > TODO(human): confirm final worker scheduler env names.
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      mailpit:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "node", "src/healthcheck.ts"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-
-volumes:
-  postgres_data:
-```
+- All three of `migrate`, `api` and `worker` share one `image: watchdog:dev` through a YAML anchor, so the stack builds once rather than three times.
+- `migrate` runs `dbmate --wait ... up` as `watchdog_owner`; `api` and `worker` connect as `watchdog_app` and never see the owner URL. That split is what makes `FORCE ROW LEVEL SECURITY` meaningful, since a superuser bypasses RLS regardless.
+- `api` and `worker` gate on `migrate: service_completed_successfully`, so neither starts against an unmigrated database.
+- The `api` healthcheck targets `http://127.0.0.1:3000/live`, not `localhost`. Inside the container `localhost` resolves to `::1` first while Fastify binds IPv4, so a `localhost` probe is refused and the container never turns healthy.
+- `/live` and `/ready` come from `@gquittet/graceful-server`. There is no `/health` endpoint.
+- `worker` serves no HTTP, so its healthcheck runs `node dist/healthcheck.js`, which asserts the heartbeat file is recent. A wedged loop fails the check rather than passing because the process still exists.
+- `WATCHDOG_APP_PASSWORD` reaches `postgres` so that `db/init/001-create-watchdog-app.sh` can create the runtime role on first volume initialisation, with no password in committed SQL.
 
 Guessed values are placeholders for local development only. Production-grade secret injection, TLS, backups, and deployment topology are outside this genesis architecture document.
 
