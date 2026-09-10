@@ -1,4 +1,7 @@
-import type { IncidentRepository } from '@/modules/incident/database/incident.repository.port';
+import type {
+  IncidentRepository,
+  ListIncidentsFilter,
+} from '@/modules/incident/database/incident.repository.port';
 import type {
   IncidentEntity,
   UpdateIncidentProps,
@@ -17,6 +20,46 @@ export default function incidentRepository({
   incidentMapper,
 }: Dependencies): IncidentRepository {
   return {
+    async list(tx: TenantTransaction, filter: ListIncidentsFilter) {
+      // Drafts are excluded unless explicitly asked for, and a public
+      // composition excludes them whatever else was asked - the same
+      // precedence services use for archived.
+      const showDrafts = filter.includeDrafts === true && !filter.publicOnly;
+
+      const rows = await tx.sql<IncidentModel[]>`
+        select * from incidents
+        where true
+          ${showDrafts ? tx.sql`` : tx.sql`and status <> 'draft'`}
+          ${filter.status ? tx.sql`and status = ${filter.status}` : tx.sql``}
+        order by started_at desc, id desc
+      `;
+      return rows.map((row) => incidentMapper.toDomain(row));
+    },
+
+    async timeline(tx: TenantTransaction, incidentId: string) {
+      // (created_at, id): entries written inside one transaction share a
+      // timestamp, so id is what makes the order deterministic rather than
+      // whatever the planner returns.
+      const rows = await tx.sql<
+        {
+          id: string;
+          status: IncidentStatus;
+          message: string;
+          created_at: Date;
+        }[]
+      >`
+        select id, status, message, created_at from incident_updates
+        where incident_id = ${incidentId}
+        order by created_at asc, id asc
+      `;
+      return rows.map((row) => ({
+        id: row.id,
+        status: row.status,
+        message: row.message,
+        createdAt: row.created_at,
+      }));
+    },
+
     async insert(tx: TenantTransaction, incident: IncidentEntity) {
       await tx.sql`
         insert into incidents (
