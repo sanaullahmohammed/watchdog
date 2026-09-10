@@ -8,6 +8,7 @@ import {
 } from '@/modules/service/domain/service.errors';
 import type {
   ServiceEntity,
+  ServiceStatus,
   UpdateServiceProps,
 } from '@/modules/service/domain/service.types';
 import type { ServiceModel } from '@/modules/service/service.mapper';
@@ -115,6 +116,33 @@ export default function serviceRepository({
         }
         throw error;
       }
+    },
+
+    async setManualOverride(
+      tx: TenantTransaction,
+      id: string,
+      status: ServiceStatus,
+    ) {
+      // `is distinct from` makes re-setting the same status a no-op, matching
+      // how clear behaves and keeping the event stream free of changes that
+      // did not change anything.
+      const rows = await tx.sql<ServiceModel[]>`
+        update services
+        set manual_status_override = ${status}, updated_at = now()
+        where id = ${id} and manual_status_override is distinct from ${status}
+        returning *
+      `;
+      return rows[0] ? serviceMapper.toDomain(rows[0]) : undefined;
+    },
+
+    async clearManualOverride(tx: TenantTransaction, id: string) {
+      const rows = await tx.sql<ServiceModel[]>`
+        update services
+        set manual_status_override = null, updated_at = now()
+        where id = ${id} and manual_status_override is not null
+        returning *
+      `;
+      return rows[0] ? serviceMapper.toDomain(rows[0]) : undefined;
     },
 
     async archive(tx: TenantTransaction, id: string) {
