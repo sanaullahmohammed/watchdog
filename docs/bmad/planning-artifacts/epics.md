@@ -164,6 +164,8 @@ Public and admin surfaces update without a refresh: SSE for public pages, GraphQ
 Outages are detected rather than noticed. Synthetic checks run on schedule, results are stored and rolled up into 90-day history, and repeated failures propose a draft incident that a human confirms.
 **FRs covered:** FR10, FR11, FR12, FR13, FR18
 
+- Carries the monitor half of FR4's archive semantics, moved from Story 2.4. The due-monitor query joins `services` and filters `services.archived_at IS NULL`, so archiving suspends a service's monitors without writing to them and restoring resumes the enabled ones. Story 2.4 cannot verify this because it writes nothing to monitors; the story that builds the query must.
+
 ### Epic 6: Subscriber notifications
 
 People find out without watching the page: email to confirmed subscribers, RSS/Atom feeds, and a public subscribe flow. This is the first output a human consumes without needing a client.
@@ -389,15 +391,12 @@ So that past incidents and uptime remain intelligible after we stop running some
 **And** `service.archived` is emitted
 **And** the row is not deleted
 
-**Given** an archived service with monitors
-**When** the archive completes
-**Then** its monitors are suspended non-destructively rather than removed
-
 **Given** an archived service
 **When** it is restored
 **Then** `archived_at` is cleared
 **And** `service.restored` is emitted
-**And** its previously enabled monitors resume
+
+> The monitor half of FR4's archive semantics is **not** this story's to implement or verify. DOMAIN.md is explicit: archiving writes nothing to monitors, and suspension is a property of the worker's due-monitor query filtering `services.archived_at IS NULL`. Criteria asserting that "monitors are suspended" and "monitors resume" would mislead an implementer into updating monitor rows, which is the opposite of non-destructive. They move to Epic 5, where that query is built.
 
 **Given** a service with incidents and uptime history
 **When** it is archived

@@ -24,4 +24,18 @@ export interface ServiceRepository {
     tx: TenantTransaction,
     id: string,
   ): Promise<ServiceEntity | undefined>;
+  /**
+   * Sets `archived_at` only if it is currently null, so the caller can tell an
+   * archive that happened from one that was already done. `undefined` means
+   * either already archived or out of scope; `findById` separates the two.
+   */
+  archive(
+    tx: TenantTransaction,
+    id: string,
+  ): Promise<ServiceEntity | undefined>;
+  /** Clears `archived_at` only if it is currently set. */
+  restore(
+    tx: TenantTransaction,
+    id: string,
+  ): Promise<ServiceEntity | undefined>;
 }

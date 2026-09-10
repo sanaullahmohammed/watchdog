@@ -22,6 +22,12 @@ export const serviceCreatedEvent =
 export const serviceUpdatedEvent =
   serviceEventCreator<ServiceEventPayload>('updated');
 
+export const serviceArchivedEvent =
+  serviceEventCreator<ServiceEventPayload>('archived');
+
+export const serviceRestoredEvent =
+  serviceEventCreator<ServiceEventPayload>('restored');
+
 export type ServiceGroupEventPayload = {
   id: string;
   orgId: string;

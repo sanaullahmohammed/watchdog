@@ -92,6 +92,27 @@ export default function serviceRepository({
       }
     },
 
+    async archive(tx: TenantTransaction, id: string) {
+      // The `archived_at is null` guard makes the write idempotent at the
+      // database rather than in a read-then-write, which two concurrent
+      // requests could both pass.
+      const rows = await tx.sql<ServiceModel[]>`
+        update services set archived_at = now(), updated_at = now()
+        where id = ${id} and archived_at is null
+        returning *
+      `;
+      return rows[0] ? serviceMapper.toDomain(rows[0]) : undefined;
+    },
+
+    async restore(tx: TenantTransaction, id: string) {
+      const rows = await tx.sql<ServiceModel[]>`
+        update services set archived_at = null, updated_at = now()
+        where id = ${id} and archived_at is not null
+        returning *
+      `;
+      return rows[0] ? serviceMapper.toDomain(rows[0]) : undefined;
+    },
+
     async findById(tx: TenantTransaction, id: string) {
       const rows = await tx.sql<ServiceModel[]>`
         select * from services where id = ${id} limit 1
