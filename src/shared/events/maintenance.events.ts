@@ -14,6 +14,9 @@ export const maintenanceCreatedEvent =
 export const maintenanceUpdatedEvent =
   maintenanceEventCreator<MaintenanceEventPayload>('updated');
 
+export const maintenanceStartedEvent =
+  maintenanceEventCreator<MaintenanceEventPayload>('started');
+
 export const maintenanceDeletedEvent =
   maintenanceEventCreator<MaintenanceEventPayload>('deleted');
 

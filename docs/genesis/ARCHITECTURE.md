@@ -447,6 +447,25 @@ Enforcement layers:
 7. The app connects as a non-superuser role so RLS cannot be bypassed accidentally.
 8. Table owners are not used for normal application traffic; `FORCE ROW LEVEL SECURITY` is enabled on WatchDog tenant tables.
 
+
+### 6.0 How the worker finds tenant work
+
+The `worker` entrypoint runs outside any request, so nothing has resolved an organization for it. Every WatchDog table is under RLS, and `app.current_org_id` is unset until a tenant transaction opens — so a worker query written the obvious way, scanning `maintenance` for due windows, returns nothing at all. It fails closed, silently, and a scheduler that finds no work looks exactly like a scheduler with no work to do.
+
+**The worker enumerates tenants from Better Auth's `organization` table, then processes each under its own tenant transaction.** That table is outside WatchDog's tenant RLS by the decision in section 6.4, which makes it the one place a process with no organization can legitimately learn which organizations exist. No `BYPASSRLS` role is introduced, and `watchdog_app` needs no additional privilege: the per-organization work still runs under `withTenantTransaction` and is still scoped by policy.
+
+```text
+for each organization id in Better Auth's "organization"
+  withTenantTransaction(orgId, do the pass for that tenant)
+```
+
+Two consequences worth stating rather than discovering later:
+
+- A pass is O(organizations) transactions, whether or not a given organization has work. For a self-hosted status page that is the right trade against introducing a privileged role to ask one cross-tenant question. If it ever stops being the right trade, the answer is a tenant-agnostic queue table, not a role that can read everything.
+- Each organization's pass is independent. One tenant's failure must not abandon the rest, so a pass records and continues rather than aborting.
+
+This is the shape for every scheduled task: maintenance transitions, monitor execution, uptime rollups, partition maintenance and notification dispatch.
+
 ### 6.1 Role provisioning
 
 Role creation is environment-owned, not committed migration SQL with embedded passwords.
