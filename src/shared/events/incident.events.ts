@@ -30,3 +30,7 @@ export const incidentResolvedEvent =
  */
 export const incidentDismissedEvent =
   incidentEventCreator<IncidentEventPayload>('dismissed');
+
+export const incidentUpdatePostedEvent = incidentEventCreator<
+  IncidentEventPayload & { updateId: string }
+>('update_posted');
