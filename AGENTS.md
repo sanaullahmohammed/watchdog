@@ -47,6 +47,7 @@ Self-hosted, multi-tenant status page platform. TypeScript on Node 24, Fastify 5
 - postgres.js declares `TransactionSql` as `Omit<Sql, ...>`, which drops the call signature, so `tx\`select ...\`` looks untyped. Use `TenantTransaction` from `src/shared/db/tenant-transaction.ts`, which absorbs the cast.
 - Container healthchecks must target `127.0.0.1`, not `localhost`. Inside a container `localhost` resolves to `::1` first while Fastify binds IPv4, and the probe is refused.
 - Better Auth rejects a cookie-authenticated state change that arrives without an `Origin` matching `BETTER_AUTH_URL` or a trusted origin, with `MISSING_OR_NULL_ORIGIN`. Browsers send it; `app.inject` and `curl` do not.
+- Better Auth's `invite-member` works with no `sendInvitationEmail` configured and returns the invitation, so a test can accept it directly. Building membership through invite plus accept is preferable to inserting into `"member"`, which would prove the query works and leave the plugin's behaviour untested.
 - `Headers.forEach` folds repeated headers into one comma-joined value, which corrupts `Set-Cookie`. Use `getSetCookie()` when translating a `Response` back to a Fastify reply.
 - Upgrading `better-auth` is expected to fail `auth:schema:check`. Fix it with a new migration plus a regenerated `db/better-auth-schema.sql`.
 - A new table carrying `org_id` needs RLS enabled, `FORCE`d, and a policy. `src/shared/db/tenant-rls-coverage.integration.test.ts` fails otherwise; behavioural tests will not catch it.
