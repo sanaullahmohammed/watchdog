@@ -51,7 +51,7 @@ A customer-visible component on the status page.
 | `org_id` | `text` | FK -> Better Auth `organization.id` |
 | `service_group_id` | `uuid null` | FK -> `service_groups.id` |
 | `name` | `text` | Required |
-| `slug` | `text` | Unique per org |
+| `slug` | `text` | Unique per `org_id` including archived services, so archiving reserves a slug permanently. Chosen over a partial index on `archived_at is null`: reuse is rare, and a uniqueness rule that depends on a mutable column is a sharper edge than a reserved name. Reversible with a one-line migration if it proves wrong. |
 | `description` | `text null` | Optional |
 | `manual_status_override` | `text null` | CHECK: `operational`, `degraded`, `partial_outage`, `major_outage`, `maintenance`; manual override wins over computed status |
 | `is_public` | `boolean` | Whether shown on public page |
@@ -773,6 +773,11 @@ const SERVICE_STATUS_RANK: Record<ServiceStatus, number> = {
 ```
 
 `maintenance` is visible and non-operational, but incident outage states outrank it when computing worst impact.
+
+Two consequences of this being a worst-of reduction rather than a cascade, stated because story work misread it once already:
+
+- Several active incidents naming one service reduce to the worst impact among them. `activeIncidentImpacts` is a list and is reduced, never sampled.
+- An in-progress maintenance window is always considered, not only when no incident is active. A `major` incident during planned maintenance resolves to `major_outage`, since maintenance ranks 1 against 4.
 
 ### Incident impact values
 

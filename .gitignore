@@ -37,3 +37,6 @@ coverage
 # BMAD: install answers scoped to an individual, not the team
 _bmad/config.user.toml
 _bmad/custom/config.user.toml
+
+# BMAD party-mode memory: per-session room state, not project documentation
+docs/bmad/party-mode/
