@@ -1,8 +1,100 @@
+# One image, three runtime modes: migrate, api, worker.
+# See ARCHITECTURE.md section 8.
+
+x-watchdog-image: &watchdog-image
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: watchdog:dev
+
 services:
   postgres:
-    image: postgres:latest
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-watchdog}
+      POSTGRES_USER: ${POSTGRES_USER:-watchdog_owner}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-watchdog_owner_dev_password}
+      WATCHDOG_APP_PASSWORD: ${WATCHDOG_APP_PASSWORD:-watchdog_app_dev_password}
     ports:
-      - 5432:5432
-    env_file:
-      - path: ./.env
-        required: true
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init/001-create-watchdog-app.sh:/docker-entrypoint-initdb.d/001-create-watchdog-app.sh:ro
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-watchdog_owner} -d ${POSTGRES_DB:-watchdog}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:8025']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot. Runs as the owner role; api and worker never do.
+  migrate:
+    <<: *watchdog-image
+    command:
+      ['./node_modules/.bin/dbmate', '--wait', '-e', 'DBMATE_DATABASE_URL', 'up']
+    environment:
+      DBMATE_DATABASE_URL: postgres://${POSTGRES_USER:-watchdog_owner}:${POSTGRES_PASSWORD:-watchdog_owner_dev_password}@postgres:5432/${POSTGRES_DB:-watchdog}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *watchdog-image
+    command: ['node', 'dist/index.js', 'api']
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: '3000'
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://watchdog_app:${WATCHDOG_APP_PASSWORD:-watchdog_app_dev_password}@postgres:5432/${POSTGRES_DB:-watchdog}?sslmode=disable
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev_only_change_me_dev_only_change_me}
+      BETTER_AUTH_URL: http://localhost:3000
+      SMTP_HOST: mailpit
+      SMTP_PORT: '1025'
+    ports:
+      - '3000:3000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:3000/live']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    <<: *watchdog-image
+    command: ['node', 'dist/index.js', 'worker']
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://watchdog_app:${WATCHDOG_APP_PASSWORD:-watchdog_app_dev_password}@postgres:5432/${POSTGRES_DB:-watchdog}?sslmode=disable
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev_only_change_me_dev_only_change_me}
+      SMTP_HOST: mailpit
+      SMTP_PORT: '1025'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'node', 'dist/healthcheck.js']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres_data:

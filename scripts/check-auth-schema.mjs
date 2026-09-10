@@ -27,12 +27,10 @@ const BASELINE = 'db/better-auth-schema.sql';
 // same under `pnpm run`, a bare `node scripts/...`, and a CI step.
 const CLI = join(process.cwd(), 'node_modules', '.bin', 'auth');
 
-for (const name of ['DATABASE_URL', 'BETTER_AUTH_SECRET']) {
-  if (!process.env[name]) {
-    console.error(`auth:schema:check requires ${name} to be set.`);
-    process.exit(2);
-  }
-}
+// No env precondition here on purpose: auth.ts resolves its config through
+// src/config/env.ts, which merges process.env over `.env` and fails with a
+// schema error naming the missing variable. Locally `.env` is enough; in CI
+// the real environment variables are.
 
 const dir = mkdtempSync(join(tmpdir(), 'watchdog-auth-schema-'));
 const out = join(dir, 'regen.sql');
@@ -54,15 +52,36 @@ try {
     process.exit(2);
   }
 
-  if (!existsSync(out)) {
-    console.log(
-      `Better Auth schema is in sync with the committed migrations (${BASELINE}).`,
+  const cliOutput = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+
+  if (result.status !== 0) {
+    console.error(
+      `The Better Auth CLI exited ${result.status}. Output:\n\n${cliOutput}`,
     );
-    process.exit(0);
+    process.exit(2);
   }
 
-  const emitted = readFileSync(out, 'utf8').trim();
+  const emitted = existsSync(out) ? readFileSync(out, 'utf8').trim() : '';
+
   if (emitted === '') {
+    // An absent or empty file is only good news when the CLI actually said the
+    // schema was satisfied. Otherwise it means the CLI never got far enough to
+    // compare - an unreachable database, for instance - and reporting that as
+    // "in sync" would make this check fail open.
+    if (!/already up to date/i.test(cliOutput)) {
+      console.error(
+        [
+          '',
+          'The Better Auth CLI emitted no schema and did not report the schema',
+          'as up to date, so nothing was actually verified. This usually means',
+          'it could not reach the database named by DATABASE_URL.',
+          '',
+          cliOutput,
+        ].join('\n'),
+      );
+      process.exit(2);
+    }
+
     console.log(
       `Better Auth schema is in sync with the committed migrations (${BASELINE}).`,
     );

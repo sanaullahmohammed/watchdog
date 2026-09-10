@@ -1,53 +1,30 @@
-import { randomUUID } from 'node:crypto';
-import GracefulServer from '@gquittet/graceful-server';
-import Fastify from 'fastify';
-import { env } from '@/config';
-import server from '@/server';
-import { closeDbConnection } from '@/shared/db/postgres';
+import { startApi } from '@/api';
+import { startWorker } from '@/worker';
 
-async function init() {
-  const fastify = Fastify({
-    logger: {
-      level: env.log.level,
-      redact: ['headers.authorization'],
-    },
-    genReqId: (req) => {
-      // header best practice: don't use "x-" https://www.rfc-editor.org/info/rfc6648 and keep it lowercase
-      return (req.headers['request-id'] as string) ?? randomUUID();
-    },
-    ignoreDuplicateSlashes: true,
-    ajv: {
-      customOptions: {
-        keywords: ['example'],
-      },
-    },
-  });
+/**
+ * One image, two entrypoints. Runtime behaviour is selected by command so the
+ * dependency graph, configuration and migrations stay identical across both.
+ * See ARCHITECTURE.md section 4.
+ */
+const ENTRYPOINTS = {
+  api: startApi,
+  worker: startWorker,
+} as const;
 
-  await server(fastify);
+type Entrypoint = keyof typeof ENTRYPOINTS;
 
-  const gracefulServer = GracefulServer(fastify.server, {
-    closePromises: [closeDbConnection],
-  });
+function resolveEntrypoint(argv: string[]): Entrypoint {
+  const requested = argv[2] ?? 'api';
 
-  gracefulServer.on(GracefulServer.READY, () => {
-    fastify.log.info('Server is ready');
-  });
-
-  gracefulServer.on(GracefulServer.SHUTTING_DOWN, () => {
-    fastify.log.info('Server is shutting down');
-  });
-
-  gracefulServer.on(GracefulServer.SHUTDOWN, (error) => {
-    fastify.log.info('Server is down because of', error.message);
-  });
-
-  try {
-    await fastify.listen({ port: env.server.port });
-    gracefulServer.setReady();
-  } catch (error) {
-    fastify.log.error(error);
+  if (!(requested in ENTRYPOINTS)) {
+    const valid = Object.keys(ENTRYPOINTS).join(', ');
+    console.error(
+      `Unknown entrypoint "${requested}". Expected one of: ${valid}`,
+    );
     process.exit(1);
   }
+
+  return requested as Entrypoint;
 }
 
-init();
+ENTRYPOINTS[resolveEntrypoint(process.argv)]();

@@ -62,6 +62,23 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Mirrors db/init/001-create-watchdog-app.sh, which Compose runs on first
+      # volume init. The grants migration needs the role to already exist.
+      - name: Create the application role
+        run: |
+          psql "$OWNER_URL" -v ON_ERROR_STOP=1 -v app_password="$APP_PASSWORD" <<'SQL'
+          select format(
+            'create role watchdog_app login password %L '
+            || 'nosuperuser nocreatedb nocreaterole noinherit nobypassrls',
+            :'app_password'
+          )
+          where not exists (select 1 from pg_roles where rolname = 'watchdog_app')
+          \gexec
+          SQL
+        env:
+          OWNER_URL: postgres://watchdog_owner:watchdog_owner_test_password@localhost:5432/watchdog_test?sslmode=disable
+          APP_PASSWORD: watchdog_app_test_password
+
       - name: Run migrations
         run: pnpm run db:migrate
         env:
@@ -74,6 +91,25 @@ jobs:
         env:
           DATABASE_URL: postgres://watchdog_owner:watchdog_owner_test_password@localhost:5432/watchdog_test?sslmode=disable
           BETTER_AUTH_SECRET: test_secret_at_least_32_characters_long
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build only. Booting the full Compose stack is a separate concern and
+      # arrives with the integration suite.
+      - name: Build the shared api/worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: watchdog:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   # Added per ROADMAP phase, as the things they verify come into existence:
   #   phase 1 - watchdog_app role creation, dbmate up, RLS integration tests
