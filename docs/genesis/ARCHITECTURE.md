@@ -669,7 +669,30 @@ Generate Better Auth schema
   -> run dbmate up in local/CI/container startup workflow
 ```
 
-> TODO(human): confirm exact Better Auth organization plugin table names and generated FK targets before final migrations are written. Once generated, commit the schema as a DBMate migration and treat that committed file as the FK contract.
+Resolved. Generated with `npx auth generate` against `better-auth@1.7.3` with the organization plugin and `teams.enabled`, then committed verbatim as `db/migrations/20260909214731_better_auth_schema.sql`, with the generated artifact kept at `db/better-auth-schema.sql`. That migration is the FK contract.
+
+Frozen table names, all singular and all requiring double quotes in raw SQL:
+
+| Table | Notes |
+|---|---|
+| `"user"` | `user` is a **reserved word** in PostgreSQL. Never write it unquoted. |
+| `"session"` | Carries `"activeOrganizationId"` and `"activeTeamId"`, so active-org state needs no WatchDog table. |
+| `"account"` | Credential and OAuth provider records. |
+| `"verification"` | Email/token verification records. |
+| `"organization"` | `"id" text primary key`, `"slug" text not null unique`. This is the FK target for every WatchDog `org_id`. |
+| `"team"` | FK to `"organization"`. |
+| `"teamMember"` | camelCase; folds to `teammember` if unquoted. |
+| `"member"` | Org membership. `"role" text not null`, with no CHECK constraint. |
+| `"invitation"` | `"teamId"` is plain `text` with no FK, unlike the other reference columns. |
+
+Every column is camelCase (`"userId"`, `"organizationId"`, `"createdAt"`) and must be quoted too. WatchDog's own tables stay snake_case, so any query joining the two conventions quotes one side and not the other.
+
+Two consequences worth stating plainly:
+
+- `"member"."role"` is unconstrained text. The `owner`/`admin`/`member` ladder is a Better Auth convention, not a database guarantee, so the organization-context middleware validates the value rather than trusting it.
+- Better Auth reaches Postgres through Kysely over `pg`, which it brings as an optional peer. WatchDog's own data access stays on raw `postgres.js` and the two never share a connection. This does not breach the no-ORM non-goal, which governs WatchDog's data access, but the process does load two Postgres drivers.
+
+`pnpm run auth:schema:check` regenerates against a migrated database and fails if anything is emitted, which is what pins the `better-auth` version to the committed contract. It runs in the `schema` CI job. Upgrades to `better-auth` are expected to fail this check; the fix is a new migration plus a refreshed artifact, never an edit to the applied migration.
 
 RBAC v1 uses Better Auth's built-in organization roles: `owner`, `admin`, and `member`. All three can perform v1 write actions. Finer editor/viewer roles are roadmap.
 

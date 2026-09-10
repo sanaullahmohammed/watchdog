@@ -32,6 +32,49 @@ jobs:
       - name: Unit tests
         run: pnpm run test:unit
 
+  schema:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: watchdog_test
+          POSTGRES_USER: watchdog_owner
+          POSTGRES_PASSWORD: watchdog_owner_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U watchdog_owner -d watchdog_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run migrations
+        run: pnpm run db:migrate
+        env:
+          DBMATE_DATABASE_URL: postgres://watchdog_owner:watchdog_owner_test_password@localhost:5432/watchdog_test?sslmode=disable
+
+      # Fails if Better Auth expects schema no committed migration provides,
+      # which pins the better-auth version to the committed FK contract.
+      - name: Better Auth schema drift check
+        run: pnpm run auth:schema:check
+        env:
+          DATABASE_URL: postgres://watchdog_owner:watchdog_owner_test_password@localhost:5432/watchdog_test?sslmode=disable
+          BETTER_AUTH_SECRET: test_secret_at_least_32_characters_long
+
   # Added per ROADMAP phase, as the things they verify come into existence:
   #   phase 1 - watchdog_app role creation, dbmate up, RLS integration tests
   #   phase 3 - Cucumber E2E against the Postgres service container

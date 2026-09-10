@@ -33,7 +33,9 @@ WatchDog stores references to the committed Better Auth schema:
 
 Notes:
 
-- The Better Auth schema is generated once, reviewed, committed as a DBMate migration, and then treated as the FK contract.
+- The Better Auth schema is generated once, reviewed, committed as a DBMate migration, and then treated as the FK contract. Frozen as of `better-auth@1.7.3`: `"user"`, `"session"`, `"account"`, `"verification"`, `"organization"`, `"team"`, `"teamMember"`, `"member"`, `"invitation"`. See `ARCHITECTURE.md` section 7 for the full table.
+- Identifier quoting is load-bearing when WatchDog reads these tables. `user` is a reserved word in PostgreSQL and `"teamMember"` is camelCase, and every Better Auth column is camelCase. Raw SQL that joins a WatchDog table to a Better Auth table quotes the Better Auth side and leaves the snake_case WatchDog side bare.
+- `organization.id` is `text` and `organization.slug` is `text not null unique`, so `org_id` stays `text` and the `/status/:orgSlug` lookup needs no additional index.
 - Better Auth tables sit outside WatchDog tenant-scoped RLS.
 - WatchDog organization queries may read Better Auth tables for active-org resolution, switcher data, and public slug lookup, but WatchDog does not emit organization/team/membership domain events.
 
