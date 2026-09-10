@@ -15,7 +15,7 @@ Given(/^user profile data$/, function (this: ICustomWorld, table) {
 When('I send a request to create a user', async function (this: ICustomWorld) {
   this.context.latestResponse = await this.server.inject({
     method: 'POST',
-    url: '/v1/users',
+    url: '/api/v1/users',
     body: this.context.createUserDto,
   });
 });
@@ -32,7 +32,7 @@ Then(
   async function (this: ICustomWorld) {
     const response = await this.server.inject({
       method: 'GET',
-      url: '/v1/users',
+      url: '/api/v1/users',
     });
     const users = response.json<Paginated<UserModel>>();
     assert.strictEqual(
@@ -47,7 +47,7 @@ Then(
 Then('I send a request to delete my user', async function (this: ICustomWorld) {
   const response = await this.server.inject({
     method: 'DELETE',
-    url: `/v1/users/${this.context.latestResponse.json().id}`,
+    url: `/api/v1/users/${this.context.latestResponse.json().id}`,
   });
   assert.strictEqual(response.statusCode, 204);
 });
@@ -57,7 +57,7 @@ Then(
   async function (this: ICustomWorld) {
     const response = await this.server.inject({
       method: 'GET',
-      url: '/v1/users',
+      url: '/api/v1/users',
     });
     const users = response.json<Paginated<UserModel>>();
     assert.strictEqual(
