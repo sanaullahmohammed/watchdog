@@ -36,7 +36,8 @@
     "deps:graph": "depcruise src --include-only \"^src\" --config --output-type dot | dot -T svg > docs/dependency-graph.svg",
     "generate:client-types": "npx openapi-typescript http://127.0.0.1:3000/api-docs/json -o ./client.schema.d.ts",
     "prepare": "husky",
-    "outdated": "pnpm update --interactive --latest"
+    "outdated": "pnpm update --interactive --latest",
+    "test:integration": "node --import tsx --test src/**/*.integration.test.ts"
   },
   "engines": {
     "node": ">=24.0.0",

@@ -32,7 +32,7 @@ jobs:
       - name: Unit tests
         run: pnpm run test:unit
 
-  schema:
+  database:
     runs-on: ubuntu-latest
 
     services:
@@ -92,6 +92,17 @@ jobs:
           DATABASE_URL: postgres://watchdog_owner:watchdog_owner_test_password@localhost:5432/watchdog_test?sslmode=disable
           BETTER_AUTH_SECRET: test_secret_at_least_32_characters_long
 
+      # Connects as watchdog_app, never the owner. The suite asserts that role
+      # is neither superuser nor BYPASSRLS, so pointing this at the owner URL
+      # fails loudly instead of passing vacuously.
+      - name: Integration tests (tenant isolation)
+        run: pnpm run test:integration
+        env:
+          DATABASE_URL: postgres://watchdog_app:watchdog_app_test_password@localhost:5432/watchdog_test?sslmode=disable
+          BETTER_AUTH_SECRET: test_secret_at_least_32_characters_long
+          LOG_LEVEL: info
+          NODE_ENV: test
+
   docker:
     runs-on: ubuntu-latest
     steps:
@@ -112,7 +123,6 @@ jobs:
           cache-to: type=gha,mode=max
 
   # Added per ROADMAP phase, as the things they verify come into existence:
-  #   phase 1 - watchdog_app role creation, dbmate up, RLS integration tests
   #   phase 3 - Cucumber E2E against the Postgres service container
   #   phase 5 - k6 smoke (`pnpm run test:k6:smoke`) against a booted api
   #   phase 6 - docker build validation for the shared api/worker image

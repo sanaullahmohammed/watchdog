@@ -484,9 +484,15 @@ commit;
 
 `SET LOCAL` is transaction-scoped. It disappears after commit or rollback.
 
+One detail that matters when reasoning about the policies below: after a transaction that set the GUC commits, `current_setting('app.current_org_id', true)` on that connection returns the **empty string**, not NULL. A custom GUC reverts to its reset value, and for a setting never given a global value that value is `''`. NULL is only observed on a connection that has never set it at all, so the result is connection-state dependent under a pool.
+
+Both fail closed, because `org_id = ''` is false and `org_id = NULL` is NULL, and neither matches a row. The consequence is a rule rather than a caveat: a policy must never treat "unset" as "unrestricted". Nothing of the form `current_setting(...) is null or ...` belongs in a tenant policy, and `coalesce` on the GUC is equally dangerous. `src/shared/db/tenant-transaction.integration.test.ts` pins this behaviour.
+
 ### 6.3 Policy shape
 
 Every WatchDog tenant-scoped table that carries `org_id` uses the same shape. `enable row level security` is immediately followed by `force row level security`.
+
+This is enforced rather than remembered. `src/shared/db/tenant-rls-coverage.integration.test.ts` reads `pg_class` and `pg_policy` for every table carrying an `org_id` column and fails unless each has RLS enabled, forced, and at least one policy. It catches the case behavioural tests cannot: a new table shipping with the column and without the policy. It also catches a dropped `FORCE`, which behavioural tests miss entirely because the application connects as `watchdog_app` rather than the table owner.
 
 ```sql
 alter table service_groups enable row level security;
