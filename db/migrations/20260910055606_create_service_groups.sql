@@ -24,9 +24,12 @@ alter table service_groups enable row level security;
 -- application connects as watchdog_app (nosuperuser, nobypassrls).
 alter table service_groups force row level security;
 
--- current_setting(..., true) returns NULL when the GUC is unset, and
--- `org_id = NULL` is NULL, so an unscoped query matches no rows. The policy
--- fails closed by construction.
+-- current_setting(..., true) yields NULL only on a connection that has never
+-- set the GUC; once any transaction has, it reverts to the setting's reset
+-- value, which for a custom GUC is the empty string. `org_id = NULL` is NULL
+-- and `org_id = ''` is false, so both match no rows and the policy fails closed
+-- either way. Never write a policy that treats unset as unrestricted: no
+-- `is null` branch, no `coalesce` over the GUC.
 create policy service_groups_org_isolation
 on service_groups
 using (

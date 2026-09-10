@@ -4,7 +4,7 @@ Self-hosted, multi-tenant status page platform. TypeScript on Node 24, Fastify 5
 
 ## Policy
 
-- Never edit a migration that has been applied. Schema changes arrive as new migrations.
+- Never edit a migration that has been applied. Schema changes arrive as new migrations. dbmate tracks by version and does not checksum content, so correcting a comment is safe; changing DDL is not.
 - Never edit `docs/genesis/*` to match code that drifted. A decision changes in its owning document first — `DOMAIN.md` owns the data and behaviour model, `ARCHITECTURE.md` owns runtime wiring — then the others are re-checked.
 - Never hand-edit `db/better-auth-schema.sql`. Regenerate it with `pnpm run auth:schema:generate`.
 - Branch and open a PR; the pre-commit hook runs lint-staged, `tsc`, dependency-cruiser and unit tests.

@@ -168,7 +168,8 @@ describe('tenant isolation on service_groups', () => {
 
   it('returns no rows when the GUC is unset, rather than every row', async () => {
     // Outside a tenant transaction there is no SET LOCAL, so current_setting
-    // yields NULL and `org_id = NULL` filters everything. Fails closed.
+    // returns NULL or '' depending on whether this pooled connection has ever
+    // set the GUC. Both filter everything; the policy fails closed either way.
     const rows = await sql`select id from service_groups`;
     assert.equal(rows.length, 0);
   });
