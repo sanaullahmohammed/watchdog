@@ -33,3 +33,7 @@ coverage
 .specstory
 .history
 .cursor
+
+# BMAD: install answers scoped to an individual, not the team
+_bmad/config.user.toml
+_bmad/custom/config.user.toml
