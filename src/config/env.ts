@@ -1,5 +1,6 @@
 import envSchema from 'env-schema';
 import { type Static, Type } from 'typebox';
+import { authEnvProperties } from './auth-env';
 
 enum NodeEnv {
   development = 'development',
@@ -15,15 +16,16 @@ export enum LogLevel {
 }
 
 const schema = Type.Object({
-  // Single connection string so the owner/app role split is expressible:
-  // `api`/`worker` connect as watchdog_app (RLS enforced), DBMate migrates
-  // as watchdog_owner via DBMATE_DATABASE_URL. See ARCHITECTURE.md 6.1.
-  DATABASE_URL: Type.String(),
-  // Better Auth reads these through this schema rather than `process.env`:
-  // env-schema validates `.env` and returns an object, it never populates
-  // `process.env`, so anything reading the latter is blind to `.env`.
-  BETTER_AUTH_SECRET: Type.String({ minLength: 32 }),
-  BETTER_AUTH_URL: Type.String({ default: 'http://localhost:3000' }),
+  // DATABASE_URL, BETTER_AUTH_SECRET and BETTER_AUTH_URL are declared once, in
+  // ./auth-env, and composed in here. That file is what `auth.ts` loads, so the
+  // Better Auth CLI validates only the variables Better Auth needs while the
+  // application still validates everything in one place.
+  //
+  // DATABASE_URL being a single connection string is what makes the owner/app
+  // role split expressible: `api` and `worker` connect as watchdog_app under
+  // RLS, DBMate migrates as watchdog_owner through DBMATE_DATABASE_URL.
+  // See ARCHITECTURE.md 6.1.
+  ...authEnvProperties,
   LOG_LEVEL: Type.Enum(LogLevel),
   NODE_ENV: Type.Enum(NodeEnv),
   HOST: Type.String({ default: 'localhost' }),
