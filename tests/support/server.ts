@@ -1,20 +1,5 @@
-import Fastify from 'fastify';
-import server from '../../src/server';
+import { buildApp as build } from '@/server/build-app';
 
-export const buildApp = async () => {
-  const app = Fastify({
-    logger: {
-      level: 'warn',
-    },
-    disableRequestLogging: true,
-    ignoreDuplicateSlashes: true,
-    ajv: {
-      customOptions: {
-        keywords: ['example'],
-      },
-    },
-  });
-
-  await server(app);
-  return app;
-};
+// Cucumber's entry point into the same instance the api entrypoint builds.
+export const buildApp = () =>
+  build({ logger: { level: 'warn' }, disableRequestLogging: true });

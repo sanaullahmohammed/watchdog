@@ -1,12 +1,17 @@
 import { betterAuth } from 'better-auth';
 import { organization } from 'better-auth/plugins';
 import { Pool } from 'pg';
-import authEnv from '../../../config/auth-env';
+import authEnv from '../../config/auth-env';
 
 /**
  * Better Auth owns identity, organizations, teams, memberships and invitations.
  * It sits outside the CQRS bus and outside WatchDog's tenant RLS policies;
  * see ARCHITECTURE.md sections 6.4 and 7.
+ *
+ * Deliberately outside `src/server/plugins/`: @fastify/autoload scans that
+ * directory recursively and evaluates whatever it finds, and this module is a
+ * configured Better Auth instance rather than a Fastify plugin. The plugin that
+ * mounts it lives at `src/server/plugins/auth.ts`.
  *
  * Config comes from `config/auth-env`, imported by relative path on purpose.
  * The Better Auth CLI loads this file standalone and cannot resolve the `@/*`

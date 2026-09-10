@@ -1,3 +1,4 @@
+import { Auth } from '@/server/auth/auth';
 import { Dependencies as InfrastructureDependencies } from '@/modules';
 import { JsonSchemaToTsProvider } from '@fastify/type-provider-json-schema-to-ts';
 import {
@@ -23,6 +24,12 @@ declare global {
 }
 
 // Strongly Type DI container
+declare module 'fastify' {
+  interface FastifyInstance {
+    auth: Auth;
+  }
+}
+
 declare module '@fastify/awilix' {
   interface Cradle extends Dependencies {}
 

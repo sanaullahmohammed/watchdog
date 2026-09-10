@@ -1,29 +1,10 @@
-import { randomUUID } from 'node:crypto';
 import GracefulServer from '@gquittet/graceful-server';
-import Fastify from 'fastify';
 import { env } from '@/config';
-import server from '@/server';
+import { buildApp } from '@/server/build-app';
 import { closeDbConnection } from '@/shared/db/postgres';
 
 export async function startApi() {
-  const fastify = Fastify({
-    logger: {
-      level: env.log.level,
-      redact: ['headers.authorization'],
-    },
-    genReqId: (req) => {
-      // header best practice: don't use "x-" https://www.rfc-editor.org/info/rfc6648 and keep it lowercase
-      return (req.headers['request-id'] as string) ?? randomUUID();
-    },
-    ignoreDuplicateSlashes: true,
-    ajv: {
-      customOptions: {
-        keywords: ['example'],
-      },
-    },
-  });
-
-  await server(fastify);
+  const fastify = await buildApp();
 
   const gracefulServer = GracefulServer(fastify.server, {
     closePromises: [closeDbConnection],

@@ -14,9 +14,9 @@ Self-hosted, multi-tenant status page platform. TypeScript on Node 24, Fastify 5
 - Vertical slices: `src/modules/<feature>/{commands,queries,domain,database,dtos}`
 - Tenant-scoped database access: `src/shared/db/tenant-transaction.ts`
 - Cross-module event contracts: `src/shared/events/`
-- Better Auth setup: `src/server/plugins/auth/auth.ts`; the frozen FK contract is `db/better-auth-schema.sql`
+- Better Auth instance: `src/server/auth/auth.ts`; the Fastify plugin that mounts it: `src/server/plugins/auth.ts`; active-org and role resolution: `src/server/auth/organization-context.ts`; the frozen FK contract: `db/better-auth-schema.sql`
 - Configuration: `src/config/env.ts` for the application, `src/config/auth-env.ts` for the subset Better Auth needs
-- Entrypoints: `src/index.ts` dispatches to `src/api.ts` or `src/worker.ts` on `process.argv[2]`
+- Entrypoints: `src/index.ts` dispatches to `src/api.ts` or `src/worker.ts` on `process.argv[2]`; both the api and the tests build the instance through `src/server/build-app.ts`
 - Writing a migration or a query against tenant data? Read `docs/genesis/DOMAIN.md` first — RLS policy shape, the GUC contract, and the canonical event catalog.
 
 ## Running and verifying
@@ -43,8 +43,10 @@ Self-hosted, multi-tenant status page platform. TypeScript on Node 24, Fastify 5
 - An unset `app.current_org_id` reads back as `''`, not NULL, on any connection that has previously set it — a custom GUC reverts to its reset value. Never write a policy that treats unset as unrestricted: no `is null` branch, no `coalesce` over the GUC. Both forms fail closed today; only one keeps doing so.
 - pnpm 12 reads settings from `pnpm-workspace.yaml` (`allowBuilds`), not from a `pnpm` key in `package.json`, which it silently ignores.
 - The `dev` script's `--env-file` sits after the entry path, so tsx forwards it to the app as argv and it has no effect. `.env` reaches the application only through `src/config`.
-- `@fastify/autoload` scans `src/server/plugins` recursively and evaluates what it finds at boot. A module placed there that is not a Fastify plugin still runs.
+- `@fastify/autoload` scans `src/server/plugins` recursively and evaluates what it finds at boot. Put anything that is not a Fastify plugin elsewhere; that is why the Better Auth instance lives in `src/server/auth/`.
 - postgres.js declares `TransactionSql` as `Omit<Sql, ...>`, which drops the call signature, so `tx\`select ...\`` looks untyped. Use `TenantTransaction` from `src/shared/db/tenant-transaction.ts`, which absorbs the cast.
 - Container healthchecks must target `127.0.0.1`, not `localhost`. Inside a container `localhost` resolves to `::1` first while Fastify binds IPv4, and the probe is refused.
+- Better Auth rejects a cookie-authenticated state change that arrives without an `Origin` matching `BETTER_AUTH_URL` or a trusted origin, with `MISSING_OR_NULL_ORIGIN`. Browsers send it; `app.inject` and `curl` do not.
+- `Headers.forEach` folds repeated headers into one comma-joined value, which corrupts `Set-Cookie`. Use `getSetCookie()` when translating a `Response` back to a Fastify reply.
 - Upgrading `better-auth` is expected to fail `auth:schema:check`. Fix it with a new migration plus a regenerated `db/better-auth-schema.sql`.
 - A new table carrying `org_id` needs RLS enabled, `FORCE`d, and a policy. `src/shared/db/tenant-rls-coverage.integration.test.ts` fails otherwise; behavioural tests will not catch it.
