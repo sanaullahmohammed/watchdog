@@ -20,7 +20,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const CONFIG = 'src/server/plugins/auth/auth.ts';
+const CONFIG = 'src/server/auth/auth.ts';
 const BASELINE = 'db/better-auth-schema.sql';
 
 // Resolved explicitly rather than relying on PATH, so the script behaves the

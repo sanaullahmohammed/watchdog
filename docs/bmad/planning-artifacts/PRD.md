@@ -33,14 +33,14 @@ Shared database, `org_id` row-scoping, Postgres RLS with `FORCE`. Path-based pub
 - **Requirement:** Better Auth is mounted as a Fastify plugin; users can sign up, sign in, create organizations, switch active orgs, and belong to multiple orgs.
 - **Verification:** Integration tests cover signup/login/org creation/active-org resolution.
 - **Phase:** 1
-- **Current status:** Partial - the Better Auth schema is frozen as a migration with a CI drift check, but the Fastify plugin is not mounted and no auth route is served.
+- **Current status:** Done - Better Auth is mounted at `/api/auth/*`; signup, signin and organization creation are covered by integration tests through the same Fastify instance the api entrypoint builds, and verified end to end against the Compose stack.
 
 ### FR2: Teams + membership
 
 - **Requirement:** Teams and memberships are provided by the Better Auth organization plugin; WatchDog consumes them for active-org context and authorization.
 - **Verification:** Unit and integration tests validate role lookup, membership-based org resolution, and access checks through Better Auth-owned tables.
 - **Phase:** 1
-- **Current status:** Partial - the organization plugin is configured with teams enabled and its tables exist; nothing consumes them yet.
+- **Current status:** Done - `src/server/auth/organization-context.ts` resolves session to active organization to role, falling back to membership when the session carries no active org, and rejects a role outside the owner/admin/member ladder. Covered by integration tests.
 
 ### FR3: Tenant isolation
 

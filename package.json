@@ -29,7 +29,7 @@
     "db:migrate": "dbmate -e DBMATE_DATABASE_URL up",
     "db:create-seed": "dbmate -e DBMATE_DATABASE_URL -d ./db/seeds/ new",
     "db:seed": "dbmate -e DBMATE_DATABASE_URL -d ./db/seeds/ up",
-    "auth:schema:generate": "auth generate --config src/server/plugins/auth/auth.ts --output db/better-auth-schema.sql --yes",
+    "auth:schema:generate": "auth generate --config src/server/auth/auth.ts --output db/better-auth-schema.sql --yes",
     "auth:schema:check": "node scripts/check-auth-schema.mjs",
     "depcruise": "depcruise",
     "deps:validate": "depcruise src --config .dependency-cruiser.js --output-type err-long",
