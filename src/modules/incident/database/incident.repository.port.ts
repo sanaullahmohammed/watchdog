@@ -27,6 +27,21 @@ export interface IncidentRepository {
     id: string,
     patch: UpdateIncidentProps,
   ): Promise<IncidentEntity | undefined>;
+  /**
+   * Appends a timeline entry. There is deliberately no update or delete
+   * counterpart: the privilege is revoked at the database, so one here would
+   * only fail later and less clearly.
+   */
+  appendUpdate(
+    tx: TenantTransaction,
+    entry: {
+      orgId: string;
+      incidentId: string;
+      status: IncidentStatus;
+      message: string;
+      createdByUserId: string | null;
+    },
+  ): Promise<string>;
   replaceAffectedServices(
     tx: TenantTransaction,
     incident: IncidentEntity,

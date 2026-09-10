@@ -128,6 +128,28 @@ export default function incidentRepository({
       }
     },
 
+    async appendUpdate(
+      tx: TenantTransaction,
+      entry: {
+        orgId: string;
+        incidentId: string;
+        status: IncidentStatus;
+        message: string;
+        createdByUserId: string | null;
+      },
+    ) {
+      const rows = await tx.sql<{ id: string }[]>`
+        insert into incident_updates (
+          org_id, incident_id, status, message, created_by_user_id
+        ) values (
+          ${entry.orgId}, ${entry.incidentId}, ${entry.status},
+          ${entry.message}, ${entry.createdByUserId}
+        )
+        returning id
+      `;
+      return rows[0].id;
+    },
+
     async findById(tx: TenantTransaction, id: string) {
       const rows = await tx.sql<IncidentModel[]>`
         select * from incidents where id = ${id} limit 1
