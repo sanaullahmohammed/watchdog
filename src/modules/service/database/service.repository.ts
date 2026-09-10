@@ -1,4 +1,7 @@
-import type { ServiceRepository } from '@/modules/service/database/service.repository.port';
+import type {
+  ListServicesFilter,
+  ServiceRepository,
+} from '@/modules/service/database/service.repository.port';
 import {
   ServiceGroupNotInOrganizationError,
   ServiceSlugAlreadyExistsError,
@@ -17,6 +20,28 @@ export default function serviceRepository({
   serviceMapper,
 }: Dependencies): ServiceRepository {
   return {
+    async list(tx: TenantTransaction, filter: ListServicesFilter) {
+      // RLS already scopes this to the organization; these are the visibility
+      // axes on top of it.
+      //
+      // The axes are independent in what they hide but not in precedence:
+      // `includeArchived` is an admin affordance and must never reopen a public
+      // surface. A public composition therefore always excludes archived
+      // services, whatever else was asked for. Treating the two as freely
+      // combinable put an archived service on a public list.
+      const showArchived =
+        filter.includeArchived === true && !filter.publicOnly;
+
+      const rows = await tx.sql<ServiceModel[]>`
+        select * from services
+        where true
+          ${showArchived ? tx.sql`` : tx.sql`and archived_at is null`}
+          ${filter.publicOnly ? tx.sql`and is_public = true` : tx.sql``}
+        order by display_order asc, name asc
+      `;
+      return rows.map(serviceMapper.toDomain);
+    },
+
     async insert(tx: TenantTransaction, service: ServiceEntity) {
       try {
         await tx.sql`
