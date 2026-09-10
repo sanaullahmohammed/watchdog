@@ -21,3 +21,20 @@ export const serviceCreatedEvent =
 
 export const serviceUpdatedEvent =
   serviceEventCreator<ServiceEventPayload>('updated');
+
+export type ServiceGroupEventPayload = {
+  id: string;
+  orgId: string;
+  slug: string;
+};
+
+const serviceGroupEventCreator = actionCreatorFactory('service_group');
+
+export const serviceGroupCreatedEvent =
+  serviceGroupEventCreator<ServiceGroupEventPayload>('created');
+
+export const serviceGroupUpdatedEvent =
+  serviceGroupEventCreator<ServiceGroupEventPayload>('updated');
+
+export const serviceGroupDeletedEvent =
+  serviceGroupEventCreator<ServiceGroupEventPayload>('deleted');

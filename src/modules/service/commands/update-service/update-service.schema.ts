@@ -12,6 +12,11 @@ export const updateServiceRequestDtoSchema = Type.Object({
   description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   isPublic: Type.Optional(Type.Boolean()),
   displayOrder: Type.Optional(Type.Integer({ minimum: 0 })),
+  // Assignment to a group. Null detaches. A group in another organization is
+  // refused by the composite foreign key, not by a check here.
+  serviceGroupId: Type.Optional(
+    Type.Union([Type.String({ format: 'uuid' }), Type.Null()]),
+  ),
 });
 
 export type UpdateServiceRequestDto = Static<

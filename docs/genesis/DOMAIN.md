@@ -622,6 +622,30 @@ with check (
 
 Apply the same pattern to all tenant-scoped WatchDog tables that carry `org_id`.
 
+
+### Tenant-scoped foreign keys
+
+Row level security does not protect foreign keys. PostgreSQL performs referential integrity checks with row security disabled, so a tenant can reference a row it cannot read. Verified directly: as `watchdog_app` scoped to organization A, selecting another organization's `service_groups` row returned nothing while inserting a `services` row referencing that same id succeeded.
+
+RLS protects reads and writes *of* a row. It says nothing about what a row may point *at*.
+
+**Every foreign key between two tenant-scoped tables includes `org_id` in the key.** The referenced table carries a unique constraint on `(id, org_id)`, and the referencing table's foreign key spans `(<ref>_id, org_id)`. The database then refuses a cross-tenant reference itself, rather than relying on an application check that a single missing validation would defeat.
+
+```sql
+alter table service_groups
+  add constraint service_groups_id_org_uk unique (id, org_id);
+
+alter table services
+  add constraint services_service_group_id_fkey
+  foreign key (service_group_id, org_id)
+  references service_groups (id, org_id)
+  on delete set null (service_group_id);
+```
+
+Two details make it work. `MATCH SIMPLE`, the default, leaves the constraint unenforced when any column is null, so a nullable reference such as an ungrouped service stays legal. And `on delete set null (service_group_id)` names the column to clear, because `org_id` is `NOT NULL` and a plain `SET NULL` would try to clear it too.
+
+This applies to every such relationship in this document — `incident_service_impacts` to `incidents` and `services`, `maintenance_services` to `maintenance` and `services`, `incidents.origin_monitor_id` to `monitors`, `check_results` and `uptime_rollups` to their monitors. `src/shared/db/tenant-rls-coverage.integration.test.ts` fails on any foreign key between two `org_id` tables that omits it.
+
 ### Join table policy sketch
 
 Join tables include `org_id` to avoid relying on join-based RLS for simple mutations.
