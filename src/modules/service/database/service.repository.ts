@@ -1,5 +1,8 @@
 import type { ServiceRepository } from '@/modules/service/database/service.repository.port';
-import { ServiceSlugAlreadyExistsError } from '@/modules/service/domain/service.errors';
+import {
+  ServiceGroupNotInOrganizationError,
+  ServiceSlugAlreadyExistsError,
+} from '@/modules/service/domain/service.errors';
 import type {
   ServiceEntity,
   UpdateServiceProps,
@@ -8,6 +11,7 @@ import type { ServiceModel } from '@/modules/service/service.mapper';
 import type { TenantTransaction } from '@/shared/db/tenant-transaction';
 
 const UNIQUE_VIOLATION = '23505';
+const FOREIGN_KEY_VIOLATION = '23503';
 
 export default function serviceRepository({
   serviceMapper,
@@ -65,13 +69,27 @@ export default function serviceRepository({
 
       // RLS scopes the write; a row belonging to another organization simply
       // matches nothing and returns undefined rather than raising.
-      const rows = await tx.sql<ServiceModel[]>`
-        update services set ${tx.sql(columns)}
-        where id = ${id}
-        returning *
-      `;
+      try {
+        const rows = await tx.sql<ServiceModel[]>`
+          update services set ${tx.sql(columns)}
+          where id = ${id}
+          returning *
+        `;
 
-      return rows[0] ? serviceMapper.toDomain(rows[0]) : undefined;
+        return rows[0] ? serviceMapper.toDomain(rows[0]) : undefined;
+      } catch (error) {
+        // The foreign key spans (service_group_id, org_id), so a group in
+        // another organization fails here rather than being silently accepted.
+        // Reported as an invalid argument rather than leaking that the group
+        // exists somewhere else.
+        if ((error as { code?: string }).code === FOREIGN_KEY_VIOLATION) {
+          throw new ServiceGroupNotInOrganizationError(
+            String(patch.serviceGroupId),
+            error as Error,
+          );
+        }
+        throw error;
+      }
     },
 
     async findById(tx: TenantTransaction, id: string) {

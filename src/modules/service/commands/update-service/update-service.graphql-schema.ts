@@ -4,6 +4,7 @@ const serviceUpdateSchema = `
     description: String
     isPublic: Boolean
     displayOrder: Int
+    serviceGroupId: ID
   }
 
   type Mutation {
