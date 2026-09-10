@@ -12,6 +12,11 @@ export interface CreateIncidentProps {
   startedAt?: Date;
 }
 
+export interface UpdateIncidentProps {
+  title?: string;
+  impact?: IncidentImpact;
+}
+
 export interface IncidentEntity {
   id: string;
   orgId: string;
