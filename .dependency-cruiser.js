@@ -70,6 +70,21 @@ module.exports = {
       },
     },
 
+    {
+      name: 'no-cross-module-deps',
+      comment:
+        'Vertical slices must not import each other directly. Cross-module ' +
+        'request/response work goes through the command/query buses; ' +
+        'fire-and-forget work goes through emitted events. Shared code ' +
+        'belongs in src/shared. See ARCHITECTURE.md section 1.',
+      severity: 'error',
+      from: { path: '^src/modules/([^/]+)/' },
+      to: {
+        path: '^src/modules/([^/]+)/',
+        pathNot: '^src/modules/$1/',
+      },
+    },
+
     /* rules from the 'recommended' preset: */
     // {
     //   name: 'no-circular',

@@ -1,12 +1,11 @@
 import { userActionCreator } from '@/modules/user';
 import { UserAlreadyExistsError } from '@/modules/user/domain/user.errors';
+import { userCreatedEvent } from '@/shared/events/user.events';
 import { ConflictException } from '@/shared/exceptions';
 import type { CreateUserRequestDto } from './create-user.schema';
 
 export type CreateUserCommandResult = Promise<string>;
 export const createUserCommand =
-  userActionCreator<CreateUserRequestDto>('create');
-export const createUserEvent =
   userActionCreator<CreateUserRequestDto>('create');
 
 export default function makeCreateUser({
@@ -22,7 +21,7 @@ export default function makeCreateUser({
       const user = userDomain.createUser(payload);
       try {
         await userRepository.insert(user);
-        eventBus.emit(createUserEvent(user));
+        eventBus.emit(userCreatedEvent({ id: user.id, email: user.email }));
         return user.id;
       } catch (error: any) {
         if (error instanceof ConflictException) {
