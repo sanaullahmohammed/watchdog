@@ -101,7 +101,9 @@ Script names, confirmed against the scaffold:
 | `pnpm run build` | `tsc` to `dist`, then `resolve-tspaths` rewrites the `@/*` alias |
 | `pnpm run start:api` / `start:worker` | Production entrypoints over `dist` |
 | `pnpm run check` | Biome format + lint, `tsc --noEmit`, dependency-cruiser |
-| `pnpm run test` / `test:unit` / `test:e2e` | `node:test` specs and Cucumber |
+| `pnpm run test` / `test:unit` | `node:test` specs beside source; no database required |
+| `pnpm run test:integration` | Tenant-isolation suite; needs a migrated database and a `DATABASE_URL` pointing at `watchdog_app` |
+| `pnpm run test:e2e` | Cucumber features |
 | `pnpm run test:k6:smoke` / `test:k6:load` | k6 profiles in `tests/load` |
 | `pnpm run db:migrate` | DBMate, reading `DBMATE_DATABASE_URL` rather than `DATABASE_URL` |
 | `pnpm run auth:schema:check` | Fails if Better Auth expects schema no migration provides |
