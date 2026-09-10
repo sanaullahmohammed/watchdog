@@ -6,7 +6,8 @@
     "useIgnoreFile": true
   },
   "files": {
-    "ignoreUnknown": true
+    "ignoreUnknown": true,
+    "includes": ["**", "!.claude", "!_bmad", "!docs/bmad"]
   },
   "formatter": {
     "enabled": true,
