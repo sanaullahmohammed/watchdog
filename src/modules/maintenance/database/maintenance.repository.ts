@@ -1,4 +1,7 @@
-import type { MaintenanceRepository } from '@/modules/maintenance/database/maintenance.repository.port';
+import type {
+  ListMaintenanceFilter,
+  MaintenanceRepository,
+} from '@/modules/maintenance/database/maintenance.repository.port';
 import { UnknownMaintenanceServiceError } from '@/modules/maintenance/domain/maintenance.errors';
 import type {
   MaintenanceEntity,
@@ -22,6 +25,38 @@ export default function maintenanceRepository({
   }
 
   return {
+    async list(tx: TenantTransaction, filter: ListMaintenanceFilter) {
+      const rows = await tx.sql<MaintenanceModel[]>`
+        select * from maintenance
+        where true
+          ${filter.status ? tx.sql`and status = ${filter.status}` : tx.sql``}
+        order by scheduled_start_at desc, id desc
+      `;
+
+      // One query for the join rather than one per window; a list of ten
+      // windows should not be eleven round trips.
+      const ids = rows.map((row) => row.id);
+      const links = ids.length
+        ? await tx.sql<{ maintenance_id: string; service_id: string }[]>`
+            select maintenance_id, service_id from maintenance_services
+            where maintenance_id in ${tx.sql(ids)}
+            order by service_id
+          `
+        : [];
+
+      const byWindow = new Map<string, string[]>();
+      for (const link of links) {
+        byWindow.set(link.maintenance_id, [
+          ...(byWindow.get(link.maintenance_id) ?? []),
+          link.service_id,
+        ]);
+      }
+
+      return rows.map((row) =>
+        maintenanceMapper.toDomain(row, byWindow.get(row.id) ?? []),
+      );
+    },
+
     async insert(tx: TenantTransaction, window: MaintenanceEntity) {
       await tx.sql`
         insert into maintenance (

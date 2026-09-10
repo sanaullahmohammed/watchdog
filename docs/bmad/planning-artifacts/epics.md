@@ -663,15 +663,15 @@ So that customers are not surprised by expected downtime.
 **When** its times or affected services are updated
 **Then** the change persists and `maintenance.updated` is emitted
 
-### Story 2.13: Read and cancel maintenance windows
+### Story 2.13: Read maintenance windows
 
 As an operator,
-I want to list, read and cancel planned maintenance,
-So that plans that change are not left advertised to customers.
+I want to see planned maintenance and its state,
+So that I know what is scheduled, running, and finished.
 
 **Actor:** human
 **Satisfies:** FR8 verification — "Tests cover scheduled, in-progress, and completed states"
-**Files:** `src/modules/maintenance/queries/`, `src/modules/maintenance/commands/delete-maintenance/`
+**Files:** `src/modules/maintenance/queries/list-maintenance/`, `.../get-maintenance/`
 **Verification layer:** integration
 
 **Acceptance Criteria:**
@@ -679,6 +679,30 @@ So that plans that change are not left advertised to customers.
 **Given** an organization with windows in each state
 **When** maintenance is listed
 **Then** all three states are returned and distinguishable
+
+**Given** a window
+**When** it is read on its own
+**Then** its affected services come with it
+
+**Given** two organizations with windows
+**When** either lists or reads one
+**Then** neither sees the other's
+**And** reading another organization's window is a 404 rather than an empty result
+
+### Story 2.14: End a maintenance window
+
+As an operator,
+I want to cancel work that will not happen and close out work that has,
+So that the schedule reflects reality rather than intent.
+
+**Actor:** human
+**Satisfies:** FR8 verification — "Tests cover scheduled, in-progress, and completed states"
+**Files:** `src/modules/maintenance/commands/delete-maintenance/`, `.../complete-maintenance/`
+**Verification layer:** integration
+
+> Split from the original story 2.13, which carried four operations: two reads and two writes. The budget allows a cohesive pair, not four. The two halves also divide cleanly by criterion, and these two writes qualify under the comparison exception - the point of the story is that deleting and completing are *different*, so both are needed to show it.
+
+**Acceptance Criteria:**
 
 **Given** a scheduled window for work that never happened
 **When** it is deleted
@@ -694,11 +718,11 @@ So that plans that change are not left advertised to customers.
 **Then** its status becomes `completed` before `scheduled_end_at` is reached
 **And** the worker's later pass over it is a no-op
 
-**Given** two organizations with windows
-**When** either lists or reads one
-**Then** neither sees the other's
+**Given** a completed window
+**When** completion is attempted again
+**Then** it is a no-op emitting nothing
 
-### Story 2.14: Transition due maintenance automatically
+### Story 2.15: Transition due maintenance automatically
 
 As the worker,
 I want to start and complete maintenance windows as their times arrive,
@@ -732,7 +756,7 @@ So that an operator does not have to be awake to keep the status page honest.
 **When** the worker runs
 **Then** each is transitioned under its own tenant context
 
-### Story 2.15: Resolve effective service status
+### Story 2.16: Resolve effective service status
 
 As the system,
 I want one pure function that reduces every input to a single service status,
@@ -770,7 +794,7 @@ So that the same answer is given on the public page, the admin surface and in no
 **When** each is evaluated
 **Then** the reduction holds with no input silently dropped
 
-### Story 2.16: Recompute and announce service status
+### Story 2.17: Recompute and announce service status
 
 As the system,
 I want a service's status recomputed whenever an input to it changes,
@@ -785,7 +809,7 @@ So that `service.status_changed` fires exactly when the answer actually moves.
 
 **Given** the `service` module
 **When** any of `incident.created`, `incident.confirmed`, `incident.state_changed`, `incident.resolved`, `incident.dismissed`, `maintenance.started`, `maintenance.completed`, `maintenance.deleted`, `service.manual_override_set` or `service.manual_override_cleared` is emitted
-**Then** effective status is resolved for each affected service using story 2.15's function
+**Then** effective status is resolved for each affected service using story 2.16's function
 **And** the handler reaches those events through `src/shared/events/`, never by importing the `incident` or `maintenance` module
 
 **Given** a service whose recomputed status differs from `last_known_status`
@@ -806,7 +830,7 @@ So that `service.status_changed` fires exactly when the answer actually moves.
 **When** the handler runs
 **Then** each is recomputed under its own tenant context
 
-### Story 2.17: Serve resolved status through the service queries
+### Story 2.18: Serve resolved status through the service queries
 
 As a visitor,
 I want to receive each service's effective status rather than its raw fields,
@@ -821,7 +845,7 @@ So that I do not have to reimplement the precedence rule to understand the page.
 
 **Given** services in each of the four precedence conditions
 **When** they are listed
-**Then** each carries `last_known_status`, maintained by story 2.16
+**Then** each carries `last_known_status`, maintained by story 2.17
 **And** the query does not recompute across incidents, maintenance and monitor results per request
 
 **Given** an incident is opened or resolved against a service
@@ -832,7 +856,7 @@ So that I do not have to reimplement the precedence rule to understand the page.
 **When** both are called
 **Then** the effective status field is identical, as story 2.1's contract test requires
 
-### Story 2.18: Seed a demonstrable organization
+### Story 2.19: Seed a demonstrable organization
 
 As an operator or reviewer,
 I want one command that fills an empty database with something realistic,
