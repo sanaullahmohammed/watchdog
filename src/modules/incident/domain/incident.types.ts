@@ -9,10 +9,12 @@ export const INCIDENT_STATUSES = [
 
 export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
 
-/** Per-service and overall impact, from DOMAIN.md. */
-export const INCIDENT_IMPACTS = ['none', 'minor', 'major', 'critical'] as const;
-
-export type IncidentImpact = (typeof INCIDENT_IMPACTS)[number];
+// The impact ladder is read by the service module when resolving status, so it
+// lives in shared and is re-exported here for this module's existing importers.
+export {
+  INCIDENT_IMPACTS,
+  type IncidentImpact,
+} from '@/shared/domain/status-inputs';
 
 /** How an incident came to exist. */
 export const INCIDENT_SOURCES = [
