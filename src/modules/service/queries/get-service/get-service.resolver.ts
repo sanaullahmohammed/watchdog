@@ -2,16 +2,16 @@ import { ErrorWithProps } from 'mercurius';
 import { toServiceResponse } from '@/modules/service/dtos/service.present';
 import { resolveOrganizationContext } from '@/server/auth/organization-context';
 import {
-  type ListServicesQueryResult,
-  listServicesQuery,
-} from './list-services.handler';
+  type GetServiceQueryResult,
+  getServiceQuery,
+} from './get-service.handler';
 
-export default async function listServicesResolver(
+export default async function getServiceResolver(
   fastify: FastifyRouteInstance,
 ) {
   fastify.graphql.defineResolvers({
     Query: {
-      services: async (_, args, ctx) => {
+      service: async (_, args, ctx) => {
         const context = await resolveOrganizationContext(
           ctx.reply.request.headers,
         );
@@ -21,12 +21,11 @@ export default async function listServicesResolver(
           });
         }
 
-        const services =
-          await fastify.queryBus.execute<ListServicesQueryResult>(
-            listServicesQuery({ ...(args.filter ?? {}), orgId: context.orgId }),
-          );
+        const service = await fastify.queryBus.execute<GetServiceQueryResult>(
+          getServiceQuery({ id: args.id, orgId: context.orgId }),
+        );
 
-        return services.map(toServiceResponse);
+        return toServiceResponse(service);
       },
     },
   });

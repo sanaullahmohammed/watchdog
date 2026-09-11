@@ -165,6 +165,7 @@ Outages are detected rather than noticed. Synthetic checks run on schedule, resu
 **FRs covered:** FR10, FR11, FR12, FR13, FR18
 
 - Carries the monitor half of FR4's archive semantics, moved from Story 2.4. The due-monitor query joins `services` and filters `services.archived_at IS NULL`, so archiving suspends a service's monitors without writing to them and restoring resumes the enabled ones. Story 2.4 cannot verify this because it writes nothing to monitors; the story that builds the query must.
+- Carries the monitor half of FR5's precedence rule, the fourth condition Story 2.18 could not construct. Monitor-derived state (`healthy`, `degraded`, `failing`) must reach `resolveServiceStatus` through the recomputation handler, which today passes `monitorState: null`, triggered by the `monitor.*` events DOMAIN.md's Status recomputation section already lists. Verified by a service listing the status its monitor state resolves to.
 
 ### Epic 6: Subscriber notifications
 
@@ -875,6 +876,8 @@ So that I do not have to reimplement the precedence rule to understand the page.
 **Given** the same query over REST and GraphQL
 **When** both are called
 **Then** the effective status field is identical, as story 2.1's contract test requires
+
+*Amended during implementation:* the fourth precedence condition, monitor-derived state, cannot be constructed until Epic 5 adds monitors. This story verifies the manual override, active incident and active maintenance conditions plus the no-input default, and the monitor case is carried into Epic 5's entry. The reads stay on the authenticated admin surface, because Epic 3 owns the unauthenticated payload. A read by id returns an archived service with `archivedAt` set, since DOMAIN excludes archived services only from lists and public pages. A read issued the instant a status-moving command returns can precede its recomputation; see DOMAIN.md, Status recomputation.
 
 ### Story 2.19: Seed a demonstrable organization
 

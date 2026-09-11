@@ -925,6 +925,8 @@ This is a derived value held for two reasons: it is the only way to diff, and it
 
 Where the result differs from `last_known_status`, the handler writes the new value and emits `service.status_changed`, after the transaction commits. Where it does not differ, nothing is written and nothing is emitted; the handler is idempotent and safe to run repeatedly.
 
+**Status settles just after the command that moved it, not atomically with it.** The command commits and returns; the event it emitted then drives a recomputation the command does not await. A read issued the instant a status-moving command returns can therefore still see the previous value, for as long as the handler takes: milliseconds, in-process. Nothing needs invalidating, since every read consults `last_known_status` directly. A client that must observe the change as it lands listens for `service.status_changed` (Epic 4) rather than re-reading.
+
 **Recomputations of one organization are serialized.** The handler locks the organization's live services (`for no key update`) before reading any input. Without the lock, two concurrent recomputations can both see the old value and both announce the change, or a slower one can overwrite a newer answer with a stale one. `for no key update` rather than `for update`, so an insert whose foreign-key check takes `for key share` on a service, such as naming it on an incident, does not wait behind a recomputation.
 
 Each recomputation runs under the tenant context of the organization named in the triggering event, so one worker pass across several organizations recomputes each under its own.
