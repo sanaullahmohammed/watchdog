@@ -103,7 +103,7 @@ Script names, confirmed against the scaffold:
 | `pnpm run check` | Biome format + lint, `tsc --noEmit`, dependency-cruiser |
 | `pnpm run test` / `test:unit` | `node:test` specs beside source; no database required |
 | `pnpm run test:integration` | Tenant-isolation suite; needs a migrated database and a `DATABASE_URL` pointing at `watchdog_app` |
-| `pnpm run test:e2e` | Cucumber features |
+| `pnpm run test:e2e` | Cucumber harness (world, hooks, common steps). It holds no features yet; the boilerplate's user features went with that module, and the public status page brings the first real ones |
 | `pnpm run test:k6:smoke` / `test:k6:load` | k6 profiles in `tests/load` |
 | `pnpm run db:migrate` | DBMate, reading `DBMATE_DATABASE_URL` rather than `DATABASE_URL` |
 | `pnpm run db:seed` | Creates a demo organization, `acme-demo`, through the application's own commands and prints the sign-in. A second run is a no-op; refuses under `NODE_ENV=production` |
