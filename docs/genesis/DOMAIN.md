@@ -170,7 +170,7 @@ Append-only update timeline for an incident.
 | `status` | `text` | CHECK: `draft`, `investigating`, `identified`, `monitoring`, `resolved`; status after this update |
 | `message` | `text` | Public/admin update body |
 | `created_by_user_id` | `text null` | Ref -> Better Auth user; null for system-generated |
-| `created_at` | `timestamptz` | Required; append-only ordering |
+| `created_at` | `timestamptz` | Required; append-only ordering. Defaults to `clock_timestamp()`, the time the entry is written, not the transaction's start, so order follows the incident's row lock |
 
 Who writes an entry, and what announces it:
 
@@ -730,6 +730,7 @@ stateDiagram-v2
 Invariants:
 
 - `resolved_at` is set exactly once when transitioning to `resolved`.
+- Transitions of one incident are serialized. The handler reads the incident under a row lock, so concurrent requests are judged one after another against the committed status, and `resolved` stays terminal under concurrency. A posted update reads under a share lock, so it records the committed status.
 - Every transition appends an `incident_updates` row in the same transaction, the declaration (`[none] -> investigating`) included. See IncidentUpdate for who writes entries and which event announces them.
 - Dismissing a draft is a terminal draft-cleanup path: `DismissDraftIncidentCommand` sets `status = 'resolved'`/`resolved_at` as needed but emits `incident.dismissed` only, never `incident.resolved`.
 - Confirming a draft (`draft -> investigating`) emits `incident.confirmed` as well as `incident.state_changed`. It is the public announcement that a monitor-born incident is real, and one of the status recomputation triggers.

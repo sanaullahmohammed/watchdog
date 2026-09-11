@@ -107,15 +107,19 @@ describe('Story 2.11: read incidents and their timelines', () => {
   });
 
   it('orders a timeline deterministically when entries share a timestamp', async () => {
-    // Written inside one transaction, so created_at is identical for all three
-    // and only the id tiebreaker can order them.
+    // All three carry the same created_at, set explicitly. The column defaults
+    // to clock_timestamp(), so rows written in one transaction no longer tie on
+    // their own, and only the id tiebreaker can order these.
+    const at = new Date();
     const ids = await withTenantTransaction(orgAId, async ({ sql: tx }) => {
       const rows = await tx<{ id: string }[]>`
-        insert into incident_updates (org_id, incident_id, status, message)
+        insert into incident_updates (
+          org_id, incident_id, status, message, created_at
+        )
         values
-          (${orgAId}, ${openIncidentId}, 'investigating', 'one'),
-          (${orgAId}, ${openIncidentId}, 'investigating', 'two'),
-          (${orgAId}, ${openIncidentId}, 'investigating', 'three')
+          (${orgAId}, ${openIncidentId}, 'investigating', 'one', ${at}),
+          (${orgAId}, ${openIncidentId}, 'investigating', 'two', ${at}),
+          (${orgAId}, ${openIncidentId}, 'investigating', 'three', ${at})
         returning id
       `;
       return rows.map((row) => row.id);

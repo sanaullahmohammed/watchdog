@@ -193,9 +193,22 @@ export default function incidentRepository({
       return rows[0].id;
     },
 
-    async findById(tx: TenantTransaction, id: string) {
+    async findById(
+      tx: TenantTransaction,
+      id: string,
+      options: { lock?: 'update' | 'share' } = {},
+    ) {
+      // Fixed fragments, never interpolated text. `no key update` rather than
+      // `update`, so the foreign-key checks of timeline inserts, which take
+      // `for key share`, are not blocked by a transition in progress.
+      const lock =
+        options.lock === 'update'
+          ? tx.sql`for no key update`
+          : options.lock === 'share'
+            ? tx.sql`for share`
+            : tx.sql``;
       const rows = await tx.sql<IncidentModel[]>`
-        select * from incidents where id = ${id} limit 1
+        select * from incidents where id = ${id} limit 1 ${lock}
       `;
       if (!rows[0]) return undefined;
 

@@ -38,9 +38,17 @@ export interface IncidentRepository {
   >;
   /** Writes the incident and its per-service impact in one transaction. */
   insert(tx: TenantTransaction, incident: IncidentEntity): Promise<void>;
+  /**
+   * `lock` holds a row lock until the transaction ends. Transitions take
+   * `update` (FOR NO KEY UPDATE), so two of them cannot both pass the legality
+   * check against the same status. Posted updates take `share`, so they record
+   * the committed status, never one a transition is about to replace. Neither
+   * blocks the `for key share` that foreign-key checks take.
+   */
   findById(
     tx: TenantTransaction,
     id: string,
+    options?: { lock?: 'update' | 'share' },
   ): Promise<IncidentEntity | undefined>;
   /** Writes a validated status. `resolvedAt` is set only when landing there. */
   updateStatus(
