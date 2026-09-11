@@ -802,7 +802,7 @@ const SERVICE_STATUS_RANK: Record<ServiceStatus, number> = {
 Two consequences of this being a worst-of reduction rather than a cascade, stated because story work misread it once already:
 
 - Several active incidents naming one service reduce to the worst impact among them. `activeIncidentImpacts` is a list and is reduced, never sampled.
-- An in-progress maintenance window is always considered, not only when no incident is active. A `major` incident during planned maintenance resolves to `major_outage`, since maintenance ranks 1 against 4.
+- An in-progress maintenance window is always considered, not only when no incident is active. A `major` incident during planned maintenance resolves to `partial_outage`: `statusFromIncidentImpact` maps `major` to `partial_outage`, which ranks 3 against maintenance's 1. Only a `critical` incident yields `major_outage`. (An earlier revision of this note said `major_outage`; the mapping above was always authoritative.)
 
 ### Incident impact values
 

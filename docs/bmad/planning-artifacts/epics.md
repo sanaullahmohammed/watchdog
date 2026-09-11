@@ -784,7 +784,13 @@ So that the same answer is given on the public page, the admin surface and in no
 
 **Given** an in-progress maintenance window and an active incident of `major` impact
 **When** status is resolved
-**Then** `major_outage` wins over `maintenance`, which ranks 1 against 4 in `SERVICE_STATUS_RANK`
+**Then** `partial_outage` wins over `maintenance` — DOMAIN maps `major` to `partial_outage`, which ranks 3 against 1
+
+**Given** an in-progress maintenance window and an active incident of `critical` impact
+**When** status is resolved
+**Then** `major_outage` wins, the only impact that maps there
+
+> Corrected while implementing: this criterion originally claimed a `major` incident yields `major_outage`. DOMAIN's `statusFromIncidentImpact` says otherwise, and it owns the rule. The principle the criterion was written to test - an incident outranks maintenance rather than being displaced by it - was right; the example was not.
 
 **Given** no override, no incident, no maintenance and no monitor
 **When** status is resolved
