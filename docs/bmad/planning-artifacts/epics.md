@@ -610,6 +610,8 @@ So that customers get a running account rather than a single stale statement.
 **When** an edit or delete is attempted through the repository
 **Then** it is refused; the timeline is append-only
 
+*Fixed after Epic 2:* stories 2.8 and 2.9 were built before this story created `incident_updates`, so declaring and transitioning appended no entry, contrary to DOMAIN's invariant that every transition does. Both now append one in the same transaction, with an optional operator message or a customer-worded default, attributed to the actor. Found while writing the story 2.19 seed.
+
 ### Story 2.11: Read an incident timeline in order
 
 As a visitor,

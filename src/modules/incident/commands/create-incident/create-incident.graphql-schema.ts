@@ -16,6 +16,7 @@ const incidentCreateSchema = `
     impact: IncidentImpact!
     startedAt: String
     affectedServices: [AffectedServiceInput!]
+    message: String
   }
 
   type Mutation {

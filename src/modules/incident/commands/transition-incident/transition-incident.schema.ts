@@ -12,6 +12,14 @@ export const transitionIncidentRequestDtoSchema = Type.Object({
         'Target status; the transition must be legal from the current one',
     }),
   ),
+  message: Type.Optional(
+    Type.String({
+      minLength: 1,
+      maxLength: 4000,
+      description:
+        'The timeline entry this transition appends; a default is written when absent',
+    }),
+  ),
 });
 
 export type TransitionIncidentRequestDto = Static<

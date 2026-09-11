@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
+import { timelineMessageFor } from '@/modules/incident/domain/incident-timeline';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
@@ -94,6 +95,18 @@ async function statusOf(orgId: string, id: string) {
     >`select status, title, impact, resolved_at from incidents where id = ${id}`;
     return rows[0];
   });
+}
+
+async function timelineOf(orgId: string, id: string) {
+  return withTenantTransaction(orgId, async ({ sql: tx }) => [
+    ...(await tx<
+      { status: string; message: string; created_by_user_id: string | null }[]
+    >`
+      select status, message, created_by_user_id from incident_updates
+      where incident_id = ${id}
+      order by created_at, id
+    `),
+  ]);
 }
 
 describe('Story 2.9: move an incident through its lifecycle', () => {
@@ -226,6 +239,48 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
       [],
       'only leaving draft confirms an incident',
     );
+  });
+
+  it('appends a timeline entry with each transition, attributed to whoever made it', async () => {
+    const id = await declare(cookieA, 'Timeline of moves');
+
+    const worded = await app.inject({
+      method: 'POST',
+      url: `/api/v1/incidents/${id}/transition`,
+      headers: { cookie: cookieA, origin: ORIGIN },
+      payload: { status: 'identified', message: 'A bad deploy; rolling back.' },
+    });
+    assert.equal(worded.statusCode, 200, worded.body);
+    const unworded = await transition(cookieA, id, 'monitoring');
+    assert.equal(unworded.statusCode, 200, unworded.body);
+
+    assert.deepEqual(await timelineOf(orgAId, id), [
+      {
+        status: 'investigating',
+        message: timelineMessageFor(null, 'investigating'),
+        created_by_user_id: userAId,
+      },
+      {
+        status: 'identified',
+        message: 'A bad deploy; rolling back.',
+        created_by_user_id: userAId,
+      },
+      {
+        status: 'monitoring',
+        message: timelineMessageFor('identified', 'monitoring'),
+        created_by_user_id: userAId,
+      },
+    ]);
+  });
+
+  it('writes no timeline entry for a refused transition', async () => {
+    const id = await declare(cookieA, 'Refused move');
+    const before = (await timelineOf(orgAId, id)).length;
+
+    const refused = await transition(cookieA, id, 'draft');
+
+    assert.notEqual(refused.statusCode, 200, refused.body);
+    assert.equal((await timelineOf(orgAId, id)).length, before);
   });
 
   it('treats an edit as incident.updated, distinct from a state change', async () => {

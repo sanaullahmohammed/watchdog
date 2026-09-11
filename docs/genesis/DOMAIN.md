@@ -172,6 +172,12 @@ Append-only update timeline for an incident.
 | `created_by_user_id` | `text null` | Ref -> Better Auth user; null for system-generated |
 | `created_at` | `timestamptz` | Required; append-only ordering |
 
+Who writes an entry, and what announces it:
+
+- Declaring an incident and every transition append one, in the same transaction as the status they record, so the timeline cannot disagree with the incident. The operator may supply the message; otherwise a default worded for customers is written, and a blank message counts as none. `created_by_user_id` is whoever made the move.
+- `PostIncidentUpdateCommand` appends one at the incident's current status.
+- Only a posted update is announced as `incident.update_posted`. An entry written by declaring or transitioning is announced by that command's own event (`incident.created`, `incident.state_changed` and its companions), so one change never notifies subscribers twice.
+
 FKs:
 
 - `org_id` -> Better Auth `organization.id`
@@ -724,7 +730,7 @@ stateDiagram-v2
 Invariants:
 
 - `resolved_at` is set exactly once when transitioning to `resolved`.
-- Every transition appends an `incident_updates` row in the same transaction.
+- Every transition appends an `incident_updates` row in the same transaction, the declaration (`[none] -> investigating`) included. See IncidentUpdate for who writes entries and which event announces them.
 - Dismissing a draft is a terminal draft-cleanup path: `DismissDraftIncidentCommand` sets `status = 'resolved'`/`resolved_at` as needed but emits `incident.dismissed` only, never `incident.resolved`.
 - Confirming a draft (`draft -> investigating`) emits `incident.confirmed` as well as `incident.state_changed`. It is the public announcement that a monitor-born incident is real, and one of the status recomputation triggers.
 - Public notifications are emitted after the transaction commits.

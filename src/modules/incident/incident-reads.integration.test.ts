@@ -131,8 +131,11 @@ describe('Story 2.11: read incidents and their timelines', () => {
       return (JSON.parse(response.body) as { id: string }[]).map((e) => e.id);
     };
 
-    const expected = [...ids].sort();
-    assert.deepEqual(await read(), expected);
+    // Declaring the incident wrote the first entry, earlier; these follow it.
+    const timeline = await read();
+    assert.ok(!ids.includes(timeline[0]), 'the declaration opens the timeline');
+    const expected = [timeline[0], ...[...ids].sort()];
+    assert.deepEqual(timeline, expected);
     // Read twice: an order that depends on the planner rather than the index
     // can differ between identical queries.
     assert.deepEqual(await read(), expected);

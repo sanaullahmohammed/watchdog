@@ -25,6 +25,14 @@ export const createIncidentRequestDtoSchema = Type.Object({
       }),
     ),
   ),
+  message: Type.Optional(
+    Type.String({
+      minLength: 1,
+      maxLength: 4000,
+      description:
+        'The opening timeline entry; a default is written when absent',
+    }),
+  ),
 });
 
 export type CreateIncidentRequestDto = Static<
