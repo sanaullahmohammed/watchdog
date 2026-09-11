@@ -12,5 +12,5 @@
     "noImplicitAny": false,
     "noStrictGenericChecks": false
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests", "db/seeds"]
 }

@@ -25,6 +25,7 @@ Self-hosted, multi-tenant status page platform. TypeScript on Node 24, Fastify 5
 - `pnpm run test` is unit only and needs no database.
 - `pnpm run test:integration` needs `docker compose up -d` and a `DATABASE_URL` pointing at `watchdog_app`. Pointed at the owner role it fails on its first assertion rather than passing vacuously.
 - `pnpm run auth:schema:check` needs a migrated database; it is not part of `pnpm run check`.
+- `pnpm run db:seed` creates the `acme-demo` organization through the application's commands and prints its sign-in. A second run is a no-op. It is for people: no test may read or depend on seeded rows, and the suites must pass seeded or not.
 - Run both of the above locally before pushing. Neither can run in `pnpm run check` because both need a live database, so CI's `database` job is otherwise their first execution.
 - After changing dependencies in `package.json`, run `pnpm install --lockfile-only` before anything using `--frozen-lockfile`, including the Docker build.
 
