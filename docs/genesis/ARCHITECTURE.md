@@ -182,6 +182,8 @@ The in-process bus delivers one event to **every** handler registered for its ty
 
 Several reactions to one event is the design here, not an edge case: the NOTIFY bridge fans an event out to clients while a module recomputes derived state from the same event. A map to one handler would let the second registration silently replace the first. And a domain event with no in-process subscriber is normal rather than an error, since most of the catalog exists to be bridged or simply to be part of the record.
 
+**Handlers are isolated from each other and from the emitter.** Events are emitted after the emitting command commits, so no handler can undo that work, and a handler's failure must not pretend it did. The bus catches a synchronous throw or a rejected promise per handler, reports it to its `onHandlerError` (the app logs it), and still runs the handlers after it. The emitting request keeps its success response. The bus does not retry, so a handler whose work matters owns its own recovery. For status recomputation, that is the reconciliation pass the Epic 2 retrospective proposes. Before this rule, one throwing listener skipped every listener after it and turned a committed change into a 500 (retrospective R-4).
+
 `NOTIFY` payloads are intentionally small. Subscribers re-query read models by `orgId`, `aggregateType`, and `aggregateId` under the appropriate tenant context.
 
 ### 5.2 Fanout path
