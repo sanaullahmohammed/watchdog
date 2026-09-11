@@ -1,5 +1,6 @@
 import type { ServiceRepository } from '@/modules/service/database/service.repository.port';
 import type { ServiceGroupRepository } from '@/modules/service/database/service-group.repository.port';
+import type serviceStatusRepository from '@/modules/service/database/service-status.repository';
 import type serviceDomain from '@/modules/service/domain/service.domain';
 import type serviceGroupDomain from '@/modules/service/domain/service-group.domain';
 import type serviceMapper from '@/modules/service/service.mapper';
@@ -14,6 +15,7 @@ declare global {
     serviceGroupMapper: ReturnType<typeof serviceGroupMapper>;
     serviceGroupRepository: ServiceGroupRepository;
     serviceGroupDomain: ReturnType<typeof serviceGroupDomain>;
+    serviceStatusRepository: ReturnType<typeof serviceStatusRepository>;
   }
 }
 

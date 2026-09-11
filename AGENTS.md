@@ -54,3 +54,5 @@ Self-hosted, multi-tenant status page platform. TypeScript on Node 24, Fastify 5
 - `Headers.forEach` folds repeated headers into one comma-joined value, which corrupts `Set-Cookie`. Use `getSetCookie()` when translating a `Response` back to a Fastify reply.
 - Upgrading `better-auth` is expected to fail `auth:schema:check`. Fix it with a new migration plus a regenerated `db/better-auth-schema.sql`.
 - A new table carrying `org_id` needs RLS enabled, `FORCE`d, and a policy. `src/shared/db/tenant-rls-coverage.integration.test.ts` fails otherwise; behavioural tests will not catch it.
+- `eventBus.emit` does not await its handlers. An async handler must contain its own errors, because an unhandled rejection ends the process, and a test must wait for it rather than poll. The status recomputation handler exposes `drain()` for that.
+- Integration test files run concurrently against one database. A new test must not run a global worker pass such as `runMaintenancePass`: it acts on every organization and can take due windows another file is waiting on. Emit the event the worker would, or execute the per-organization command.

@@ -14,6 +14,13 @@ export const incidentCreatedEvent =
 export const incidentUpdatedEvent =
   incidentEventCreator<IncidentEventPayload>('updated');
 
+/**
+ * Public. A draft moved into `investigating`: a monitor-born incident is now
+ * real. Emitted alongside `incident.state_changed`, never instead of it.
+ */
+export const incidentConfirmedEvent =
+  incidentEventCreator<IncidentEventPayload>('confirmed');
+
 /** Admin-only. Fires on every legal transition, including into `resolved`. */
 export const incidentStateChangedEvent = incidentEventCreator<
   IncidentEventPayload & { from: string; to: string }
