@@ -6,6 +6,7 @@ import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import {
+  incidentConfirmedEvent,
   incidentDismissedEvent,
   incidentResolvedEvent,
   incidentStateChangedEvent,
@@ -193,6 +194,38 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
       'a dismissed draft must never announce itself as resolved',
     );
     assert.equal((await statusOf(orgAId, id)).status, 'resolved');
+  });
+
+  it('announces a confirmed draft as incident.confirmed, and only that move', async () => {
+    const [{ id }] = await withTenantTransaction(
+      orgAId,
+      async ({ sql: tx }) => {
+        return tx<{ id: string }[]>`
+        insert into incidents (org_id, title, status, impact, source)
+        values (${orgAId}, 'Monitor alarm', 'draft', 'major', 'monitoring')
+        returning id
+      `;
+      },
+    );
+
+    const confirming = await capturing(
+      [incidentStateChangedEvent.type, incidentConfirmedEvent.type],
+      () => transition(cookieA, id, 'investigating'),
+    );
+    assert.equal(confirming.result.statusCode, 200, confirming.result.body);
+    assert.deepEqual(confirming.seen, [
+      incidentStateChangedEvent.type,
+      incidentConfirmedEvent.type,
+    ]);
+
+    const advancing = await capturing([incidentConfirmedEvent.type], () =>
+      transition(cookieA, id, 'identified'),
+    );
+    assert.deepEqual(
+      advancing.seen,
+      [],
+      'only leaving draft confirms an incident',
+    );
   });
 
   it('treats an edit as incident.updated, distinct from a state change', async () => {

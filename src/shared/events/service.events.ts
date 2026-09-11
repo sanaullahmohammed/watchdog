@@ -34,6 +34,16 @@ export const serviceArchivedEvent =
 export const serviceRestoredEvent =
   serviceEventCreator<ServiceEventPayload>('restored');
 
+/**
+ * Public. Effective status moved. Emitted only by the status recomputation
+ * handler, and only when the recomputed value differs from the stored one.
+ * `from` and `to` are service statuses, typed as strings so `shared` does not
+ * import the module's types.
+ */
+export const serviceStatusChangedEvent = serviceEventCreator<
+  ServiceEventPayload & { from: string; to: string }
+>('status_changed');
+
 export type ServiceGroupEventPayload = {
   id: string;
   orgId: string;

@@ -726,6 +726,7 @@ Invariants:
 - `resolved_at` is set exactly once when transitioning to `resolved`.
 - Every transition appends an `incident_updates` row in the same transaction.
 - Dismissing a draft is a terminal draft-cleanup path: `DismissDraftIncidentCommand` sets `status = 'resolved'`/`resolved_at` as needed but emits `incident.dismissed` only, never `incident.resolved`.
+- Confirming a draft (`draft -> investigating`) emits `incident.confirmed` as well as `incident.state_changed`. It is the public announcement that a monitor-born incident is real, and one of the status recomputation triggers.
 - Public notifications are emitted after the transaction commits.
 - AI may draft text or suggest impact/affected services, but does not publish customer-facing updates autonomously.
 
@@ -911,12 +912,22 @@ This is a derived value held for two reasons: it is the only way to diff, and it
 
 **Recomputation is triggered by events, never by a direct call across a module boundary.** The `service` module subscribes to every event that can move a service's status:
 
-- `incident.created`, `incident.confirmed`, `incident.state_changed`, `incident.resolved`, `incident.dismissed`
-- `maintenance.started`, `maintenance.completed`, `maintenance.deleted`
-- `service.manual_override_set`, `service.manual_override_cleared`
+- `incident.created`, `incident.confirmed`, `incident.state_changed`, `incident.resolved`, `incident.dismissed`, `incident.updated`
+- `maintenance.started`, `maintenance.completed`, `maintenance.deleted`, `maintenance.updated`
+- `service.manual_override_set`, `service.manual_override_cleared`, `service.restored`
 - `monitor.check_succeeded`, `monitor.check_failed`, `monitor.recovered`, `monitor.threshold_breached`
 
-On each, the handler resolves status for the affected services, and where the result differs from `last_known_status` it writes the new value and emits `service.status_changed`. Where it does not differ, nothing is written and nothing is emitted; the handler is idempotent and safe to run repeatedly.
+`incident.updated` and `maintenance.updated` are on the list because an edit can rewrite an active incident's affected services and their impacts, or an in-progress window's affected services. `service.restored` is there because archived services are skipped, so a restored service returns holding whatever it held when it was archived. An earlier revision of this list omitted all three; Story 2.17 found each to be a way for status to move without an announcement.
+
+**The inputs, precisely.** Active incident impact is the per-service impact (`incident_service_impacts.impact`, not the incident's headline impact) on incidents in `investigating`, `identified` or `monitoring`. A `draft` is excluded: it is unconfirmed and was never shown to customers. Active maintenance is membership of a window in `in_progress`.
+
+**Every live service in the organization is recomputed, not only those the event names.** By the time the handler runs, the link rows that would say which services were affected may be gone: an edit can drop a service from an incident, and deleting a window cascades its links away. A status page holds tens of services, so recomputing all of them is one cheap read, and the diff keeps it silent for services whose answer did not move.
+
+Where the result differs from `last_known_status`, the handler writes the new value and emits `service.status_changed`, after the transaction commits. Where it does not differ, nothing is written and nothing is emitted; the handler is idempotent and safe to run repeatedly.
+
+**Recomputations of one organization are serialized.** The handler locks the organization's live services (`for no key update`) before reading any input. Without the lock, two concurrent recomputations can both see the old value and both announce the change, or a slower one can overwrite a newer answer with a stale one. `for no key update` rather than `for update`, so an insert whose foreign-key check takes `for key share` on a service, such as naming it on an incident, does not wait behind a recomputation.
+
+Each recomputation runs under the tenant context of the organization named in the triggering event, so one worker pass across several organizations recomputes each under its own.
 
 Archived services are skipped. They appear on no public or active list, so announcing their status changes would fan out events nobody can act on.
 

@@ -6,6 +6,7 @@ import {
 import type { IncidentStatus } from '@/modules/incident/domain/incident.types';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import {
+  incidentConfirmedEvent,
   incidentDismissedEvent,
   incidentResolvedEvent,
   incidentStateChangedEvent,
@@ -62,6 +63,14 @@ export default function makeTransitionIncident({
           to: incident.status,
         }),
       );
+
+      if (from === 'draft' && incident.status === 'investigating') {
+        // The public counterpart of dismissal: DOMAIN's catalog announces a
+        // confirmed draft, and status recomputation listens for it.
+        eventBus.emit(
+          incidentConfirmedEvent({ id: incident.id, orgId: incident.orgId }),
+        );
+      }
 
       if (incident.status === 'resolved') {
         // A dismissed draft and a resolved incident both land on `resolved`;

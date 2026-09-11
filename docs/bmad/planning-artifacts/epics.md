@@ -814,7 +814,7 @@ So that `service.status_changed` fires exactly when the answer actually moves.
 **Acceptance Criteria:**
 
 **Given** the `service` module
-**When** any of `incident.created`, `incident.confirmed`, `incident.state_changed`, `incident.resolved`, `incident.dismissed`, `maintenance.started`, `maintenance.completed`, `maintenance.deleted`, `service.manual_override_set` or `service.manual_override_cleared` is emitted
+**When** any of `incident.created`, `incident.confirmed`, `incident.state_changed`, `incident.resolved`, `incident.dismissed`, `incident.updated`, `maintenance.started`, `maintenance.completed`, `maintenance.deleted`, `maintenance.updated`, `service.manual_override_set`, `service.manual_override_cleared` or `service.restored` is emitted
 **Then** effective status is resolved for each affected service using story 2.16's function
 **And** the handler reaches those events through `src/shared/events/`, never by importing the `incident` or `maintenance` module
 
@@ -835,6 +835,20 @@ So that `service.status_changed` fires exactly when the answer actually moves.
 **Given** services in several organizations affected by one worker pass
 **When** the handler runs
 **Then** each is recomputed under its own tenant context
+
+**Given** an edit that drops a service from an active incident, or the deletion of an in-progress window
+**When** the handler runs
+**Then** the service is recomputed even though the link that named it is gone
+
+**Given** several recomputations of one organization running concurrently
+**When** they finish
+**Then** a change is written and announced exactly once
+
+**Given** a draft incident confirmed into `investigating`
+**When** the transition commits
+**Then** `incident.confirmed` is emitted alongside `incident.state_changed`
+
+*Amended during implementation:* `incident.updated`, `maintenance.updated` and `service.restored` were missing from the trigger list, recomputation covers every live service in the organization, and `incident.confirmed` was in DOMAIN's catalog but emitted by nothing. DOMAIN.md's Status recomputation section was changed first.
 
 ### Story 2.18: Serve resolved status through the service queries
 
