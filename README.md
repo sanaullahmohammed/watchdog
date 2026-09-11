@@ -106,6 +106,7 @@ Script names, confirmed against the scaffold:
 | `pnpm run test:e2e` | Cucumber features |
 | `pnpm run test:k6:smoke` / `test:k6:load` | k6 profiles in `tests/load` |
 | `pnpm run db:migrate` | DBMate, reading `DBMATE_DATABASE_URL` rather than `DATABASE_URL` |
+| `pnpm run db:seed` | Creates a demo organization, `acme-demo`, through the application's own commands and prints the sign-in. A second run is a no-op; refuses under `NODE_ENV=production` |
 | `pnpm run auth:schema:check` | Fails if Better Auth expects schema no migration provides |
 
 Configuration is read only through `src/config/env.ts`. env-schema validates `.env` and returns an object; it never writes to `process.env`, so a module reading `process.env` directly sees nothing from `.env`.
@@ -119,7 +120,7 @@ watchdog/
 ├── db/
 │   ├── init/          # role bootstrap, run once by the postgres container
 │   ├── migrations/
-│   └── seeds/
+│   └── seeds/         # demo organization, written through commands
 ├── docs/
 │   └── genesis/
 │       ├── AI.md
