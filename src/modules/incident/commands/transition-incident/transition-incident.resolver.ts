@@ -24,7 +24,9 @@ export default async function transitionIncidentResolver(
           transitionIncidentCommand({
             id: args.id,
             status: args.input.status,
+            message: args.input.message,
             orgId: context.orgId,
+            userId: context.userId,
           }),
         );
       },

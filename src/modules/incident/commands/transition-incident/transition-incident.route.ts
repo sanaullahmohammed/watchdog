@@ -31,7 +31,9 @@ export default async function transitionIncident(
           transitionIncidentCommand({
             id: req.params.id,
             status: req.body.status,
+            message: req.body.message,
             orgId: context.orgId,
+            userId: context.userId,
           }),
         );
 

@@ -9,6 +9,7 @@ const transitionIncidentSchema = `
 
   input TransitionIncidentPayload {
     status: IncidentStatus!
+    message: String
   }
 
   type Mutation {

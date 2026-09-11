@@ -4,6 +4,7 @@ import {
   resolutionEventName,
 } from '@/modules/incident/domain/incident.state-machine';
 import type { IncidentStatus } from '@/modules/incident/domain/incident.types';
+import { timelineEntryMessage } from '@/modules/incident/domain/incident-timeline';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import {
   incidentConfirmedEvent,
@@ -19,6 +20,10 @@ export const transitionIncidentCommand = incidentActionCreator<{
   orgId: string;
   id: string;
   status: IncidentStatus;
+  /** Who made the move; recorded on the timeline entry it appends. */
+  userId: string | null;
+  /** The timeline entry's text. A default is written when absent. */
+  message?: string | null;
 }>('transition');
 
 export default function makeTransitionIncident({
@@ -32,7 +37,7 @@ export default function makeTransitionIncident({
     }: ReturnType<
       typeof transitionIncidentCommand
     >): TransitionIncidentCommandResult {
-      const { orgId, id, status } = payload;
+      const { orgId, id, status, userId, message } = payload;
 
       const { from, incident } = await withTenantTransaction(
         orgId,
@@ -51,6 +56,18 @@ export default function makeTransitionIncident({
           if (!moved) {
             throw new NotFoundException(`Incident ${id} not found`);
           }
+
+          // DOMAIN.md: every transition appends a timeline entry in the same
+          // transaction, so the timeline cannot disagree with the status.
+          // incident.state_changed announces it, not incident.update_posted.
+          await incidentRepository.appendUpdate(tx, {
+            orgId,
+            incidentId: id,
+            status: moved.status,
+            message: timelineEntryMessage(message, current.status, status),
+            createdByUserId: userId,
+          });
+
           return { from: current.status, incident: moved };
         },
       );

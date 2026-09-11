@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
+import { timelineMessageFor } from '@/modules/incident/domain/incident-timeline';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
@@ -103,19 +104,43 @@ describe('Story 2.10: post an incident update', () => {
       `;
     });
 
+    // Declaring and transitioning write entries of their own, interleaved with
+    // the posted ones in the order they happened.
     assert.deepEqual(
       rows.map((row) => [row.status, row.message]),
       [
+        ['investigating', timelineMessageFor(null, 'investigating')],
         ['investigating', 'Looking into it'],
+        ['identified', timelineMessageFor('investigating', 'identified')],
         ['identified', 'Found the cause'],
       ],
     );
-    assert.equal(rows[0].created_by_user_id, userId);
+    assert.ok(rows.every((row) => row.created_by_user_id === userId));
+    assert.equal(
+      captured.length,
+      2,
+      'entries written by declaring and transitioning are announced by their own events, not update_posted',
+    );
   });
 
   it('refuses an edit to an existing update', async () => {
     const incidentId = await declare('Immutable');
     await postUpdate(incidentId, 'original wording');
+
+    // The declaration wrote an entry too, so the whole timeline is compared
+    // rather than assuming the posted update is its only row.
+    const messages = () =>
+      withTenantTransaction(orgId, async ({ sql: tx }) =>
+        (
+          await tx<{ message: string }[]>`
+            select message from incident_updates
+            where incident_id = ${incidentId}
+            order by created_at, id
+          `
+        ).map((row) => row.message),
+      );
+    const written = await messages();
+    assert.ok(written.includes('original wording'));
 
     // Not "the repository has no update method" - anything holding a tenant
     // transaction could write raw SQL. The privilege itself is revoked.
@@ -129,19 +154,24 @@ describe('Story 2.10: post an incident update', () => {
       /permission denied for table incident_updates/,
     );
 
-    const [row] = await withTenantTransaction(
-      orgId,
-      ({ sql: tx }) =>
-        tx<{ message: string }[]>`
-        select message from incident_updates where incident_id = ${incidentId}
-      `,
-    );
-    assert.equal(row.message, 'original wording');
+    assert.deepEqual(await messages(), written);
   });
 
   it('refuses a delete of an existing update', async () => {
     const incidentId = await declare('Undeletable');
     await postUpdate(incidentId, 'permanent');
+
+    const count = async () =>
+      (
+        await withTenantTransaction(
+          orgId,
+          ({ sql: tx }) =>
+            tx`select 1 from incident_updates where incident_id = ${incidentId}`,
+        )
+      ).length;
+    // The declaration's entry and the posted one.
+    const written = await count();
+    assert.equal(written, 2);
 
     await assert.rejects(
       withTenantTransaction(orgId, async ({ sql: tx }) => {
@@ -150,12 +180,7 @@ describe('Story 2.10: post an incident update', () => {
       /permission denied for table incident_updates/,
     );
 
-    const rows = await withTenantTransaction(
-      orgId,
-      ({ sql: tx }) =>
-        tx`select 1 from incident_updates where incident_id = ${incidentId}`,
-    );
-    assert.equal(rows.length, 1);
+    assert.equal(await count(), written);
   });
 
   it('has no update or delete privilege granted to the runtime role', async () => {

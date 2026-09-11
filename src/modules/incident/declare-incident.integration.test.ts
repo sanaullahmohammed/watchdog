@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
+import { timelineMessageFor } from '@/modules/incident/domain/incident-timeline';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
@@ -133,6 +134,49 @@ describe('Story 2.8: declare an incident', () => {
       impact: 'major',
       created_by_user_id: userAId,
     });
+  });
+
+  it('opens the timeline with the declaration, worded or by default', async () => {
+    const idOf = async (payload: Record<string, unknown>) => {
+      const response = await declare(cookieA, payload);
+      assert.equal(response.statusCode, 201, response.body);
+      return JSON.parse(response.body).id as string;
+    };
+    const worded = await idOf({
+      title: 'Worded',
+      impact: 'minor',
+      message: 'Search is slow for some customers.',
+    });
+    const unworded = await idOf({ title: 'Unworded', impact: 'minor' });
+
+    const entriesOf = (incidentId: string) =>
+      withTenantTransaction(orgAId, async ({ sql: tx }) => [
+        ...(await tx<
+          {
+            status: string;
+            message: string;
+            created_by_user_id: string | null;
+          }[]
+        >`
+          select status, message, created_by_user_id from incident_updates
+          where incident_id = ${incidentId}
+        `),
+      ]);
+
+    assert.deepEqual(await entriesOf(worded), [
+      {
+        status: 'investigating',
+        message: 'Search is slow for some customers.',
+        created_by_user_id: userAId,
+      },
+    ]);
+    assert.deepEqual(await entriesOf(unworded), [
+      {
+        status: 'investigating',
+        message: timelineMessageFor(null, 'investigating'),
+        created_by_user_id: userAId,
+      },
+    ]);
   });
 
   it('records per-service impact on the join table', async () => {

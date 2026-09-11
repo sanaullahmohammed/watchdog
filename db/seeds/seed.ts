@@ -179,9 +179,9 @@ async function seed(): Promise<void> {
       }
     }
 
-    // Declared incidents start at investigating. Neither declaring nor
-    // transitioning writes a timeline entry today, so each step is followed by
-    // the update an operator would post.
+    // Declaring and transitioning each write their own timeline entry, so the
+    // operator's words travel with the command; the last one is an update
+    // posted on its own.
     const incidentId = await execute(
       createIncidentCommand({
         orgId,
@@ -193,13 +193,6 @@ async function seed(): Promise<void> {
           { serviceId: serviceId('public-api'), impact: 'major' },
           { serviceId: serviceId('webhooks'), impact: 'minor' },
         ],
-      }),
-    );
-    await execute(
-      postIncidentUpdateCommand({
-        orgId,
-        incidentId,
-        userId,
         message:
           'We are investigating elevated 5xx responses from the Public API. Webhook deliveries may be delayed.',
       }),
@@ -207,8 +200,11 @@ async function seed(): Promise<void> {
     await execute(
       transitionIncidentCommand({
         orgId,
+        userId,
         id: incidentId,
         status: 'identified',
+        message:
+          'The cause is a misconfigured connection pool in the latest API deploy. A rollback is in progress.',
       }),
     );
     await execute(
@@ -216,8 +212,7 @@ async function seed(): Promise<void> {
         orgId,
         incidentId,
         userId,
-        message:
-          'The cause is a misconfigured connection pool in the latest API deploy. A rollback is in progress.',
+        message: 'The rollback is halfway through and error rates are falling.',
       }),
     );
 
@@ -261,7 +256,7 @@ async function seed(): Promise<void> {
           (service) =>
             `    ${service.name.padEnd(18)} ${service.lastKnownStatus}`,
         ),
-        '  1 active incident with 2 updates, now identified',
+        '  1 active incident with 3 timeline entries, now identified',
         `  1 maintenance window scheduled for ${windowStart.toISOString()}`,
         '',
         `Sign in with POST /api/auth/sign-in/email as ${OPERATOR.email} / ${OPERATOR.password},`,
