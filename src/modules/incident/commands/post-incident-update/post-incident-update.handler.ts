@@ -26,7 +26,12 @@ export default function makePostIncidentUpdate({
       const { orgId, incidentId, message, userId } = payload;
 
       const updateId = await withTenantTransaction(orgId, async (tx) => {
-        const incident = await incidentRepository.findById(tx, incidentId);
+        // `share` waits for any in-flight transition to commit, so the status
+        // recorded below is the committed one, never the one a transition is
+        // replacing. Epic 2 retrospective, R-3.
+        const incident = await incidentRepository.findById(tx, incidentId, {
+          lock: 'share',
+        });
         if (!incident) {
           throw new NotFoundException(`Incident ${incidentId} not found`);
         }

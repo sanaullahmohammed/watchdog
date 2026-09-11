@@ -42,14 +42,21 @@ export default function makeTransitionIncident({
       const { from, incident } = await withTenantTransaction(
         orgId,
         async (tx) => {
-          const current = await incidentRepository.findById(tx, id);
+          // Locked until commit. One transaction alone does not serialize:
+          // under READ COMMITTED two transitions could both read the same
+          // status, both pass the check below, and the second would overwrite
+          // the first, reopening a resolved incident. With the lock, the second
+          // waits, reads the committed status, and is judged against that.
+          // Epic 2 retrospective, R-2.
+          const current = await incidentRepository.findById(tx, id, {
+            lock: 'update',
+          });
           if (!current) {
             throw new NotFoundException(`Incident ${id} not found`);
           }
 
           // Legality is decided by the state machine, not here, and it throws
-          // before anything is written. Reading and writing inside one
-          // transaction means the status cannot move underneath the check.
+          // before anything is written.
           assertTransition(current.status, status);
 
           const moved = await incidentRepository.updateStatus(tx, id, status);
