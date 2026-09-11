@@ -45,4 +45,92 @@ describe('eventBus', () => {
     assert.throws(() => bus.emit(undefined as never), TypeError);
     assert.throws(() => bus.emit({ payload: {} } as never), TypeError);
   });
+
+  // Epic 2 retrospective, R-4. Events are emitted after the emitting command
+  // commits, so a handler's failure can only do harm by escaping: skipping the
+  // handlers after it, failing a request whose change already happened, or
+  // leaving a rejection unhandled.
+
+  it('keeps delivering to later handlers when one throws, and does not throw itself', () => {
+    const failures: string[] = [];
+    const bus = eventBus({
+      onHandlerError: (error, event) =>
+        failures.push(`${event.type}: ${(error as Error).message}`),
+    });
+    const seen: string[] = [];
+
+    bus.on('incident.resolved', () => {
+      throw new Error('boom');
+    });
+    bus.on('incident.resolved', () => seen.push('after'));
+
+    assert.doesNotThrow(() =>
+      bus.emit({ type: 'incident.resolved', payload: {} }),
+    );
+    assert.deepEqual(seen, ['after']);
+    assert.deepEqual(failures, ['incident.resolved: boom']);
+  });
+
+  it("catches an async handler's rejection instead of leaving it unhandled", async () => {
+    const failures: unknown[] = [];
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      const bus = eventBus({ onHandlerError: (error) => failures.push(error) });
+      bus.on('service.created', async () => {
+        throw new Error('async boom');
+      });
+
+      bus.emit({ type: 'service.created', payload: {} });
+      // Rejections are reported once the microtask queue drains.
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+
+    assert.equal(failures.length, 1);
+    assert.deepEqual(unhandled, []);
+  });
+
+  it('isolates handlers on the middleware path too', () => {
+    const failures: unknown[] = [];
+    const bus = eventBus({ onHandlerError: (error) => failures.push(error) });
+    // The app always adds middleware (decorateWithMetadata), so this is the
+    // path production takes.
+    bus.addMiddleware((action, handler) => handler(action) as never);
+    const seen: string[] = [];
+
+    bus.on('service.created', () => {
+      throw new Error('boom');
+    });
+    bus.on('service.created', () => seen.push('after'));
+
+    assert.doesNotThrow(() =>
+      bus.emit({ type: 'service.created', payload: {} }),
+    );
+    assert.deepEqual(seen, ['after']);
+    assert.equal(failures.length, 1);
+  });
+
+  it('survives a reporter that throws', () => {
+    const bus = eventBus({
+      onHandlerError: () => {
+        throw new Error('the logger is down');
+      },
+    });
+    const seen: string[] = [];
+
+    bus.on('service.created', () => {
+      throw new Error('boom');
+    });
+    bus.on('service.created', () => seen.push('after'));
+
+    assert.doesNotThrow(() =>
+      bus.emit({ type: 'service.created', payload: {} }),
+    );
+    assert.deepEqual(seen, ['after']);
+  });
 });

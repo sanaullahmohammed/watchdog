@@ -12,7 +12,15 @@ const CQRSPlugin = fastifyPlugin(
     if (fastify.queryBus || fastify.commandBus || fastify.eventBus) {
       throw new Error('This plugin is already registered');
     }
-    const eventBusInstance = eventBus();
+    // A handler's failure is logged, never raised: by the time an event is
+    // emitted, the command that emitted it has already committed.
+    const eventBusInstance = eventBus({
+      onHandlerError: (error, event) =>
+        fastify.log.error(
+          { err: error, eventType: event.type },
+          'Event handler failed after its command committed',
+        ),
+    });
     eventBusInstance.addMiddleware(decorateWithMetadata);
 
     const queryBusInstance = commandBus();
