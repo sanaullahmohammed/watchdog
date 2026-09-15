@@ -1,11 +1,11 @@
 import { writeFileSync } from 'node:fs';
-import type { FastifyInstance } from 'fastify';
-import pino from 'pino';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { env } from '@/config';
 import { transitionDueMaintenanceCommand } from '@/modules/maintenance/commands/transition-due-maintenance/transition-due-maintenance.handler';
 import { buildApp } from '@/server/build-app';
 import { closeDbConnection } from '@/shared/db/postgres';
 import { listOrganizationIds } from '@/shared/db/tenants';
+import { singleFlight } from '@/shared/utils/single-flight';
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
@@ -29,9 +29,20 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
  */
 export async function runMaintenancePass(
   app: FastifyInstance,
-  logger: pino.Logger,
+  logger: FastifyBaseLogger,
 ): Promise<void> {
-  for (const orgId of await listOrganizationIds()) {
+  let orgIds: string[];
+  try {
+    orgIds = await listOrganizationIds();
+  } catch (error) {
+    // Discovery is the one query outside the per-tenant loop, so its failure
+    // used to reject out of a pass nobody awaited: an unhandled rejection,
+    // which ends the process. A database blip should cost this pass only.
+    logger.error({ error }, 'tenant discovery failed; skipping this pass');
+    return;
+  }
+
+  for (const orgId of orgIds) {
     try {
       const moved = await app.commandBus.execute<
         Promise<{ started: number; completed: number }>
@@ -50,13 +61,17 @@ export async function runMaintenancePass(
 }
 
 export async function startWorker() {
-  const logger = pino({ level: env.log.level });
-
   // The worker builds the same instance the api does, without listening. That
   // is what registers the command handlers in the DI container; the dependency
   // graph is identical across both entrypoints by design.
-  const app = await buildApp({ logger: false });
+  //
+  // Its logger is the app's, not a second pino instance. Built with
+  // `logger: false`, the container handed every handler a no-op logger, so a
+  // status recomputation that failed here logged nowhere at all (Epic 2
+  // retrospective, R-6).
+  const app = await buildApp({ logger: { level: env.log.level } });
   await app.ready();
+  const logger = app.log;
 
   const writeHeartbeat = () => {
     try {
@@ -71,13 +86,24 @@ export async function startWorker() {
   // until a signal arrives. A pending promise is not a ref'd handle.
   const heartbeat = setInterval(writeHeartbeat, HEARTBEAT_INTERVAL_MS);
 
-  const maintenance = setInterval(() => {
-    void runMaintenancePass(app, logger);
-  }, env.worker.maintenanceIntervalMs);
+  // A pass that outlasts its interval must not overlap the next one: two
+  // passes contend on the same rows, fan out duplicate recomputations, and
+  // pile up on the connection pool. The gate also gives shutdown something to
+  // await.
+  const pass = singleFlight(() => runMaintenancePass(app, logger));
+  const tick = () => {
+    if (pass.inFlight) {
+      logger.warn('maintenance pass still running; skipping this tick');
+      return;
+    }
+    void pass.run();
+  };
+
+  const maintenance = setInterval(tick, env.worker.maintenanceIntervalMs);
 
   // Run once at startup rather than waiting a whole interval, so a restart
   // does not leave a window sitting past its time.
-  void runMaintenancePass(app, logger);
+  tick();
 
   logger.info('Worker is ready');
 
@@ -90,6 +116,15 @@ export async function startWorker() {
     logger.info({ signal }, 'Worker is shutting down');
     clearInterval(heartbeat);
     clearInterval(maintenance);
+
+    // Finish the pass in flight, then close. app.close() drains the event bus,
+    // so the recomputations a just-committed transition triggered are not cut
+    // off by the pool closing underneath them.
+    if (pass.inFlight) {
+      logger.info('waiting for the maintenance pass in flight');
+      await pass.inFlight.catch(() => undefined);
+    }
+
     await app.close();
     await closeDbConnection();
     process.exit(0);

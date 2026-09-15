@@ -115,6 +115,37 @@ describe('eventBus', () => {
     assert.equal(failures.length, 1);
   });
 
+  it('drains async handlers that are still running', async () => {
+    const bus = eventBus();
+    const finished: string[] = [];
+
+    bus.on('service.created', async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      finished.push('slow');
+    });
+    bus.emit({ type: 'service.created', payload: {} });
+
+    assert.deepEqual(finished, [], 'emit does not await the handler');
+    await bus.drain();
+    assert.deepEqual(finished, ['slow'], 'drain does');
+  });
+
+  it('drains a handler that fails, and is a no-op when nothing is running', async () => {
+    const failures: unknown[] = [];
+    const bus = eventBus({ onHandlerError: (error) => failures.push(error) });
+
+    await bus.drain();
+
+    bus.on('service.created', async () => {
+      throw new Error('async boom');
+    });
+    bus.emit({ type: 'service.created', payload: {} });
+    await bus.drain();
+
+    assert.equal(failures.length, 1, 'a failed handler still settles');
+    await bus.drain();
+  });
+
   it('survives a reporter that throws', () => {
     const bus = eventBus({
       onHandlerError: () => {

@@ -182,7 +182,7 @@ The in-process bus delivers one event to **every** handler registered for its ty
 
 Several reactions to one event is the design here, not an edge case: the NOTIFY bridge fans an event out to clients while a module recomputes derived state from the same event. A map to one handler would let the second registration silently replace the first. And a domain event with no in-process subscriber is normal rather than an error, since most of the catalog exists to be bridged or simply to be part of the record.
 
-**Handlers are isolated from each other and from the emitter.** Events are emitted after the emitting command commits, so no handler can undo that work, and a handler's failure must not pretend it did. The bus catches a synchronous throw or a rejected promise per handler, reports it to its `onHandlerError` (the app logs it), and still runs the handlers after it. The emitting request keeps its success response. The bus does not retry, so a handler whose work matters owns its own recovery. For status recomputation, that is the reconciliation pass the Epic 2 retrospective proposes. Before this rule, one throwing listener skipped every listener after it and turned a committed change into a 500 (retrospective R-4).
+**Handlers are isolated from each other and from the emitter.** Events are emitted after the emitting command commits, so no handler can undo that work, and a handler's failure must not pretend it did. The bus catches a synchronous throw or a rejected promise per handler, reports it to its `onHandlerError` (the app logs it), and still runs the handlers after it. The emitting request keeps its success response. The bus does not retry, so a handler whose work matters owns its own recovery. For status recomputation, that is the reconciliation pass the Epic 2 retrospective proposes. Before this rule, one throwing listener skipped every listener after it and turned a committed change into a 500 (retrospective R-4). The bus also tracks the promises async handlers return, so closing the app drains them: shutdown waits for handler work in flight rather than ending the connection pool underneath it.
 
 `NOTIFY` payloads are intentionally small. Subscribers re-query read models by `orgId`, `aggregateType`, and `aggregateId` under the appropriate tenant context.
 
@@ -465,6 +465,12 @@ Two consequences worth stating rather than discovering later:
 
 - A pass is O(organizations) transactions, whether or not a given organization has work. For a self-hosted status page that is the right trade against introducing a privileged role to ask one cross-tenant question. If it ever stops being the right trade, the answer is a tenant-agnostic queue table, not a role that can read everything.
 - Each organization's pass is independent. One tenant's failure must not abandon the rest, so a pass records and continues rather than aborting.
+
+Three rules keep a pass from damaging the process that runs it, each from a defect the Epic 2 retrospective found (R-6):
+
+- **A pass never overlaps itself.** A tick that arrives while a pass is still running logs and skips. Two passes would contend on the same rows, fan out duplicate recomputations, and pile up on the connection pool under load.
+- **Tenant discovery failing costs one pass, not the worker.** Discovery is the single query outside the per-tenant loop, so it sits inside its own guard: nothing awaits a scheduled pass, and an unhandled rejection ends the process.
+- **Shutdown waits for work in flight.** On a signal the worker finishes the pass in flight, then closes the app, which drains event handlers before the connection pool closes. A deploy landing just after a transition commits would otherwise cut off the recomputation it triggered, and nothing re-emits that event.
 
 This is the shape for every scheduled task: maintenance transitions, monitor execution, uptime rollups, partition maintenance and notification dispatch.
 

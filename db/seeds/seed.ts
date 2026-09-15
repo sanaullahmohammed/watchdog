@@ -142,7 +142,9 @@ async function seed(): Promise<void> {
   }
   const orgId = organization.id;
 
-  const app = await buildApp({ logger: false });
+  // A real logger, so a command or handler that fails while seeding says so
+  // rather than failing silently.
+  const app = await buildApp({ logger: { level: 'warn' } });
   await app.ready();
 
   try {
@@ -236,13 +238,7 @@ async function seed(): Promise<void> {
     // Status recomputation runs after each command commits and is not awaited
     // by it. Closing before it settles would leave last_known_status behind the
     // incident just declared.
-    await (
-      app.diContainer.resolve(
-        'recomputeServiceStatusEventHandler' as never,
-      ) as {
-        drain(): Promise<void>;
-      }
-    ).drain();
+    await app.eventBus.drain();
 
     const services = await app.queryBus.execute<ListServicesQueryResult>(
       listServicesQuery({ orgId }),

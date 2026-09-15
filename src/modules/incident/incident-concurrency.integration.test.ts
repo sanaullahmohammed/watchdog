@@ -133,11 +133,7 @@ describe('Concurrent writes to one incident (Epic 2 retrospective, R-2 and R-3)'
   after(async () => {
     // Transitions trigger status recomputation, which runs after the request
     // returns. Let it finish before the connection pool closes under it.
-    await (
-      app.diContainer.resolve(
-        'recomputeServiceStatusEventHandler' as never,
-      ) as { drain(): Promise<void> }
-    ).drain();
+    await app.eventBus.drain();
     await sql`delete from "organization" where "id" = ${orgId}`;
     await sql`delete from "user" where "id" = ${userId}`;
     await app.close();

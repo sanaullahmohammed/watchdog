@@ -62,8 +62,6 @@ export default function makeRecomputeServiceStatus({
   eventBus,
   logger,
 }: Dependencies) {
-  const inFlight = new Set<Promise<void>>();
-
   /**
    * Recomputes every live service in one organization, under that
    * organization's tenant context.
@@ -115,27 +113,15 @@ export default function makeRecomputeServiceStatus({
     recompute,
 
     handler(event: Action<{ orgId: string }>) {
-      // The event bus does not await handlers. A rejection escaping here would
-      // be unhandled and take the process down with it, so one organization's
-      // failure is logged and contained, as in the worker's tenant loop.
-      const run = recompute(event.payload.orgId).then(
-        () => undefined,
-        (error: unknown) => {
-          logger.error(
-            { err: error, event: event.type, orgId: event.payload.orgId },
-            'service status recomputation failed',
-          );
-        },
-      );
-      inFlight.add(run);
-      void run.finally(() => inFlight.delete(run));
-    },
-
-    /** Resolves once every recomputation started so far has settled. */
-    async drain() {
-      while (inFlight.size > 0) {
-        await Promise.all([...inFlight]);
-      }
+      // Returned rather than swallowed: the bus tracks the promise, so a
+      // shutdown can wait for this recomputation, and contains a rejection
+      // either way. The catch here only adds the organization to the log line.
+      return recompute(event.payload.orgId).catch((error: unknown) => {
+        logger.error(
+          { err: error, event: event.type, orgId: event.payload.orgId },
+          'service status recomputation failed',
+        );
+      });
     },
 
     init() {
