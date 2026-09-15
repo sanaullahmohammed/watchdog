@@ -4,8 +4,70 @@ const publicStatusPageSchema = `
     slug: String!
   }
 
+  type PublicStatusService {
+    id: ID!
+    name: String!
+    slug: String!
+    description: String
+    status: ServiceStatus!
+    displayOrder: Int!
+  }
+
+  "Services that belong to no group arrive in a group with a null id, last."
+  type PublicStatusGroup {
+    id: ID
+    name: String
+    displayOrder: Int
+    services: [PublicStatusService!]!
+  }
+
+  type PublicStatusIncident {
+    id: ID!
+    title: String!
+    impact: IncidentImpact!
+    status: IncidentStatus!
+    startedAt: String!
+    affectedServiceIds: [ID!]!
+    "Oldest first. A renderer showing the latest reads the end."
+    updates: [IncidentUpdate!]!
+  }
+
+  type PublicStatusMaintenance {
+    id: ID!
+    title: String!
+    description: String
+    status: MaintenanceStatus!
+    scheduledStartAt: String!
+    scheduledEndAt: String!
+    startedAt: String
+    affectedServiceIds: [ID!]!
+  }
+
+  type PublicStatusUptimeDay {
+    date: String!
+    uptimeRatio: Float!
+  }
+
+  type PublicStatusUptimeService {
+    serviceId: ID!
+    days: [PublicStatusUptimeDay!]!
+  }
+
+  "Shaped now, filled in Epic 5: services is empty until rollups exist."
+  type PublicStatusUptime {
+    windowDays: Int!
+    services: [PublicStatusUptimeService!]!
+  }
+
   type PublicStatusPage {
     organization: PublicStatusOrganization!
+    "The worst of the public services' statuses, reduced once here."
+    overallStatus: ServiceStatus!
+    generatedAt: String!
+    groups: [PublicStatusGroup!]!
+    activeIncidents: [PublicStatusIncident!]!
+    maintenance: [PublicStatusMaintenance!]!
+    uptime: PublicStatusUptime!
   }
 
   type Query {

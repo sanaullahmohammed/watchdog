@@ -31,7 +31,9 @@ Self-hosted, multi-tenant status page platform. TypeScript on Node 24, Fastify 5
 
 ## Conventions that differ from defaults
 
-- REST routes live under `/api`, applied by the `prefix` option `@fastify/autoload` hands each plugin. `autoPrefix` is a property a plugin file exports, not a loader option; the boilerplate passed it as one and served everything at `/v1` instead.
+- REST routes live under `/api`, applied by the `prefix` option `@fastify/autoload` hands each plugin.
+- A `.public.route.ts` file is loaded by a second, unprefixed autoload pass, because FR17 names the path `/status/:orgSlug` rather than `/api/...`. The suffix still ends in `.route.ts`, so `api-surface-parity.spec.ts` and `authenticated-surface.spec.ts` discover it like any other route and a public surface has to be allowlisted in `PUBLIC_BY_DESIGN` deliberately.
+- Command and query handlers never import `dtos/`, which is the api layer; `dependency-cruiser`'s `no-command-query-to-api-deps` fails the build. A handler returns entities or reads, and the route and resolver each apply the same presenter. That is also what keeps REST and GraphQL from drifting: the parity contract compares request shapes, so two hand-written response mappings would be free to diverge. `autoPrefix` is a property a plugin file exports, not a loader option; the boilerplate passed it as one and served everything at `/v1` instead.
 - Tenant-scoped repositories take a `TenantTransaction` per call rather than closing over the global connection, which has no `app.current_org_id` set and would see nothing. They deliberately do not implement `RepositoryPort`.
 - Every read or write of a tenant-scoped table goes through `withTenantTransaction`. `SET LOCAL` is transaction-scoped, so SQL issued outside one silently sees nothing.
 - Double-quote every Better Auth identifier. `"user"` is a reserved word in Postgres, `"teamMember"` is camelCase, and every Better Auth column is camelCase. WatchDog's own tables stay snake_case, so a join across the two quotes one side only.

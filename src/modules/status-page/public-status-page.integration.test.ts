@@ -55,8 +55,11 @@ describe('Story 3.2: resolve an organization from its public slug', () => {
     const response = await fetchPage(slugA);
 
     assert.equal(response.statusCode, 200, response.body);
-    assert.deepEqual(JSON.parse(response.body), {
-      organization: { name: slugA, slug: slugA },
+    // The rest of the payload is story 3.3's; this suite is about which
+    // organization the slug resolved to.
+    assert.deepEqual(JSON.parse(response.body).organization, {
+      name: slugA,
+      slug: slugA,
     });
   });
 
@@ -92,10 +95,9 @@ describe('Story 3.2: resolve an organization from its public slug', () => {
     );
 
     assert.equal(result.errors, undefined, JSON.stringify(result.errors));
-    assert.deepEqual(
-      result.data?.publicStatusPage,
-      JSON.parse((await fetchPage(slugA)).body),
-    );
+    assert.deepEqual(result.data?.publicStatusPage, {
+      organization: JSON.parse((await fetchPage(slugA)).body).organization,
+    });
   });
 
   it('refuses an unknown slug over GraphQL too', async () => {

@@ -1,25 +1,11 @@
 import type { ServiceStatus } from '@/modules/service/domain/service.types';
-import type {
-  IncidentImpact,
-  MonitorDerivedState,
+import {
+  type IncidentImpact,
+  type MonitorDerivedState,
+  worstServiceStatus,
 } from '@/shared/domain/status-inputs';
 
-/**
- * Effective service status, transcribed from DOMAIN.md's Status model.
- *
- * A manual override wins outright. Otherwise the result is the WORST of every
- * input, not the first input present: a cascade would let an active `none`
- * incident hide an in-progress maintenance window, and would let the first of
- * several incidents stand in for all of them. Story work once described this as
- * a cascade, and DOMAIN now says so in as many words.
- */
-export const SERVICE_STATUS_RANK: Readonly<Record<ServiceStatus, number>> = {
-  operational: 0,
-  maintenance: 1,
-  degraded: 2,
-  partial_outage: 3,
-  major_outage: 4,
-};
+export { SERVICE_STATUS_RANK } from '@/shared/domain/status-inputs';
 
 export function statusFromIncidentImpact(
   impact: IncidentImpact,
@@ -62,16 +48,16 @@ export type ResolveServiceStatusInput = {
   monitorState: MonitorDerivedState | null;
 };
 
-function worstOf(statuses: readonly ServiceStatus[]): ServiceStatus {
-  return statuses.reduce<ServiceStatus>(
-    (worst, current) =>
-      SERVICE_STATUS_RANK[current] > SERVICE_STATUS_RANK[worst]
-        ? current
-        : worst,
-    'operational',
-  );
-}
-
+/**
+ * Effective service status, transcribed from DOMAIN.md's Status model.
+ *
+ * A manual override wins outright. Otherwise the result is the WORST of every
+ * input, not the first input present: a cascade would let an active `none`
+ * incident hide an in-progress maintenance window, and would let the first of
+ * several incidents stand in for all of them. Story work once described this as
+ * a cascade, and DOMAIN now says so in as many words. The reduction itself is
+ * `worstServiceStatus`, which the public payload also uses for its banner.
+ */
 export function resolveServiceStatus(
   input: ResolveServiceStatusInput,
 ): ServiceStatus {
@@ -79,7 +65,7 @@ export function resolveServiceStatus(
     return input.manualOverride;
   }
 
-  return worstOf([
+  return worstServiceStatus([
     ...input.activeIncidentImpacts.map(statusFromIncidentImpact),
     ...(input.hasActiveMaintenance ? (['maintenance'] as const) : []),
     ...(input.monitorState ? [statusFromMonitorState(input.monitorState)] : []),

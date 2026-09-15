@@ -998,7 +998,7 @@ So that I can render or poll a status page without credentials.
 
 **Actor:** human — an integrator, not a browser
 **Satisfies:** FR17 verification — `/status/:orgSlug` renders services, active incidents, scheduled maintenance and uptime history (the payload half; 3.4 covers the E2E half)
-**Files:** `src/modules/status-page/queries/get-public-status-page/` (handler, route, resolver, schema, graphql-schema), `src/modules/status-page/dtos/`, `src/modules/status-page/database/`
+**Files:** `src/modules/status-page/queries/get-public-status-page/` (handler, route, resolver, schema, graphql-schema), `src/modules/status-page/dtos/`, `src/modules/status-page/database/`, `src/shared/domain/status-inputs.ts` and the service, incident and maintenance `*.types.ts` that re-export from it: the payload names all three ladders, and a module may not import another module to reach one
 **Verification layer:** integration
 
 **Acceptance Criteria:**
