@@ -22,12 +22,19 @@ import { describe, it } from 'node:test';
 // This project compiles to CommonJS, so __dirname rather than import.meta.
 const MODULES_ROOT = join(__dirname, '../../../modules');
 
-/**
- * Surfaces that are public by design, each with its reason. Empty today.
- * Epic 3's unauthenticated `/status/:orgSlug` payload is the expected first
- * entry, added in the story that builds it.
- */
-const PUBLIC_BY_DESIGN: ReadonlyMap<string, string> = new Map();
+/** Surfaces that are public by design, each with its reason. */
+const PUBLIC_BY_DESIGN: ReadonlyMap<string, string> = new Map([
+  [
+    'status-page/queries/get-public-status-page/get-public-status-page.public.route.ts',
+    'FR17: /status/:orgSlug is read by anyone holding the link, with no session. ' +
+      'The organization comes from the slug through the pre-tenant path, and every ' +
+      'read behind it is still tenant-scoped.',
+  ],
+  [
+    'status-page/queries/get-public-status-page/get-public-status-page.resolver.ts',
+    'The same public page over GraphQL, public for the same reason.',
+  ],
+]);
 
 const AUTH_CALL = 'resolveOrganizationContext(';
 

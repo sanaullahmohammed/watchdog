@@ -967,7 +967,7 @@ So that anyone holding the link can fetch the page.
 
 **Actor:** system — the pre-tenant path
 **Satisfies:** FR17 verification — the route is keyed by org slug; ARCHITECTURE sections 3 and 6.4, which name this the pre-tenant path
-**Files:** `src/modules/status-page/queries/resolve-organization-by-slug/`, `src/shared/api/contract/authenticated-surface.spec.ts`
+**Files:** `src/modules/status-page/queries/resolve-organization-by-slug/`, `src/modules/status-page/queries/get-public-status-page/` (the public route the criteria below allowlist; story 3.3 fills its payload), `src/modules/status-page/database/`, `src/server/index.ts` (public routes load without the `/api` prefix), `src/shared/api/contract/authenticated-surface.spec.ts`
 **Verification layer:** integration
 
 **Acceptance Criteria:**
