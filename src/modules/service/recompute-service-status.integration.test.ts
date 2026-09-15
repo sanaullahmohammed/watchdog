@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
-import type makeRecomputeServiceStatus from '@/modules/service/commands/recompute-service-status/recompute-service-status.event-handler';
+import makeRecomputeServiceStatus, {
+  type RecomputeServiceStatusCommandResult,
+  recomputeServiceStatusCommand,
+} from '@/modules/service/commands/recompute-service-status/recompute-service-status.event-handler';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
@@ -398,6 +401,43 @@ describe('Story 2.17: recompute and announce service status', () => {
     assert.equal(results.flat().filter((c) => c.id === id).length, 1);
     assert.equal(announcedFor(id).length, 1);
     assert.equal(await statusOf(orgAId, id), 'degraded');
+  });
+
+  it('reconciles a status that drifted, through the command the worker runs', async () => {
+    const slug = `${tag}-drifted`;
+    const id = await createService(cookieA, slug);
+    await declare(cookieA, id, 'critical');
+    await settle();
+    assert.equal(await statusOf(orgAId, id), 'major_outage');
+
+    // Stand in for a recomputation that failed: the incident is still active,
+    // the stored value says otherwise, and no event will fire again.
+    await withTenantTransaction(orgAId, async ({ sql: tx }) => {
+      await tx`
+        update services set last_known_status = 'operational' where id = ${id}
+      `;
+    });
+
+    const corrected =
+      await app.commandBus.execute<RecomputeServiceStatusCommandResult>(
+        recomputeServiceStatusCommand({ orgId: orgAId }),
+      );
+
+    assert.deepEqual(
+      corrected
+        .filter((change) => change.id === id)
+        .map((change) => [change.from, change.to]),
+      [['operational', 'major_outage']],
+    );
+    assert.equal(await statusOf(orgAId, id), 'major_outage');
+
+    // Idempotent: a healthy organization writes nothing and announces nothing,
+    // which is what makes running this every pass cheap.
+    const second =
+      await app.commandBus.execute<RecomputeServiceStatusCommandResult>(
+        recomputeServiceStatusCommand({ orgId: orgAId }),
+      );
+    assert.deepEqual(second, []);
   });
 
   it('contains a failed recomputation instead of taking the process down', async () => {
