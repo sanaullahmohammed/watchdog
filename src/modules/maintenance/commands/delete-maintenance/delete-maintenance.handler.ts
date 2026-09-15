@@ -12,6 +12,7 @@ export const deleteMaintenanceCommand = maintenanceActionCreator<{
 
 export default function makeDeleteMaintenance({
   maintenanceRepository,
+  maintenanceDomain,
   commandBus,
   eventBus,
 }: Dependencies) {
@@ -22,10 +23,19 @@ export default function makeDeleteMaintenance({
       typeof deleteMaintenanceCommand
     >): DeleteMaintenanceCommandResult {
       // Deletion is for work that never happened. Work that did happen is
-      // completed instead, so the record of it survives.
-      const removed = await withTenantTransaction(payload.orgId, (tx) =>
-        maintenanceRepository.remove(tx, payload.id),
-      );
+      // completed instead, so the record of it survives. The window is read
+      // first so the refusal can name the status it found; the repository
+      // refuses a non-scheduled window too.
+      const removed = await withTenantTransaction(payload.orgId, async (tx) => {
+        const current = await maintenanceRepository.findById(tx, payload.id);
+        if (!current) {
+          throw new NotFoundException(`Maintenance ${payload.id} not found`);
+        }
+
+        maintenanceDomain.assertDeletable(current.status);
+
+        return maintenanceRepository.remove(tx, payload.id);
+      });
 
       if (!removed) {
         throw new NotFoundException(`Maintenance ${payload.id} not found`);

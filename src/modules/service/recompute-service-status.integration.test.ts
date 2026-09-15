@@ -283,7 +283,7 @@ describe('Story 2.17: recompute and announce service status', () => {
     assert.equal(await statusOf(orgAId, id), 'operational');
   });
 
-  it('follows a window into maintenance, and back out when it is deleted', async () => {
+  it('follows a window into maintenance, and back out when it completes', async () => {
     const id = await createService(cookieA, `${tag}-window`);
     const windowId = await inProgressWindow(orgAId, id);
 
@@ -291,12 +291,39 @@ describe('Story 2.17: recompute and announce service status', () => {
     await settle();
     assert.equal(await statusOf(orgAId, id), 'maintenance');
 
-    const response = await api(cookieA, 'DELETE', `/maintenance/${windowId}`);
+    // Completing is the way out for work that happened; deleting a running
+    // window is refused (retrospective R-8). This is also the path no test
+    // covered before: maintenance.completed driving a recomputation (VG-1).
+    const response = await api(
+      cookieA,
+      'POST',
+      `/maintenance/${windowId}/complete`,
+    );
     assert.ok(response.statusCode < 300, response.body);
     await settle();
 
-    // The window's links cascaded away before the handler ran.
     assert.equal(await statusOf(orgAId, id), 'operational');
+  });
+
+  it('follows an edit that swaps the services a running window covers', async () => {
+    // The trigger story 2.17 added maintenance.updated for, which no test
+    // exercised through a running window (VG-2).
+    const before = await createService(cookieA, `${tag}-covered-before`);
+    const after = await createService(cookieA, `${tag}-covered-after`);
+    const windowId = await inProgressWindow(orgAId, before);
+
+    app.eventBus.emit(maintenanceStartedEvent({ id: windowId, orgId: orgAId }));
+    await settle();
+    assert.equal(await statusOf(orgAId, before), 'maintenance');
+
+    const response = await api(cookieA, 'PATCH', `/maintenance/${windowId}`, {
+      affectedServiceIds: [after],
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    await settle();
+
+    assert.equal(await statusOf(orgAId, before), 'operational');
+    assert.equal(await statusOf(orgAId, after), 'maintenance');
   });
 
   it('lets an override win, and falls back to computed status when cleared', async () => {

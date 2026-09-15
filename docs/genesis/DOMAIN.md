@@ -777,6 +777,9 @@ stateDiagram-v2
 Invariants:
 
 - During `in_progress`, affected services resolve to `maintenance` unless a manual service override supersedes computed state.
+- Editing scope. A `scheduled` window may be edited freely. A window `in_progress` accepts only a new `scheduled_end_at` and a change of affected services, the two corrections an operator needs mid-window; its title, description and start describe a window that has already begun. A `completed` window is immutable.
+- Deleting is for work that never happened, so only a `scheduled` window may be deleted. A window that started or finished is completed instead, and its record survives. Both refusals are conflicts, not malformed requests.
+- A window that goes straight from `scheduled` to `completed` keeps `started_at` null. Neither path may record a start that never happened.
 - Worker transition commands must be idempotent.
 - Worker commands emit maintenance lifecycle events only when an actual state change occurs.
 
