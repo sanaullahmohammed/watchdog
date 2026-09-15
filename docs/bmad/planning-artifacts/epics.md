@@ -1,5 +1,6 @@
 ---
 stepsCompleted: [1, 2, 3]
+epicsWithStories: [1, 2, 3]
 inputDocuments:
   - docs/bmad/planning-artifacts/PRD.md
   - docs/bmad/planning-artifacts/Architecture.md
@@ -916,3 +917,147 @@ So that the stack can be shown working without hand-crafting data first.
 **When** this story runs
 **Then** services, groups, incidents, incident updates and maintenance windows all already exist as commands
 **And** the seed is therefore last in the epic rather than first, because it exercises the whole slice
+
+## Epic 3: The public status payload
+
+A client or integrator fetches an organization's current status, active incidents and scheduled maintenance from `/status/:orgSlug` without authenticating, and gets back one document they can render or poll.
+
+**FRs covered:** FR17
+
+**Story order is fixed:** the wireframe (3.1) before the payload, because the epic's constraint is that the shape is designed against something rather than guessed; the pre-tenant path (3.2) before the payload that depends on it; the payload (3.3) before the end-to-end test that fetches it (3.4).
+
+> **Reading other modules' tables.** The `status-page` module composes services, incidents and maintenance. Modules do not import each other, and `dependency-cruiser` enforces that, so its repository reads those tables with SQL under the tenant transaction — the same shape story 2.17's status recomputation uses, and with the same cost the Epic 2 retrospective recorded (AV-2): a dependency on two other modules' schemas that no structural rule can see. Worth re-stating in the story rather than discovering again.
+
+> **Uptime is shaped here and filled in Epic 5.** ROADMAP's phase 3 line includes the "90-day uptime read model shape", while the data behind it is FR18, which Epic 5 owns with the monitors that produce it. Decided 2026-09-15: the payload carries the field with its final shape and an explicitly empty value, so an integrator codes against a contract that does not break when rollups arrive.
+
+### Story 3.1: Wireframe the page the payload feeds
+
+As an operator,
+I want one throwaway sketch of the status page a visitor would read,
+So that the payload is designed against something concrete instead of guessed.
+
+**Actor:** human
+**Satisfies:** the epic's own constraint. It maps to no ROADMAP verification line, deliberately — see the note below
+**Files:** `docs/genesis/public-status-wireframe.md`
+**Verification layer:** none — a document, not code
+
+**Acceptance Criteria:**
+
+**Given** v1 ships no UI
+**When** the wireframe is drawn
+**Then** it shows every element the payload must carry: services in their groups with a status each, active incidents with their latest update, scheduled maintenance, and where 90-day uptime will sit
+**And** it is marked throwaway: no framework, no component library, nothing to keep building on
+
+**Given** the wireframe
+**When** the payload shape is designed against it
+**Then** every field traces to something on the sketch
+**And** anything on the sketch with no field is either added to the payload or struck out with a reason
+
+**Given** grouping, ordering, and phrases like "degraded since 14:02"
+**When** the sketch is reviewed
+**Then** each is either representable from the payload as shaped, or recorded as out of scope for v1
+
+> Constraint 5 says an untraceable story is a signal. This one is traceable to the epic rather than to ROADMAP, produces no production code, and is written down rather than smuggled in as part of another story.
+
+### Story 3.2: Resolve an organization from its public slug
+
+As an integrator,
+I want `/status/:orgSlug` to identify the organization without a session,
+So that anyone holding the link can fetch the page.
+
+**Actor:** system — the pre-tenant path
+**Satisfies:** FR17 verification — the route is keyed by org slug; ARCHITECTURE sections 3 and 6.4, which name this the pre-tenant path
+**Files:** `src/modules/status-page/queries/resolve-organization-by-slug/`, `src/shared/api/contract/authenticated-surface.spec.ts`
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** a request carrying no session
+**When** it names a slug that exists
+**Then** the organization id is resolved from Better Auth's `organization` table, which sits outside WatchDog's RLS and is the one place a request with no tenant may look
+**And** every tenant-scoped read after it runs under `withTenantTransaction` with that id, so RLS still decides what is visible
+
+**Given** a slug that matches no organization
+**When** it is resolved
+**Then** the answer is 404 and the body distinguishes nothing further, so the route cannot be used to enumerate organizations
+
+**Given** a resolved id
+**When** it reaches a repository
+**Then** it is validated against the Better Auth id shape before any GUC is set, as every other tenant entry point does
+
+**Given** the public route and resolver files
+**When** the authenticated-surface spec runs
+**Then** they appear in `PUBLIC_BY_DESIGN` with their reason, which is the first entry that list has carried since it was introduced
+**And** every other route and resolver still resolves an organization context
+
+### Story 3.3: Serve the public status payload
+
+As an integrator,
+I want one unauthenticated request to return an organization's services, active incidents and scheduled maintenance,
+So that I can render or poll a status page without credentials.
+
+**Actor:** human — an integrator, not a browser
+**Satisfies:** FR17 verification — `/status/:orgSlug` renders services, active incidents, scheduled maintenance and uptime history (the payload half; 3.4 covers the E2E half)
+**Files:** `src/modules/status-page/queries/get-public-status-page/` (handler, route, resolver, schema, graphql-schema), `src/modules/status-page/dtos/`, `src/modules/status-page/database/`
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** an organization with public, non-public and archived services
+**When** the payload is fetched
+**Then** only services that are `is_public` and not archived appear
+**And** each carries its effective status read from `last_known_status`, never recomputed per request
+**And** they arrive in their groups, ordered by `display_order` then name, so a renderer needs no second sort
+
+**Given** incidents in every status, including a monitor-born draft
+**When** the payload is fetched
+**Then** only active incidents appear — `investigating`, `identified`, `monitoring` — each with its timeline entries oldest to newest
+**And** no draft appears, because a draft describes an outage customers were never told about
+
+**Given** scheduled, in-progress and completed maintenance windows
+**When** the payload is fetched
+**Then** the scheduled and in-progress windows appear with the services they affect
+**And** completed windows do not, since the page describes what is happening rather than what has
+
+**Given** Epic 5 has not yet built rollups
+**When** the payload is fetched
+**Then** the uptime field is present in its final shape and explicitly empty
+**And** an integrator reading it can tell "no data yet" from "100% uptime"
+
+**Given** two organizations
+**When** either page is fetched
+**Then** the other's services, incidents and maintenance never appear, because every read runs under the resolved organization's tenant transaction
+
+**Given** the same payload over REST and GraphQL
+**When** both are fetched
+**Then** they are identical, held by the parity contract for the request shape and by a value test for the response, as service reads are
+
+### Story 3.4: Prove the public page end to end
+
+As a maintainer,
+I want the public route exercised end to end against a running application,
+So that FR17 is verified by the layer its verification line names.
+
+**Actor:** system
+**Satisfies:** FR17 verification — "E2E tests cover public route rendering by org slug"; NFR28, which says an E2E suite exists
+**Files:** `tests/status-page/public-status.feature`, `tests/status-page/public-status.steps.ts`, `tests/support/`, `.github/workflows/ci.yml`
+**Verification layer:** E2E (Cucumber)
+
+**Acceptance Criteria:**
+
+**Given** an organization built by the scenario's own fixture through the API, never the seed
+**When** `/status/:orgSlug` is fetched with no credentials
+**Then** the response names its public services with their statuses, its active incident, and its scheduled window
+
+**Given** a private service, an archived service and a draft incident in that same organization
+**When** the page is fetched
+**Then** none of them appear, so the exclusions are proven at the layer a consumer actually sees
+
+**Given** `pnpm run test:e2e` today reports 0 scenarios, because the boilerplate's features were removed with its modules
+**When** this story lands
+**Then** the command runs real scenarios
+**And** breaking the public route fails them
+
+**Given** CI runs check, unit and integration but not E2E
+**When** this story lands
+**Then** the workflow runs the E2E suite too, which is what NFR30 already claims
