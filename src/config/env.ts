@@ -34,7 +34,12 @@ const schema = Type.Object({
     default: '/tmp/watchdog-worker-heartbeat',
   }),
   WORKER_HEARTBEAT_MAX_AGE_MS: Type.Number({ default: 60_000 }),
-  WORKER_MAINTENANCE_INTERVAL_MS: Type.Number({ default: 30_000 }),
+  WORKER_MAINTENANCE_INTERVAL_MS: Type.Number({
+    default: 30_000,
+    // A zero or negative interval would spin setInterval as a tight loop.
+    // Fail at boot naming the variable rather than clamp it silently.
+    minimum: 1_000,
+  }),
 });
 
 const env = envSchema<Static<typeof schema>>({

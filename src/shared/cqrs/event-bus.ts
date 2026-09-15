@@ -34,6 +34,7 @@ export function eventBus({
   // would let the second registration silently replace the first.
   const handlers = new Map<string, EventHandler[]>();
   const middlewares: Middleware[] = [];
+  const inFlight = new Set<Promise<unknown>>();
 
   function on<T extends string = string>(type: T, handler: EventHandler): void {
     if (typeof type !== 'string') {
@@ -53,6 +54,14 @@ export function eventBus({
     }
   }
 
+  function track(result: PromiseLike<unknown>, event: Action<unknown>) {
+    const settled = Promise.resolve(result).then(undefined, (error: unknown) =>
+      report(error, event),
+    );
+    inFlight.add(settled);
+    void settled.finally(() => inFlight.delete(settled));
+  }
+
   function invoke(event: Action<unknown>, handler: EventHandler) {
     try {
       const result: unknown =
@@ -60,7 +69,7 @@ export function eventBus({
           ? (pipe as any)(...middlewares)(event, handler)
           : handler(event);
       if (isThenable(result)) {
-        result.then(undefined, (error: unknown) => report(error, event));
+        track(result, event);
       }
     } catch (error) {
       report(error, event);
@@ -92,6 +101,21 @@ export function eventBus({
     }
   }
 
+  /**
+   * Resolves once every async handler started so far has settled.
+   *
+   * emit does not await handlers, so at shutdown their work is still in flight
+   * with nothing holding the process open for it. Fastify's onClose drains the
+   * bus before the connection pool closes; a test uses it instead of polling.
+   * Loops rather than awaiting once, because a handler can emit an event whose
+   * handler is itself async.
+   */
+  async function drain(): Promise<void> {
+    while (inFlight.size > 0) {
+      await Promise.all([...inFlight]);
+    }
+  }
+
   function addMiddleware(fn: Middleware) {
     middlewares.push(fn);
   }
@@ -99,6 +123,7 @@ export function eventBus({
   return {
     on,
     emit,
+    drain,
     addMiddleware,
   };
 }

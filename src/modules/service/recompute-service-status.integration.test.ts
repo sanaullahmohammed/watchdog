@@ -155,7 +155,7 @@ const statusOf = async (orgId: string, id: string) =>
 const announcedFor = (id: string) => announced.filter((c) => c.id === id);
 
 /** Waits for every recomputation the events so far have started. */
-const settle = () => recomputer.drain();
+const settle = () => app.eventBus.drain();
 
 describe('Story 2.17: recompute and announce service status', () => {
   before(async () => {

@@ -32,6 +32,11 @@ export interface CommandBus {
 export interface EventBus {
   on(type: string, handler: EventHandler): void;
   emit(event: Action<any>): void;
+  /**
+   * Resolves once every async handler started so far has settled. Shutdown
+   * awaits it so handler work is not cut off by the closing pool.
+   */
+  drain(): Promise<void>;
   addMiddleware(fn: Middleware): void;
 }
 

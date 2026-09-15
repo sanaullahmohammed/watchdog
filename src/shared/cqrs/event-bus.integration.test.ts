@@ -95,4 +95,24 @@ describe('Event handler isolation (Epic 2 retrospective, R-4)', () => {
       ),
     );
   });
+
+  // Last in the file: it closes the app, and `after` closes it again, which
+  // Fastify tolerates.
+  it('waits for handler work in flight when the app closes', async () => {
+    let finished = false;
+    app.eventBus.on('service.updated', async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      finished = true;
+    });
+
+    app.eventBus.emit({ type: 'service.updated', payload: { id: 'x' } });
+    assert.equal(finished, false, 'emit does not await the handler');
+
+    // Both entrypoints close the app on SIGTERM. Without the drain hook, the
+    // recomputation a just-committed transition triggered would be cut off by
+    // the connection pool closing underneath it.
+    await app.close();
+
+    assert.equal(finished, true);
+  });
 });

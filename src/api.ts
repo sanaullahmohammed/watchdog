@@ -7,7 +7,11 @@ export async function startApi() {
   const fastify = await buildApp();
 
   const gracefulServer = GracefulServer(fastify.server, {
-    closePromises: [closeDbConnection],
+    // graceful-server closes the HTTP server itself and then awaits these. It
+    // does not close Fastify, so closing it here is what runs the onClose
+    // hooks - draining event handlers whose work is still in flight - and it
+    // has to happen before the connection pool goes.
+    closePromises: [() => fastify.close(), closeDbConnection],
   });
 
   gracefulServer.on(GracefulServer.READY, () => {

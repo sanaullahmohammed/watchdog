@@ -32,6 +32,15 @@ const CQRSPlugin = fastifyPlugin(
     fastify.decorate('queryBus', queryBusInstance);
     fastify.decorate('commandBus', commandBusInstance);
     fastify.decorate('eventBus', eventBusInstance);
+
+    // Event handlers run after their command committed, and emit does not
+    // await them. Closing the app gives that work a chance to finish instead
+    // of ending the connection pool underneath it. Both entrypoints and every
+    // test inherit this through app.close().
+    fastify.addHook('onClose', async () => {
+      await eventBusInstance.drain();
+    });
+
     done();
   },
   {

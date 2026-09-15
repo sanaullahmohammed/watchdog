@@ -152,7 +152,7 @@ async function listedStatuses(cookie: string) {
 }
 
 /** Waits for every recomputation the events so far have started. */
-const settle = () => recomputer.drain();
+const settle = () => app.eventBus.drain();
 
 describe('Story 2.18: serve resolved status through the service queries', () => {
   before(async () => {
