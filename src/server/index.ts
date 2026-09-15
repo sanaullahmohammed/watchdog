@@ -41,6 +41,17 @@ export default async function createServer(fastify: FastifyInstance) {
   // Configure Dependency Injection
   await di(fastify);
 
+  const surfaceFile = env.isProduction
+    ? /\.(route|resolver)\.js$/
+    : /\.(route|resolver)\.(ts|js)$/;
+  // A public route serves a path that carries no `/api` prefix: FR17 names
+  // `/status/:orgSlug`. The suffix still ends in `.route.ts`, so the parity
+  // and authenticated-surface specs discover these files like any other, and
+  // a public surface has to be allowlisted rather than slip past them.
+  const publicRouteFile = env.isProduction
+    ? /\.public\.route\.js$/
+    : /\.public\.route\.(ts|js)$/;
+
   // Auto-load routes
   await fastify.register(AutoLoad, {
     dir: path.join(__dirname, '../modules'),
@@ -52,12 +63,15 @@ export default async function createServer(fastify: FastifyInstance) {
     options: {
       prefix: '/api',
     },
-    matchFilter: (path) => {
-      const regex = env.isProduction
-        ? /.(route|resolver).js$/
-        : /.(route|resolver).(ts|js)$/;
-      return regex.test(path);
-    },
+    matchFilter: (path) =>
+      surfaceFile.test(path) && !publicRouteFile.test(path),
+  });
+
+  // Public routes, at the paths the product names rather than under /api.
+  await fastify.register(AutoLoad, {
+    dir: path.join(__dirname, '../modules'),
+    dirNameRoutePrefix: false,
+    matchFilter: (path) => publicRouteFile.test(path),
   });
 
   await fastify.register(UnderPressure);
