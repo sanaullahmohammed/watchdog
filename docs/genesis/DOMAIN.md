@@ -176,7 +176,9 @@ Who writes an entry, and what announces it:
 
 - Declaring an incident and every transition append one, in the same transaction as the status they record, so the timeline cannot disagree with the incident. The operator may supply the message; otherwise a default worded for customers is written, and a blank message counts as none. `created_by_user_id` is whoever made the move.
 - `PostIncidentUpdateCommand` appends one at the incident's current status.
-- Only a posted update is announced as `incident.update_posted`. An entry written by declaring or transitioning is announced by that command's own event (`incident.created`, `incident.state_changed` and its companions), so one change never notifies subscribers twice.
+- A public lifecycle transition announces the entry it appended as `incident.update_posted`, carrying that entry's id. `incident.state_changed` is admin-only, so without this a move to `identified` or `monitoring` would reach no public subscriber at all.
+- A move out of `draft` is not a public lifecycle transition, because a draft was never shown to customers. Confirming announces `incident.confirmed`, dismissing announces `incident.dismissed`, and neither emits `incident.update_posted`. The declaration is announced by `incident.created`, which is draft-gated.
+- Commit `87259e6` briefly said the opposite, that only a posted update announces. It traded a double notification for no public notification at all, and contradicted the invariant below. Withdrawn by the Epic 2 retrospective, R-5.
 
 FKs:
 
@@ -732,7 +734,7 @@ Invariants:
 - `resolved_at` is set exactly once when transitioning to `resolved`.
 - Transitions of one incident are serialized. The handler reads the incident under a row lock, so concurrent requests are judged one after another against the committed status, and `resolved` stays terminal under concurrency. A posted update reads under a share lock, so it records the committed status.
 - Every transition appends an `incident_updates` row in the same transaction, the declaration (`[none] -> investigating`) included. See IncidentUpdate for who writes entries and which event announces them.
-- Dismissing a draft is a terminal draft-cleanup path: `DismissDraftIncidentCommand` sets `status = 'resolved'`/`resolved_at` as needed but emits `incident.dismissed` only, never `incident.resolved`.
+- Dismissing a draft is a terminal draft-cleanup path: `TransitionIncidentCommand` from `draft` to `resolved` sets `resolved_at` as needed but emits `incident.dismissed` only, never `incident.resolved`. (ARCHITECTURE names a separate `DismissDraftIncidentCommand`; as built, one transition command serves every move. See the Epic 2 retrospective, AV-7.)
 - Confirming a draft (`draft -> investigating`) emits `incident.confirmed` as well as `incident.state_changed`. It is the public announcement that a monitor-born incident is real, and one of the status recomputation triggers.
 - Public notifications are emitted after the transaction commits.
 - AI may draft text or suggest impact/affected services, but does not publish customer-facing updates autonomously.

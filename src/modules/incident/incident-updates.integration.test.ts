@@ -118,8 +118,8 @@ describe('Story 2.10: post an incident update', () => {
     assert.ok(rows.every((row) => row.created_by_user_id === userId));
     assert.equal(
       captured.length,
-      2,
-      'entries written by declaring and transitioning are announced by their own events, not update_posted',
+      3,
+      'the two posted updates, plus the entry the transition appended; the declaration is announced by incident.created',
     );
   });
 

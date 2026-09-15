@@ -11,6 +11,7 @@ import {
   incidentDismissedEvent,
   incidentResolvedEvent,
   incidentStateChangedEvent,
+  incidentUpdatePostedEvent,
 } from '@/shared/events/incident.events';
 import { NotFoundException } from '@/shared/exceptions';
 
@@ -39,7 +40,7 @@ export default function makeTransitionIncident({
     >): TransitionIncidentCommandResult {
       const { orgId, id, status, userId, message } = payload;
 
-      const { from, incident } = await withTenantTransaction(
+      const { from, incident, updateId } = await withTenantTransaction(
         orgId,
         async (tx) => {
           // Locked until commit. One transaction alone does not serialize:
@@ -66,8 +67,7 @@ export default function makeTransitionIncident({
 
           // DOMAIN.md: every transition appends a timeline entry in the same
           // transaction, so the timeline cannot disagree with the status.
-          // incident.state_changed announces it, not incident.update_posted.
-          await incidentRepository.appendUpdate(tx, {
+          const updateId = await incidentRepository.appendUpdate(tx, {
             orgId,
             incidentId: id,
             status: moved.status,
@@ -75,7 +75,7 @@ export default function makeTransitionIncident({
             createdByUserId: userId,
           });
 
-          return { from: current.status, incident: moved };
+          return { from: current.status, incident: moved, updateId };
         },
       );
 
@@ -87,6 +87,21 @@ export default function makeTransitionIncident({
           to: incident.status,
         }),
       );
+
+      if (from !== 'draft') {
+        // The public announcement of this move. incident.state_changed is
+        // admin-only, so a move to identified or monitoring would otherwise
+        // reach no public subscriber at all. A move out of draft is not a
+        // public lifecycle transition: confirming and dismissing announce
+        // themselves below. DOMAIN.md, IncidentUpdate; retrospective R-5.
+        eventBus.emit(
+          incidentUpdatePostedEvent({
+            id: incident.id,
+            orgId: incident.orgId,
+            updateId,
+          }),
+        );
+      }
 
       if (from === 'draft' && incident.status === 'investigating') {
         // The public counterpart of dismissal: DOMAIN's catalog announces a
