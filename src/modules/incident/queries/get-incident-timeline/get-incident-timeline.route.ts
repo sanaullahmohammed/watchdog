@@ -1,5 +1,6 @@
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import { Type } from 'typebox';
+import { toIncidentUpdateResponse } from '@/modules/incident/dtos/incident.present';
 import { incidentUpdateResponseDtoSchema } from '@/modules/incident/dtos/incident.response.dto';
 import { resolveOrganizationContext } from '@/server/auth/organization-context';
 import { UnauthorizedException } from '@/shared/exceptions';
@@ -32,14 +33,7 @@ export default async function getIncidentTimeline(
           }),
         );
 
-      return res.status(200).send(
-        entries.map((entry) => ({
-          id: entry.id,
-          status: entry.status,
-          message: entry.message,
-          createdAt: entry.createdAt.toISOString(),
-        })),
-      );
+      return res.status(200).send(entries.map(toIncidentUpdateResponse));
     },
   });
 }

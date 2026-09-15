@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { serviceCreatedEvent } from '@/shared/events/service.events';
+import { captureCookie } from '@/shared/testing/tenant';
 
 /**
  * Epic 2 retrospective, R-4: one failing event handler must not break a
@@ -23,12 +24,6 @@ let app: FastifyInstance;
 let cookie = '';
 let userId = '';
 let orgId = '';
-
-function captureCookie(headers: Record<string, unknown>): string {
-  const raw = headers['set-cookie'];
-  const values = Array.isArray(raw) ? raw : [String(raw)];
-  return values.map((value) => value.split(';')[0]).join('; ');
-}
 
 describe('Event handler isolation (Epic 2 retrospective, R-4)', () => {
   before(async () => {

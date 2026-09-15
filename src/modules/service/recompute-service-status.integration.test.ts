@@ -12,11 +12,11 @@ import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentConfirmedEvent } from '@/shared/events/incident.events';
 import { maintenanceStartedEvent } from '@/shared/events/maintenance.events';
 import { serviceStatusChangedEvent } from '@/shared/events/service.events';
+import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /** Story 2.17 — recompute and announce service status. */
 
 const ORIGIN = 'http://localhost:3000';
-const password = 'correct-horse-battery-staple';
 const tag = `rsc-${randomBytes(4).toString('hex')}`;
 const day = 24 * 60 * 60 * 1000;
 
@@ -39,32 +39,6 @@ let orgAId = '';
 let orgBId = '';
 const announced: Change[] = [];
 const confirmed: string[] = [];
-
-function captureCookie(headers: Record<string, unknown>): string {
-  const raw = headers['set-cookie'];
-  const values = Array.isArray(raw) ? raw : [String(raw)];
-  return values.map((value) => value.split(';')[0]).join('; ');
-}
-
-async function signUpWithOrg(label: string) {
-  const email = `${label}@example.test`;
-  const signUp = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-up/email',
-    payload: { email, password, name: label },
-  });
-  const cookie = captureCookie(signUp.headers as Record<string, unknown>);
-  const [{ id: userId }] = await sql<{ id: string }[]>`
-    select "id" from "user" where "email" = ${email}
-  `;
-  const org = await app.inject({
-    method: 'POST',
-    url: '/api/auth/organization/create',
-    headers: { cookie, origin: ORIGIN },
-    payload: { name: label, slug: label },
-  });
-  return { cookie, userId, orgId: JSON.parse(org.body).id as string };
-}
 
 function api(
   cookie: string,
@@ -171,12 +145,12 @@ describe('Story 2.17: recompute and announce service status', () => {
       cookie: cookieA,
       userId: userAId,
       orgId: orgAId,
-    } = await signUpWithOrg(`${tag}-a`));
+    } = await signUpWithOrg(app, `${tag}-a`));
     ({
       cookie: cookieB,
       userId: userBId,
       orgId: orgBId,
-    } = await signUpWithOrg(`${tag}-b`));
+    } = await signUpWithOrg(app, `${tag}-b`));
 
     app.eventBus.on(serviceStatusChangedEvent.type, (event) =>
       announced.push(event.payload as Change),

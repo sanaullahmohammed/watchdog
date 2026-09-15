@@ -8,6 +8,7 @@ import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentResolvedEvent } from '@/shared/events/incident.events';
+import { captureCookie } from '@/shared/testing/tenant';
 
 /**
  * Epic 2 retrospective, R-2 and R-3: concurrent writes to one incident.
@@ -28,12 +29,6 @@ let cookie = '';
 let userId = '';
 let orgId = '';
 const resolvedAnnounced: string[] = [];
-
-function captureCookie(headers: Record<string, unknown>): string {
-  const raw = headers['set-cookie'];
-  const values = Array.isArray(raw) ? raw : [String(raw)];
-  return values.map((value) => value.split(';')[0]).join('; ');
-}
 
 async function declare(title: string) {
   const response = await app.inject({

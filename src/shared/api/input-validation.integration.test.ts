@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
+import { captureCookie } from '@/shared/testing/tenant';
 
 /**
  * Epic 2 retrospective, R-9: an ordinary client mistake must be refused, not
@@ -27,12 +28,6 @@ let orgId = '';
 let serviceId = '';
 let incidentId = '';
 let windowId = '';
-
-function captureCookie(headers: Record<string, unknown>): string {
-  const raw = headers['set-cookie'];
-  const values = Array.isArray(raw) ? raw : [String(raw)];
-  return values.map((value) => value.split(';')[0]).join('; ');
-}
 
 function api(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
