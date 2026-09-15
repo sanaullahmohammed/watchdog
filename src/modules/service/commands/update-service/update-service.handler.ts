@@ -3,6 +3,7 @@ import type { UpdateServiceProps } from '@/modules/service/domain/service.types'
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { serviceUpdatedEvent } from '@/shared/events/service.events';
 import { NotFoundException } from '@/shared/exceptions';
+import { assertNoNullFields } from '@/shared/validation/input';
 
 export type UpdateServiceCommandResult = Promise<string>;
 
@@ -24,6 +25,11 @@ export default function makeUpdateService({
       payload,
     }: ReturnType<typeof updateServiceCommand>): UpdateServiceCommandResult {
       const { orgId, id, ...patch } = payload;
+      // GraphQL cannot express "optional but never null", a format, or a
+      // minimum length, so these run here, where both surfaces arrive.
+      assertNoNullFields(payload, {
+        nullable: ['description', 'serviceGroupId'],
+      });
 
       const updated = await withTenantTransaction(orgId, (tx) =>
         serviceRepository.update(tx, id, patch),

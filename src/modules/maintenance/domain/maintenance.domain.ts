@@ -29,7 +29,10 @@ export default function maintenanceDomain() {
     assertWindow(start: Date, end: Date) {
       // Also a CHECK constraint. Raised here so a caller gets a domain error
       // naming both ends rather than a constraint violation.
-      if (end.getTime() <= start.getTime()) {
+      // Negated `>` rather than `<=`: every comparison with NaN is false, so
+      // `end <= start` waved an Invalid Date straight through to the insert,
+      // which failed as a 500. Epic 2 retrospective, R-9.
+      if (!(end.getTime() > start.getTime())) {
         throw new InvalidMaintenanceWindowError(start, end);
       }
     },

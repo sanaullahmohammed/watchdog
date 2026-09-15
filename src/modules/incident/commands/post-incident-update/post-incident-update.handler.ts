@@ -2,6 +2,7 @@ import { incidentActionCreator } from '@/modules/incident';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentUpdatePostedEvent } from '@/shared/events/incident.events';
 import { NotFoundException } from '@/shared/exceptions';
+import { assertNoNullFields, assertNotBlank } from '@/shared/validation/input';
 
 export type PostIncidentUpdateCommandResult = Promise<string>;
 
@@ -24,6 +25,10 @@ export default function makePostIncidentUpdate({
       typeof postIncidentUpdateCommand
     >): PostIncidentUpdateCommandResult {
       const { orgId, incidentId, message, userId } = payload;
+      // GraphQL cannot express "optional but never null", a format, or a
+      // minimum length, so these run here, where both surfaces arrive.
+      assertNoNullFields(payload, { nullable: ['userId'] });
+      assertNotBlank(message, 'message');
 
       const updateId = await withTenantTransaction(orgId, async (tx) => {
         // `share` waits for any in-flight transition to commit, so the status

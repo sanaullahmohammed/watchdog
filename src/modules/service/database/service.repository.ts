@@ -62,6 +62,15 @@ export default function serviceRepository({
         if ((error as { code?: string }).code === UNIQUE_VIOLATION) {
           throw new ServiceSlugAlreadyExistsError(service.slug, error as Error);
         }
+        // The group key spans (service_group_id, org_id), so an unknown group,
+        // or one belonging to another organization, fails here. Update already
+        // translated this; create returned a 500.
+        if ((error as { code?: string }).code === FOREIGN_KEY_VIOLATION) {
+          throw new ServiceGroupNotInOrganizationError(
+            String(service.serviceGroupId),
+            error as Error,
+          );
+        }
         throw error;
       }
     },

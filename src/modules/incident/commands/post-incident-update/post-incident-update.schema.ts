@@ -6,7 +6,13 @@ import { type Static, Type } from 'typebox';
  * caller cannot post an entry claiming a status the incident never held.
  */
 export const postIncidentUpdateRequestDtoSchema = Type.Object({
-  message: Type.String({ minLength: 1, maxLength: 4000 }),
+  message: Type.String({
+    minLength: 1,
+    maxLength: 4000,
+    // minLength alone accepts "   ", which reaches the public timeline saying
+    // nothing while looking like it says something.
+    pattern: '\\S',
+  }),
 });
 
 export type PostIncidentUpdateRequestDto = Static<

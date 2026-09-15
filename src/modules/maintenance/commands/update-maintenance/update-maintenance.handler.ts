@@ -3,6 +3,10 @@ import type { UpdateMaintenanceProps } from '@/modules/maintenance/domain/mainte
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { maintenanceUpdatedEvent } from '@/shared/events/maintenance.events';
 import { NotFoundException } from '@/shared/exceptions';
+import {
+  assertNoDuplicates,
+  assertNoNullFields,
+} from '@/shared/validation/input';
 
 export type UpdateMaintenanceCommandResult = Promise<string>;
 
@@ -28,6 +32,10 @@ export default function makeUpdateMaintenance({
       typeof updateMaintenanceCommand
     >): UpdateMaintenanceCommandResult {
       const { orgId, id, affectedServiceIds, ...patch } = payload;
+      // GraphQL cannot express "optional but never null", a format, or a
+      // minimum length, so these run here, where both surfaces arrive.
+      assertNoNullFields(payload, { nullable: ['description'] });
+      assertNoDuplicates(affectedServiceIds ?? [], 'affectedServiceIds');
 
       const updated = await withTenantTransaction(orgId, async (tx) => {
         const current = await maintenanceRepository.findById(tx, id);
