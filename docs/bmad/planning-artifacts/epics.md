@@ -270,10 +270,12 @@ An operator can describe what they run, and tell customers what is happening to 
 **Story order is fixed and is not open to reordering:** services and groups (FR4) → incidents and updates (FR6, FR7) → maintenance and transitions (FR8, FR9) → effective status **last** (FR5). FR5's precedence rule reads active incident impact and active maintenance, so it cannot be built before they exist.
 
 > Two commands named in ARCHITECTURE's `incident` module are deliberately absent here. `ConfirmDraftIncidentCommand` and `DismissDraftIncidentCommand` act on draft incidents, which only exist once monitoring creates them under FR13. Building them in this epic would mean writing commands with nothing to act on and criteria that could not be derived from FR6's verification line. They move to Epic 5. The incident state machine, including transitions out of `draft`, stays here: it is a pure function and FR6's verification line names it directly.
+>
+> *As built (Epic 2 retrospective, AV-7):* what moved to Epic 5 is **creating** drafts, which needs monitoring. Confirming and dismissing one are live already, because `TransitionIncidentCommand` serves every move on the ladder: `draft -> investigating` emits `incident.confirmed`, and `draft -> resolved` emits `incident.dismissed`. Epic 5 adds no separate confirm or dismiss command.
 
-> These 18 stories were derived from ROADMAP's verification column rather than from the 26-command surface. FR4's line already names five capabilities — create/update, grouping, archive/restore, archived exclusion, manual override — so the story boundaries were settled during the original review rounds. Deriving from commands instead would have produced 23 stories with worse seams.
+> These 19 stories, 18 as first written plus the split of 2.13, were derived from ROADMAP's verification column rather than from the 26-command surface. FR4's line already names five capabilities — create/update, grouping, archive/restore, archived exclusion, manual override — so the story boundaries were settled during the original review rounds. Deriving from commands instead would have produced 23 stories with worse seams.
 
-### Story 2.1: Derive REST and GraphQL from one schema
+### Story 2.1: Keep REST and GraphQL from drifting apart
 
 As the system,
 I want a mechanical check that the REST and GraphQL surfaces of a slice agree,
@@ -283,6 +285,8 @@ So that they cannot drift apart unnoticed and parity is not deferred to the end 
 **Satisfies:** FR27 verification — "GraphQL integration tests cover protocol parity with REST where applicable"
 **Files:** `src/shared/api/contract/`, `src/modules/*/**/*.schema.ts`, `src/modules/*/**/*.graphql-schema.ts`
 **Verification layer:** unit and integration
+
+*Retitled after implementation.* The original title, "Derive REST and GraphQL from one schema", promised generation. The story's own criteria asked for a recorded decision about which direction generation would run *if ever*, plus a contract test that fails the build on drift, and that is what `2b9df8f` built. The title now matches the criteria (Epic 2 retrospective, AV-6).
 
 **Acceptance Criteria:**
 
@@ -423,7 +427,7 @@ So that the status page is not cluttered with things that no longer exist.
 
 **Actor:** human
 **Satisfies:** FR4 verification — "archived exclusion from public/active lists"
-**Files:** `src/modules/service/queries/list-services/`, `src/modules/service/queries/get-service/`
+**Files:** `src/modules/service/queries/list-services/` (as built: `7bcda44`. `get-service/` was listed here but arrived with story 2.18)
 **Verification layer:** integration
 
 **Acceptance Criteria:**
@@ -461,7 +465,7 @@ So that I can communicate something the system cannot infer, and stop when it no
 
 **Actor:** human
 **Satisfies:** FR4 verification — "manual override behavior"
-**Files:** `src/modules/service/commands/set-manual-status-override/`, `.../clear-manual-status-override/`
+**Files:** `src/modules/service/commands/set-status-override/`, `.../clear-status-override/` (as built: `7bcea7e`)
 **Verification layer:** integration
 
 **Acceptance Criteria:**
@@ -558,7 +562,7 @@ So that customers can see whether we are still investigating or have fixed it.
 
 **Actor:** human
 **Satisfies:** FR6 verification — "State-machine tests cover valid and invalid transitions"
-**Files:** `src/modules/incident/commands/update-incident/`, `.../resolve-incident/`
+**Files:** `src/modules/incident/commands/transition-incident/`, `.../update-incident/` (as built: `2a91614`. One transition command serves every move, so there is no separate `resolve-incident/`)
 **Verification layer:** integration
 
 **Acceptance Criteria:**
@@ -733,7 +737,7 @@ So that an operator does not have to be awake to keep the status page honest.
 
 **Actor:** system — the worker entrypoint
 **Satisfies:** FR9 verification — "Worker/integration tests simulate time and verify transitions"
-**Files:** `src/modules/maintenance/commands/start-due-maintenance/`, `.../complete-due-maintenance/`, `src/worker.ts`
+**Files:** `src/modules/maintenance/commands/transition-due-maintenance/`, `src/worker.ts` (as built: `1c37115`. One command starts and completes, so the two halves cannot disagree about the clock)
 **Verification layer:** integration
 
 **Acceptance Criteria:**
