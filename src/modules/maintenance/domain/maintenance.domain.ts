@@ -1,9 +1,28 @@
 import { randomUUID } from 'node:crypto';
-import { InvalidMaintenanceWindowError } from '@/modules/maintenance/domain/maintenance.errors';
+import {
+  CompletedMaintenanceImmutableError,
+  InvalidMaintenanceWindowError,
+  MaintenanceNotDeletableError,
+  RunningMaintenanceFieldsError,
+} from '@/modules/maintenance/domain/maintenance.errors';
 import type {
   MaintenanceEntity,
+  MaintenanceStatus,
   ScheduleMaintenanceProps,
+  UpdateMaintenanceProps,
 } from '@/modules/maintenance/domain/maintenance.types';
+
+/** What an edit may carry, including the affected services the patch omits. */
+export type MaintenanceEdit = UpdateMaintenanceProps & {
+  affectedServiceIds?: string[];
+};
+
+/** Locked once a window is running: they describe a window that has begun. */
+const LOCKED_WHILE_RUNNING = [
+  'title',
+  'description',
+  'scheduledStartAt',
+] as const;
 
 export default function maintenanceDomain() {
   return {
@@ -12,6 +31,38 @@ export default function maintenanceDomain() {
       // naming both ends rather than a constraint violation.
       if (end.getTime() <= start.getTime()) {
         throw new InvalidMaintenanceWindowError(start, end);
+      }
+    },
+
+    /**
+     * Deleting is for work that never happened, so only a scheduled window may
+     * go. Anything that started or finished is completed instead, which keeps
+     * the record. DOMAIN.md, Maintenance state machine.
+     */
+    assertDeletable(status: MaintenanceStatus) {
+      if (status !== 'scheduled') {
+        throw new MaintenanceNotDeletableError(status);
+      }
+    },
+
+    /**
+     * What may change, and when. A completed window is history. A running one
+     * may be extended, or have its affected services corrected, which are the
+     * two things an operator genuinely needs mid-window; its title,
+     * description and start describe a window that has already begun.
+     */
+    assertEditable(status: MaintenanceStatus, edit: MaintenanceEdit) {
+      if (status === 'completed') {
+        throw new CompletedMaintenanceImmutableError();
+      }
+      if (status !== 'in_progress') {
+        return;
+      }
+      const locked = LOCKED_WHILE_RUNNING.filter(
+        (field) => edit[field] !== undefined,
+      );
+      if (locked.length > 0) {
+        throw new RunningMaintenanceFieldsError(locked);
       }
     },
 

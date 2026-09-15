@@ -101,8 +101,12 @@ export default function maintenanceRepository({
       // build a better error - a read, for instance - would itself fail. The
       // window is validated before the write instead; the CHECK is the backstop
       // for writers that do not go through this path.
+      // `status <> 'completed'` is the backstop for the handler's check: a
+      // completed window records work that happened.
       const rows = await tx.sql<MaintenanceModel[]>`
-        update maintenance set ${tx.sql(columns)} where id = ${id} returning *
+        update maintenance set ${tx.sql(columns)}
+        where id = ${id} and status <> 'completed'
+        returning *
       `;
       if (!rows[0]) return undefined;
       return maintenanceMapper.toDomain(
@@ -156,11 +160,14 @@ export default function maintenanceRepository({
     },
 
     async completeDue(tx: TenantTransaction, now: Date) {
+      // started_at is left alone. A window whose whole span elapsed before a
+      // pass ran goes straight from scheduled to completed, and never started:
+      // stamping it here would record a start that never happened, which the
+      // manual completion path does not do either. Epic 2 retrospective, R-8.
       const rows = await tx.sql<MaintenanceModel[]>`
         update maintenance
         set status = 'completed',
             completed_at = ${now},
-            started_at = coalesce(started_at, ${now}),
             updated_at = now()
         where status in ('scheduled', 'in_progress')
           and scheduled_end_at <= ${now}
@@ -171,8 +178,14 @@ export default function maintenanceRepository({
 
     async remove(tx: TenantTransaction, id: string) {
       // maintenance_services rows go with it through ON DELETE CASCADE.
+      //
+      // `status = 'scheduled'` is the backstop: the handler checks first so it
+      // can say why, and this refuses anything that reaches the table another
+      // way. Undefined therefore means missing, out of scope, or not scheduled.
       const rows = await tx.sql<MaintenanceModel[]>`
-        delete from maintenance where id = ${id} returning *
+        delete from maintenance
+        where id = ${id} and status = 'scheduled'
+        returning *
       `;
       return rows[0] ? maintenanceMapper.toDomain(rows[0]) : undefined;
     },

@@ -35,6 +35,14 @@ export default function makeUpdateMaintenance({
           throw new NotFoundException(`Maintenance ${id} not found`);
         }
 
+        // A completed window is history, and a running one accepts only a new
+        // end time or a change of affected services. DOMAIN.md, Maintenance
+        // state machine; Epic 2 retrospective, R-8.
+        maintenanceDomain.assertEditable(current.status, {
+          ...patch,
+          affectedServiceIds,
+        });
+
         // Moving one end of the window can invert it, so the check is against
         // the window as it will be, not against the fields that were supplied.
         // Done before the write: a CHECK violation aborts the transaction and

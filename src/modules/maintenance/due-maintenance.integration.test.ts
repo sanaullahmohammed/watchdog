@@ -149,7 +149,14 @@ describe('Story 2.15: transition due maintenance automatically', () => {
     // that never happened.
     assert.ok(!seen.includes(maintenanceStartedEvent.type));
     assert.ok(seen.includes(maintenanceCompletedEvent.type));
-    assert.equal((await stateOf(orgAId, id)).status, 'completed');
+
+    // The stored row must not claim a start either. completeDue used to stamp
+    // started_at on a window that never ran, so the record disagreed with the
+    // events and with the manual path. Epic 2 retrospective, R-8.
+    const state = await stateOf(orgAId, id);
+    assert.equal(state.status, 'completed');
+    assert.equal(state.started_at, null, 'it never started');
+    assert.ok(state.completed_at instanceof Date);
   });
 
   it('moves nothing and announces nothing on a second pass', async () => {
