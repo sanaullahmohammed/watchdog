@@ -14,6 +14,7 @@ import {
   incidentUpdatePostedEvent,
 } from '@/shared/events/incident.events';
 import { NotFoundException } from '@/shared/exceptions';
+import { assertNoNullFields } from '@/shared/validation/input';
 
 export type TransitionIncidentCommandResult = Promise<string>;
 
@@ -39,6 +40,9 @@ export default function makeTransitionIncident({
       typeof transitionIncidentCommand
     >): TransitionIncidentCommandResult {
       const { orgId, id, status, userId, message } = payload;
+      // GraphQL cannot express "optional but never null", a format, or a
+      // minimum length, so these run here, where both surfaces arrive.
+      assertNoNullFields(payload, { nullable: ['userId', 'message'] });
 
       const { from, incident, updateId } = await withTenantTransaction(
         orgId,

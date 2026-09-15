@@ -3,6 +3,10 @@ import type { CreateIncidentProps } from '@/modules/incident/domain/incident.dom
 import { timelineEntryMessage } from '@/modules/incident/domain/incident-timeline';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentCreatedEvent } from '@/shared/events/incident.events';
+import {
+  assertNoDuplicates,
+  assertNoNullFields,
+} from '@/shared/validation/input';
 
 export type CreateIncidentCommandResult = Promise<string>;
 
@@ -27,6 +31,15 @@ export default function makeCreateIncident({
       payload,
     }: ReturnType<typeof createIncidentCommand>): CreateIncidentCommandResult {
       const { orgId, userId, message, ...props } = payload;
+      // GraphQL cannot express "optional but never null", a format, or a
+      // minimum length, so these run here, where both surfaces arrive.
+      assertNoNullFields(payload, {
+        nullable: ['userId', 'message', 'startedAt'],
+      });
+      assertNoDuplicates(
+        (props.affectedServices ?? []).map((affected) => affected.serviceId),
+        'affectedServices',
+      );
       const incident = incidentDomain.declareIncident(orgId, userId, props);
 
       // Declaring is the first transition, [none] -> investigating, and
