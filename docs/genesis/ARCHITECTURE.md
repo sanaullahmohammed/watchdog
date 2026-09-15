@@ -472,6 +472,8 @@ Three rules keep a pass from damaging the process that runs it, each from a defe
 - **Tenant discovery failing costs one pass, not the worker.** Discovery is the single query outside the per-tenant loop, so it sits inside its own guard: nothing awaits a scheduled pass, and an unhandled rejection ends the process.
 - **Shutdown waits for work in flight.** On a signal the worker finishes the pass in flight, then closes the app, which drains event handlers before the connection pool closes. A deploy landing just after a transition commits would otherwise cut off the recomputation it triggered, and nothing re-emits that event.
 
+**Every pass also reconciles.** After a tenant's scheduled work, the pass recomputes that tenant's service status through `RecomputeServiceStatusCommand`. Status recomputation is event-driven and the events are one-shot, so a handler that failed leaves a derived column wrong with nothing to re-trigger it. The recomputation is idempotent and writes nothing when the answer has not moved; a correction is logged, because it means an event was lost. See DOMAIN.md, Status recomputation.
+
 This is the shape for every scheduled task: maintenance transitions, monitor execution, uptime rollups, partition maintenance and notification dispatch.
 
 ### 6.1 Role provisioning

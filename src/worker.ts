@@ -2,6 +2,10 @@ import { writeFileSync } from 'node:fs';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { env } from '@/config';
 import { transitionDueMaintenanceCommand } from '@/modules/maintenance/commands/transition-due-maintenance/transition-due-maintenance.handler';
+import {
+  type RecomputeServiceStatusCommandResult,
+  recomputeServiceStatusCommand,
+} from '@/modules/service/commands/recompute-service-status/recompute-service-status.event-handler';
 import { buildApp } from '@/server/build-app';
 import { closeDbConnection } from '@/shared/db/postgres';
 import { listOrganizationIds } from '@/shared/db/tenants';
@@ -16,7 +20,7 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
  * testable: one image, two commands, separate processes that share no memory.
  */
 /**
- * One maintenance pass across every tenant.
+ * One pass across every tenant: the work that is due, then reconciliation.
  *
  * Discovery and work are separate steps because the worker has no request and
  * therefore no organization: it learns which tenants exist from Better Auth's
@@ -27,13 +31,17 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
  * because a single organization errored would let one bad row stop the clock
  * for everyone.
  */
-export async function runMaintenancePass(
+export async function runWorkerPass(
   app: FastifyInstance,
   logger: FastifyBaseLogger,
+  // Tests pass their own organizations. A pass reconciles every service of
+  // every tenant it visits, so an unscoped one reaches into whatever another
+  // test file is asserting at that moment. The worker never passes this.
+  options: { orgIds?: readonly string[] } = {},
 ): Promise<void> {
-  let orgIds: string[];
+  let orgIds: readonly string[];
   try {
-    orgIds = await listOrganizationIds();
+    orgIds = options.orgIds ?? (await listOrganizationIds());
   } catch (error) {
     // Discovery is the one query outside the per-tenant loop, so its failure
     // used to reject out of a pass nobody awaited: an unhandled rejection,
@@ -51,11 +59,32 @@ export async function runMaintenancePass(
       if (moved.started > 0 || moved.completed > 0) {
         logger.info({ orgId, ...moved }, 'maintenance windows transitioned');
       }
+
+      // Reconciliation. Status recomputation is event-driven and the events
+      // are one-shot, so a handler that failed - a transient database error, a
+      // process that died mid-flight - leaves last_known_status wrong with
+      // nothing to re-trigger it. This is the same recomputation, idempotent
+      // and silent when nothing moved. DOMAIN.md, Status recomputation.
+      const corrected =
+        await app.commandBus.execute<RecomputeServiceStatusCommandResult>(
+          recomputeServiceStatusCommand({ orgId }),
+        );
+
+      if (corrected.length > 0) {
+        // Worth a warning rather than an info: a correction means an event was
+        // lost somewhere, and the pass is covering for it.
+        logger.warn(
+          {
+            orgId,
+            corrected: corrected.map(
+              (change) => `${change.slug}: ${change.from} -> ${change.to}`,
+            ),
+          },
+          'reconciled service status that had drifted from its inputs',
+        );
+      }
     } catch (error) {
-      logger.error(
-        { orgId, error },
-        'maintenance pass failed for organization',
-      );
+      logger.error({ orgId, error }, 'worker pass failed for organization');
     }
   }
 }
@@ -90,7 +119,7 @@ export async function startWorker() {
   // passes contend on the same rows, fan out duplicate recomputations, and
   // pile up on the connection pool. The gate also gives shutdown something to
   // await.
-  const pass = singleFlight(() => runMaintenancePass(app, logger));
+  const pass = singleFlight(() => runWorkerPass(app, logger));
   const tick = () => {
     if (pass.inFlight) {
       logger.warn('maintenance pass still running; skipping this tick');

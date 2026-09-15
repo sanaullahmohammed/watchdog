@@ -945,7 +945,9 @@ Each recomputation runs under the tenant context of the organization named in th
 
 Archived services are skipped. They appear on no public or active list, so announcing their status changes would fan out events nobody can act on.
 
-**The known risk** is a derived column drifting from its inputs if some future write path moves an input without emitting one of the events above. The event catalog is the guard: a command that changes status without emitting is already a defect by the definition of done. A periodic reconciliation pass in the worker would close the gap entirely and is deliberately left to post-v1 rather than built speculatively.
+**The risk is a derived column drifting from its inputs**, and there are two ways it can. A future write path could move an input without emitting one of the events above; the event catalog is the guard for that, since a command that changes status without emitting is already a defect by the definition of done. The other way is a recomputation that simply fails: the events are one-shot and nothing re-emits them, so a transient database error, or a process that died mid-flight, leaves `last_known_status` wrong until some unrelated change in that organization.
+
+**The worker therefore reconciles.** Every pass recomputes each organization after its other work, which is the same recomputation the events trigger: idempotent, and silent when nothing moved, so a healthy system pays one cheap read per organization per pass and announces nothing. Drift that it does correct is logged, because a correction means an event was lost and that is worth knowing about. This was deferred to post-v1 until the Epic 2 retrospective found the failure path (R-7).
 
 ---
 

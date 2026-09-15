@@ -1,3 +1,4 @@
+import { serviceActionCreator } from '@/modules/service';
 import { resolveServiceStatus } from '@/modules/service/domain/effective-status';
 import type { ServiceStatus } from '@/modules/service/domain/service.types';
 import type { Action } from '@/shared/cqrs/bus.types';
@@ -49,6 +50,19 @@ export const RECOMPUTE_TRIGGERS = [
   serviceRestoredEvent,
 ] as const;
 
+export type RecomputeServiceStatusCommandResult = Promise<
+  ServiceStatusChange[]
+>;
+
+/**
+ * Recomputes one organization on demand, for the worker's reconciliation pass.
+ * The same work the events trigger, reached through the command bus rather
+ * than by resolving this handler out of the container by name.
+ */
+export const recomputeServiceStatusCommand = serviceActionCreator<{
+  orgId: string;
+}>('status.reconcile');
+
 export type ServiceStatusChange = {
   id: string;
   orgId: string;
@@ -59,6 +73,7 @@ export type ServiceStatusChange = {
 
 export default function makeRecomputeServiceStatus({
   serviceStatusRepository,
+  commandBus,
   eventBus,
   logger,
 }: Dependencies) {
@@ -128,6 +143,11 @@ export default function makeRecomputeServiceStatus({
       for (const trigger of RECOMPUTE_TRIGGERS) {
         eventBus.on(trigger.type, this.handler);
       }
+      commandBus.register(
+        recomputeServiceStatusCommand.type,
+        (command: Action<{ orgId: string }>) =>
+          recompute(command.payload.orgId),
+      );
     },
   };
 }

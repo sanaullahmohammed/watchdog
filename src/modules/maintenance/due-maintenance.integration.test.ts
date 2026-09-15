@@ -12,7 +12,7 @@ import {
   maintenanceCompletedEvent,
   maintenanceStartedEvent,
 } from '@/shared/events/maintenance.events';
-import { runMaintenancePass } from '@/worker';
+import { runWorkerPass } from '@/worker';
 
 /** Story 2.15 — transition due maintenance automatically. */
 
@@ -72,7 +72,9 @@ async function capturing<T>(types: string[], run: () => Promise<T>) {
   return seen;
 }
 
-const runPass = () => runMaintenancePass(app, silent);
+// Scoped to this file's organizations. A pass now reconciles the status of
+// every service it visits, and the suites run against one database at once.
+const runPass = () => runWorkerPass(app, silent, { orgIds: [orgAId, orgBId] });
 
 describe('Story 2.15: transition due maintenance automatically', () => {
   before(async () => {
@@ -200,6 +202,33 @@ describe('Story 2.15: transition due maintenance automatically', () => {
       ({ sql: tx }) => tx`select 1 from maintenance where id = ${b}`,
     );
     assert.equal(crossed.length, 0);
+  });
+
+  it('reconciles service status that drifted, as part of the pass', async () => {
+    // Nothing affects this service, so its stored major_outage can only be a
+    // recomputation that was lost. The pass is what notices.
+    const serviceId = await withTenantTransaction(
+      orgAId,
+      async ({ sql: tx }) => {
+        const [row] = await tx<{ id: string }[]>`
+        insert into services (org_id, name, slug, last_known_status)
+        values (${orgAId}, ${`${tag}-drift`}, ${`${tag}-drift`}, 'major_outage')
+        returning id
+      `;
+        return row.id;
+      },
+    );
+
+    await runPass();
+
+    const [{ last_known_status: status }] = await withTenantTransaction(
+      orgAId,
+      ({ sql: tx }) =>
+        tx<{ last_known_status: string }[]>`
+        select last_known_status from services where id = ${serviceId}
+      `,
+    );
+    assert.equal(status, 'operational');
   });
 
   it('continues past an organization whose pass fails', async () => {
