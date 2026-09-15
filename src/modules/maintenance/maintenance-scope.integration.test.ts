@@ -6,6 +6,7 @@ import type { MaintenanceStatus } from '@/modules/maintenance/domain/maintenance
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { captureCookie } from '@/shared/testing/tenant';
 
 /**
  * Epic 2 retrospective, R-8: what may be edited or deleted, and when.
@@ -25,12 +26,6 @@ let cookie = '';
 let userId = '';
 let orgId = '';
 let serviceId = '';
-
-function captureCookie(headers: Record<string, unknown>): string {
-  const raw = headers['set-cookie'];
-  const values = Array.isArray(raw) ? raw : [String(raw)];
-  return values.map((value) => value.split(';')[0]).join('; ');
-}
 
 function api(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',

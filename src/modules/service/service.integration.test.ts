@@ -11,6 +11,7 @@ import {
   serviceCreatedEvent,
   serviceUpdatedEvent,
 } from '@/shared/events/service.events';
+import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /**
  * Story 2.2 — create and update a service.
@@ -21,7 +22,6 @@ import {
  */
 
 const ORIGIN = 'http://localhost:3000';
-const password = 'correct-horse-battery-staple';
 const tag = `svc-${randomBytes(4).toString('hex')}`;
 
 let app: FastifyInstance;
@@ -31,37 +31,6 @@ let userAId = '';
 let userBId = '';
 let orgAId = '';
 let orgBId = '';
-
-function captureCookie(headers: Record<string, unknown>): string {
-  const raw = headers['set-cookie'];
-  const values = Array.isArray(raw) ? raw : [String(raw)];
-  return values.map((value) => value.split(';')[0]).join('; ');
-}
-
-async function signUpWithOrg(label: string) {
-  const email = `${label}@example.test`;
-  const signUp = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-up/email',
-    payload: { email, password, name: label },
-  });
-  assert.equal(signUp.statusCode, 200, signUp.body);
-  const cookie = captureCookie(signUp.headers as Record<string, unknown>);
-
-  const [{ id: userId }] = await sql<{ id: string }[]>`
-    select "id" from "user" where "email" = ${email}
-  `;
-
-  const org = await app.inject({
-    method: 'POST',
-    url: '/api/auth/organization/create',
-    headers: { cookie, origin: ORIGIN },
-    payload: { name: label, slug: label },
-  });
-  assert.equal(org.statusCode, 200, org.body);
-
-  return { cookie, userId, orgId: JSON.parse(org.body).id as string };
-}
 
 function createService(cookie: string, payload: Record<string, unknown>) {
   return app.inject({
@@ -88,12 +57,12 @@ describe('Story 2.2: create and update a service', () => {
       cookie: cookieA,
       userId: userAId,
       orgId: orgAId,
-    } = await signUpWithOrg(`${tag}-a`));
+    } = await signUpWithOrg(app, `${tag}-a`));
     ({
       cookie: cookieB,
       userId: userBId,
       orgId: orgBId,
-    } = await signUpWithOrg(`${tag}-b`));
+    } = await signUpWithOrg(app, `${tag}-b`));
   });
 
   after(async () => {

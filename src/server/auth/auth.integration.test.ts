@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { captureCookie } from '@/shared/testing/tenant';
 import {
   findOrgRole,
   resolveOrganizationContext,
@@ -37,12 +38,6 @@ let orgId: string;
 const ORIGIN = 'http://localhost:3000';
 
 /** Better Auth issues Set-Cookie; subsequent requests must echo it back. */
-function captureCookie(headers: Record<string, unknown>): string {
-  const raw = headers['set-cookie'];
-  const values = Array.isArray(raw) ? raw : [String(raw)];
-  return values.map((value) => value.split(';')[0]).join('; ');
-}
-
 before(async () => {
   app = await buildApp({ logger: false });
   await app.ready();

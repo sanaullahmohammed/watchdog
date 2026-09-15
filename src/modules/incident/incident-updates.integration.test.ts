@@ -7,6 +7,7 @@ import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentUpdatePostedEvent } from '@/shared/events/incident.events';
+import { captureCookie } from '@/shared/testing/tenant';
 
 /** Story 2.10 — post an incident update. */
 
@@ -18,12 +19,6 @@ let app: FastifyInstance;
 let cookie = '';
 let userId = '';
 let orgId = '';
-
-function captureCookie(headers: Record<string, unknown>): string {
-  const raw = headers['set-cookie'];
-  const values = Array.isArray(raw) ? raw : [String(raw)];
-  return values.map((value) => value.split(';')[0]).join('; ');
-}
 
 async function declare(title: string) {
   const response = await app.inject({

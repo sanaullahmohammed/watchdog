@@ -5,11 +5,11 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /** Story 2.13 — read maintenance windows. */
 
 const ORIGIN = 'http://localhost:3000';
-const password = 'correct-horse-battery-staple';
 const tag = `rdm-${randomBytes(4).toString('hex')}`;
 const hour = 60 * 60 * 1000;
 
@@ -22,32 +22,6 @@ let orgAId = '';
 let orgBId = '';
 let serviceAId = '';
 let scheduledId = '';
-
-function captureCookie(headers: Record<string, unknown>): string {
-  const raw = headers['set-cookie'];
-  const values = Array.isArray(raw) ? raw : [String(raw)];
-  return values.map((value) => value.split(';')[0]).join('; ');
-}
-
-async function signUpWithOrg(label: string) {
-  const email = `${label}@example.test`;
-  const signUp = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-up/email',
-    payload: { email, password, name: label },
-  });
-  const cookie = captureCookie(signUp.headers as Record<string, unknown>);
-  const [{ id: userId }] = await sql<{ id: string }[]>`
-    select "id" from "user" where "email" = ${email}
-  `;
-  const org = await app.inject({
-    method: 'POST',
-    url: '/api/auth/organization/create',
-    headers: { cookie, origin: ORIGIN },
-    payload: { name: label, slug: label },
-  });
-  return { cookie, userId, orgId: JSON.parse(org.body).id as string };
-}
 
 async function schedule(
   cookie: string,
@@ -87,12 +61,12 @@ describe('Story 2.13: read maintenance windows', () => {
       cookie: cookieA,
       userId: userAId,
       orgId: orgAId,
-    } = await signUpWithOrg(`${tag}-a`));
+    } = await signUpWithOrg(app, `${tag}-a`));
     ({
       cookie: cookieB,
       userId: userBId,
       orgId: orgBId,
-    } = await signUpWithOrg(`${tag}-b`));
+    } = await signUpWithOrg(app, `${tag}-b`));
 
     const svc = await app.inject({
       method: 'POST',

@@ -1,4 +1,5 @@
 import { ErrorWithProps } from 'mercurius';
+import { toIncidentResponse } from '@/modules/incident/dtos/incident.present';
 import { resolveOrganizationContext } from '@/server/auth/organization-context';
 import {
   type ListIncidentsQueryResult,
@@ -28,11 +29,7 @@ export default async function listIncidentsResolver(
             }),
           );
 
-        return incidents.map((incident) => ({
-          ...incident,
-          startedAt: incident.startedAt.toISOString(),
-          resolvedAt: incident.resolvedAt?.toISOString() ?? null,
-        }));
+        return incidents.map(toIncidentResponse);
       },
     },
   });

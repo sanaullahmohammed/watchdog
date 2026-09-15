@@ -1,4 +1,5 @@
 import { ErrorWithProps } from 'mercurius';
+import { toIncidentUpdateResponse } from '@/modules/incident/dtos/incident.present';
 import { resolveOrganizationContext } from '@/server/auth/organization-context';
 import {
   type GetIncidentTimelineQueryResult,
@@ -28,10 +29,7 @@ export default async function getIncidentTimelineResolver(
             }),
           );
 
-        return entries.map((entry) => ({
-          ...entry,
-          createdAt: entry.createdAt.toISOString(),
-        }));
+        return entries.map(toIncidentUpdateResponse);
       },
     },
   });

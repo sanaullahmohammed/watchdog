@@ -1,5 +1,6 @@
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import { Type } from 'typebox';
+import { toIncidentResponse } from '@/modules/incident/dtos/incident.present';
 import { incidentResponseDtoSchema } from '@/modules/incident/dtos/incident.response.dto';
 import { resolveOrganizationContext } from '@/server/auth/organization-context';
 import { UnauthorizedException } from '@/shared/exceptions';
@@ -28,17 +29,7 @@ export default async function listIncidents(fastify: FastifyRouteInstance) {
           listIncidentsQuery({ ...req.query, orgId: context.orgId }),
         );
 
-      return res.status(200).send(
-        incidents.map((incident) => ({
-          id: incident.id,
-          title: incident.title,
-          status: incident.status,
-          impact: incident.impact,
-          source: incident.source,
-          startedAt: incident.startedAt.toISOString(),
-          resolvedAt: incident.resolvedAt?.toISOString() ?? null,
-        })),
-      );
+      return res.status(200).send(incidents.map(toIncidentResponse));
     },
   });
 }
