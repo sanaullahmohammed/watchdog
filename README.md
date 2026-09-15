@@ -126,6 +126,7 @@ watchdog/
 │       ├── AI.md
 │       ├── ARCHITECTURE.md
 │       ├── DOMAIN.md
+│       ├── public-status-wireframe.md
 │       └── ROADMAP.md
 ├── scripts/           # auth schema drift check
 ├── biome.json
@@ -171,3 +172,4 @@ For phased delivery and non-goals, see [ROADMAP.md](./docs/genesis/ROADMAP.md).
 - [DOMAIN.md](./docs/genesis/DOMAIN.md) - entities, relationships, multi-tenant data model, RLS sketch, state machines, status-resolution rules, uptime storage, rollups, retention, and event catalog.
 - [AI.md](./docs/genesis/AI.md) - agentic product capabilities, provider-port contract, prompt and IO shapes, human gates, v1 AI scope, and MCP roadmap note.
 - [ROADMAP.md](./docs/genesis/ROADMAP.md) - milestones, v1 definition of done, ordered roadmap items, and explicit non-goals.
+- [public-status-wireframe.md](./docs/genesis/public-status-wireframe.md) - throwaway sketch of the public status page, kept as the record of what the `/status/:orgSlug` payload was designed against.
