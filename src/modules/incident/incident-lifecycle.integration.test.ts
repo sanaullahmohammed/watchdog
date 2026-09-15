@@ -12,6 +12,7 @@ import {
   incidentResolvedEvent,
   incidentStateChangedEvent,
   incidentUpdatedEvent,
+  incidentUpdatePostedEvent,
 } from '@/shared/events/incident.events';
 
 /** Story 2.9 — move an incident through its lifecycle. */
@@ -281,6 +282,55 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
 
     assert.notEqual(refused.statusCode, 200, refused.body);
     assert.equal((await timelineOf(orgAId, id)).length, before);
+  });
+
+  it('announces a public move on the timeline, and a draft move only as itself', async () => {
+    // incident.state_changed is admin-only, so this is how a public subscriber
+    // hears about a move to identified or monitoring at all.
+    const posted: { id: string; updateId: string }[] = [];
+    app.eventBus.on(incidentUpdatePostedEvent.type, (event) =>
+      posted.push(event.payload as { id: string; updateId: string }),
+    );
+
+    const id = await declare(cookieA, 'Public move');
+    const moved = await transition(cookieA, id, 'identified');
+    assert.equal(moved.statusCode, 200, moved.body);
+
+    const announced = posted.filter((entry) => entry.id === id);
+    assert.equal(
+      announced.length,
+      1,
+      'the transition announced its entry, and declaring did not: incident.created covers that',
+    );
+    const entry = await withTenantTransaction(orgAId, async ({ sql: tx }) => {
+      const [row] = await tx<{ status: string }[]>`
+        select status from incident_updates where id = ${announced[0].updateId}
+      `;
+      return row;
+    });
+    assert.equal(
+      entry.status,
+      'identified',
+      'it points at the entry this transition wrote',
+    );
+
+    // A draft was never shown to customers, so confirming it is announced by
+    // incident.confirmed rather than as a public timeline update.
+    const [{ id: draftId }] = await withTenantTransaction(
+      orgAId,
+      async ({ sql: tx }) =>
+        tx<{ id: string }[]>`
+        insert into incidents (org_id, title, status, impact, source)
+        values (${orgAId}, 'Draft move', 'draft', 'major', 'monitoring')
+        returning id
+      `,
+    );
+    const confirmedMove = await transition(cookieA, draftId, 'investigating');
+    assert.equal(confirmedMove.statusCode, 200, confirmedMove.body);
+    assert.deepEqual(
+      posted.filter((update) => update.id === draftId),
+      [],
+    );
   });
 
   it('treats an edit as incident.updated, distinct from a state change', async () => {
