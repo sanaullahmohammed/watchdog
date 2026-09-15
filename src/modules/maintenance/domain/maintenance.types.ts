@@ -1,11 +1,12 @@
 /** The maintenance ladder from DOMAIN.md. */
-export const MAINTENANCE_STATUSES = [
-  'scheduled',
-  'in_progress',
-  'completed',
-] as const;
+// In shared/domain because the public status payload names this ladder too.
+// Re-exported so maintenance code keeps importing it from its own module.
+import type { MaintenanceStatus } from '@/shared/domain/status-inputs';
 
-export type MaintenanceStatus = (typeof MAINTENANCE_STATUSES)[number];
+export {
+  MAINTENANCE_STATUSES,
+  type MaintenanceStatus,
+} from '@/shared/domain/status-inputs';
 
 export interface ScheduleMaintenanceProps {
   title: string;

@@ -2,9 +2,11 @@
  * Value ladders that cross module boundaries.
  *
  * Effective service status reads incident impact, which the `incident` module
- * produces, and monitor-derived state, which `monitoring` will. Modules may not
- * import one another, so the ladders both sides agree on live here rather than
- * inside either producer. See DOMAIN.md, Status model.
+ * produces, and monitor-derived state, which `monitoring` will. The public
+ * status payload reads all three lifecycles at once. Modules may not import one
+ * another, so every ladder more than one module names lives here rather than
+ * inside any one producer, and each module re-exports what it owns. See
+ * DOMAIN.md, Status model.
  */
 
 /** Per-service and overall incident impact. */
@@ -20,3 +22,64 @@ export const MONITOR_DERIVED_STATES = [
 ] as const;
 
 export type MonitorDerivedState = (typeof MONITOR_DERIVED_STATES)[number];
+
+/** The service status ladder from DOMAIN.md, worst last by the rank below. */
+export const SERVICE_STATUSES = [
+  'operational',
+  'degraded',
+  'partial_outage',
+  'major_outage',
+  'maintenance',
+] as const;
+
+export type ServiceStatus = (typeof SERVICE_STATUSES)[number];
+
+/**
+ * DOMAIN's ordering. `maintenance` is visible and non-operational, but every
+ * incident outage state outranks it: a major incident during planned work
+ * reads as an outage, not as maintenance.
+ */
+export const SERVICE_STATUS_RANK: Readonly<Record<ServiceStatus, number>> = {
+  operational: 0,
+  maintenance: 1,
+  degraded: 2,
+  partial_outage: 3,
+  major_outage: 4,
+};
+
+/**
+ * The worst of several statuses. `operational` is the reduction's identity, so
+ * an empty list is operational: an organization with nothing to report is not
+ * broken.
+ */
+export function worstServiceStatus(
+  statuses: readonly ServiceStatus[],
+): ServiceStatus {
+  return statuses.reduce<ServiceStatus>(
+    (worst, current) =>
+      SERVICE_STATUS_RANK[current] > SERVICE_STATUS_RANK[worst]
+        ? current
+        : worst,
+    'operational',
+  );
+}
+
+/** The incident lifecycle from DOMAIN.md. */
+export const INCIDENT_STATUSES = [
+  'draft',
+  'investigating',
+  'identified',
+  'monitoring',
+  'resolved',
+] as const;
+
+export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
+
+/** The maintenance lifecycle from DOMAIN.md. */
+export const MAINTENANCE_STATUSES = [
+  'scheduled',
+  'in_progress',
+  'completed',
+] as const;
+
+export type MaintenanceStatus = (typeof MAINTENANCE_STATUSES)[number];

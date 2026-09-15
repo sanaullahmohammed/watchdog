@@ -1,5 +1,6 @@
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import { Type } from 'typebox';
+import { toPublicStatusPage } from '@/modules/status-page/dtos/public-status-page.present';
 import {
   type GetPublicStatusPageQueryResult,
   getPublicStatusPageQuery,
@@ -30,12 +31,16 @@ export default async function getPublicStatusPage(
       tags: ['public'],
     },
     handler: async (req, res) => {
-      const page =
+      const view =
         await fastify.queryBus.execute<GetPublicStatusPageQueryResult>(
           getPublicStatusPageQuery({ slug: req.params.orgSlug }),
         );
 
-      return res.status(200).send(page);
+      return res
+        .status(200)
+        .send(
+          toPublicStatusPage(view.organization, view.reads, view.generatedAt),
+        );
     },
   });
 }

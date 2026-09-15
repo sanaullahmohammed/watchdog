@@ -1,13 +1,12 @@
-/** The status ladder from DOMAIN.md. Ordered worst-last by SERVICE_STATUS_RANK. */
-export const SERVICE_STATUSES = [
-  'operational',
-  'degraded',
-  'partial_outage',
-  'major_outage',
-  'maintenance',
-] as const;
+// The ladder lives in shared/domain: the public status payload names it too,
+// and modules may not import one another. Re-exported so every caller here
+// keeps importing it from the module that owns services.
+import type { ServiceStatus } from '@/shared/domain/status-inputs';
 
-export type ServiceStatus = (typeof SERVICE_STATUSES)[number];
+export {
+  SERVICE_STATUSES,
+  type ServiceStatus,
+} from '@/shared/domain/status-inputs';
 
 /** What a caller supplies to create a service. `orgId` is never among them. */
 export interface CreateServiceProps {

@@ -1,19 +1,15 @@
 /** The incident ladder from DOMAIN.md. There is no `dismissed` status. */
-export const INCIDENT_STATUSES = [
-  'draft',
-  'investigating',
-  'identified',
-  'monitoring',
-  'resolved',
-] as const;
+// Both ladders live in shared/domain: the service module reads impact when it
+// resolves status, and the public status payload names the lifecycle. Modules
+// may not import one another, so they live there and are re-exported here for
+// this module's own importers.
+import type { IncidentStatus } from '@/shared/domain/status-inputs';
 
-export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
-
-// The impact ladder is read by the service module when resolving status, so it
-// lives in shared and is re-exported here for this module's existing importers.
 export {
   INCIDENT_IMPACTS,
+  INCIDENT_STATUSES,
   type IncidentImpact,
+  type IncidentStatus,
 } from '@/shared/domain/status-inputs';
 
 /** How an incident came to exist. */
