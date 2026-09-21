@@ -106,11 +106,17 @@ jobs:
       # The same role and database as the integration suite. Each scenario
       # builds its own organization through the API and removes it after, so
       # nothing here depends on the seed or on another scenario.
+      #
+      # There is no .env in CI, so every variable src/config requires without
+      # a default has to be here: DATABASE_URL, BETTER_AUTH_SECRET, LOG_LEVEL
+      # and NODE_ENV. Local runs read the rest from .env and cannot notice one
+      # missing.
       - name: E2E (Cucumber)
         run: pnpm run test:e2e
         env:
           DATABASE_URL: postgres://watchdog_app:watchdog_app_test_password@localhost:5432/watchdog_test?sslmode=disable
           BETTER_AUTH_SECRET: test_secret_at_least_32_characters_long
+          LOG_LEVEL: info
           NODE_ENV: test
 
       - name: Keep the E2E report when a scenario fails
