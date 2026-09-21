@@ -876,8 +876,9 @@ jobs:
 
 Script names confirmed against the scaffolded `package.json`: `pnpm run check` (Biome format + Biome lint + `tsc --noEmit` + dependency-cruiser),
 `pnpm run test:unit`, `pnpm run test:e2e`, `pnpm run test:k6:smoke`, `pnpm run db:migrate`.
-The `create app database role`, `dbmate up`, integration, E2E, k6 and docker-build steps above are the target shape; the committed
-`.github/workflows/ci.yml` currently runs only install, `check`, and `test:unit`, and grows per ROADMAP phase as the things they verify exist.
+The committed `.github/workflows/ci.yml` runs install, `check` and `test:unit`; then, against a Postgres service container, the
+`create app database role` step, `dbmate up`, the Better Auth schema drift check, integration and E2E; and the docker build. k6 is
+still target shape, and arrives with ROADMAP phase 5 when there is a monitor worth loading.
 
 Two CI details that differ from the sketch above and are already committed: `corepack enable` plus `node-version-file: .nvmrc` replaces
 `pnpm/action-setup`, because `packageManager` is pinned in `package.json`; and pnpm >= 12 reads settings from `pnpm-workspace.yaml`
