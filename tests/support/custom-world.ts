@@ -14,7 +14,10 @@ export interface ICustomWorld extends World {
   startTime?: Date;
   db: ReturnType<typeof postgres>;
   server: FastifyInstance;
-  context?: any;
+  /** Where `server` is listening, for steps that must arrive over a socket. */
+  baseUrl: string;
+  // biome-ignore lint/suspicious/noExplicitAny: step-owned scratch space
+  context: any;
 }
 
 export class CustomWorld extends World implements ICustomWorld {
@@ -26,6 +29,8 @@ export class CustomWorld extends World implements ICustomWorld {
   debug = false;
   server = undefined as any;
   db = undefined as any;
+  baseUrl = '';
+  context = {};
 }
 
 setWorldConstructor(CustomWorld);

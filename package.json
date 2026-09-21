@@ -21,7 +21,7 @@
     "test": "pnpm run test:unit",
     "test:unit": "node --import tsx --test src/**/*.spec.ts",
     "test:coverage": "c8 node --import tsx --test src/**/*.spec.ts",
-    "test:e2e": "npx cucumber-js --exit",
+    "test:e2e": "cucumber-js --exit",
     "test:k6:smoke": "k6 run tests/load/smoke.js",
     "test:k6:load": "k6 run tests/load/load.js",
     "db": "dbmate h",
