@@ -32,7 +32,45 @@ The WatchDog core must remain provider-agnostic. All LLM access goes through a n
 
 The v1 implementation adapter is Azure AI Foundry.
 
-> TODO(human): Specify the exact Azure AI Foundry model name, deployment name, API version, endpoint configuration, and credential source.
+### 2.0 Azure AI Foundry Configuration
+
+Resolved 2026-09-21. The deployments are the ones on WatchDog's Foundry resource; what follows about the endpoint and the models comes from Microsoft Learn as of that date: [Endpoints for Foundry Models](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/endpoints), [Foundry Models sold by Azure](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure) and [Foundry reasoning models](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-chat-reasoning).
+
+| Item | Decision |
+| --- | --- |
+| Model | `DeepSeek-V4-Flash`, version `2026-04-23`, one of the Foundry Models sold by Azure |
+| Deployment name | `DeepSeek-V4-Flash`. A request's `model` field carries the deployment name, not the catalog model id. |
+| API version | None. The adapter calls the `/openai/v1/` route, which is versioned implicitly and takes no `api-version` parameter. |
+| Endpoint | The resource endpoint from the portal's Keys and Endpoint page, `https://<resource>.services.ai.azure.com` (the `https://<resource>.openai.azure.com` form is accepted too), with `/openai/v1` appended by the adapter. The API is Chat Completions, which every deployment below supports; the Responses API answers `400 Model not supported` on a deployment that lacks it. |
+| Credential | An API key for the Foundry resource, read from `.env` and validated at startup like every other secret. Microsoft recommends Microsoft Entra ID for production, because a key grants full access to the resource and is rotated by hand. Moving to Entra ID later changes the adapter, not the port. |
+
+Configuration arrives in `src/config/env.ts` and `.env.example` with Epic 7's first story, not before: configuration is read only through `src/config`, and a variable nothing reads would document a feature that does not exist.
+
+| Variable | Holds |
+| --- | --- |
+| `AZURE_AI_FOUNDRY_ENDPOINT` | The resource endpoint, without `/openai/v1` |
+| `AZURE_AI_FOUNDRY_API_KEY` | The key. A secret: never logged, and covered by the redaction rules in 4.4 |
+| `AZURE_AI_FOUNDRY_DEPLOYMENT` | The deployment every purpose uses. Defaults to `DeepSeek-V4-Flash` |
+
+All three are optional. Without an endpoint and a key, the `ai` module wires an unavailable provider and AI features answer that assistance is unavailable, which is the degradation 2.1 already requires. CI never holds a key: unit tests inject a fake provider, and adapter tests exercise the Foundry request and response mapping against a stubbed HTTP layer.
+
+What the chosen model means for the adapter:
+
+- **It is a reasoning model.** A response carries the answer in `message.content` and can also carry `message.reasoning_content`. The adapter returns `content` only. Reasoning content is not the answer: it is never logged, never returned, and never sent back as conversation history.
+- **Token budgets include the reasoning.** `maxOutputTokens` maps to `max_completion_tokens`, which bounds reasoning and answer together, so a budget sized for the answer alone can stop at `finish_reason: length` before any answer. The model takes 1,000,000 input tokens and produces up to 384,000.
+- **`temperature` is not forwarded.** Microsoft notes that reasoning models often reject it, along with `top_p`, `presence_penalty` and `frequency_penalty`. It stays on the port as a hint for adapters whose models accept it.
+- **The provider does not enforce a schema.** The model's documented response formats are Text and JSON; the schema-enforced structured outputs Foundry lists for its GPT models are not among them. `completeStructured` asks for JSON and validates with `output.parse` before anything leaves the module, and a failed parse is a provider failure that degrades like one.
+- **English and Chinese** are its documented languages.
+- **Content filtering applies.** A `content_filter` finish reason or an HTTP 400 is reported as unavailable assistance, and the same prompt is not retried unchanged.
+
+The resource also carries these deployments. Any of them can replace the default through `AZURE_AI_FOUNDRY_DEPLOYMENT`, but check the replacement against the list above first, because what each accepts differs:
+
+| Deployment | Model version | Reasoning model | Schema-enforced structured outputs |
+| --- | --- | --- | --- |
+| `DeepSeek-V4-Flash` (default) | 2026-04-23 | Yes, with `reasoning_content` | No; Text or JSON |
+| `gpt-5.4-nano` | 2026-03-17 | Yes | Yes |
+| `gpt-4.1-nano` | 2025-04-14 | No, so `temperature` applies | Yes |
+| `grok-4-1-fast-reasoning` | 1 | Yes | No; text only |
 
 ### 2.1 Design Constraints
 
@@ -69,7 +107,9 @@ export interface LlmCompletionRequest {
 
   messages: LlmMessage[];
 
+  /** A hint. Adapters whose models reject it drop it; see 2.0. */
   temperature?: number;
+  /** For a reasoning model this bounds reasoning and answer together. */
   maxOutputTokens?: number;
 
   metadata?: {
@@ -123,10 +163,12 @@ export interface LlmProviderPort {
 
 ```ts
 export interface AzureAiFoundryConfig {
+  /** The resource endpoint. The adapter calls `${endpoint}/openai/v1`. */
   endpoint: string;
-  apiKey?: string;
+  apiKey: string;
+  /** Sent as `model`: the deployment name, not the catalog model id. */
   deploymentName: string;
-  apiVersion: string;
+  // No apiVersion: the /openai/v1/ route is versioned implicitly. See 2.0.
 }
 
 export class AzureAiFoundryLlmProvider implements LlmProviderPort {
@@ -675,6 +717,8 @@ export interface AiAuditMetadata {
     | 'postmortem-draft';
 
   provider: 'azure-ai-foundry';
+  /** Which deployment wrote it, so a draft stays attributable after a swap. */
+  deployment: string;
   providerRequestId?: string;
 
   inputEntityRefs: Array<{

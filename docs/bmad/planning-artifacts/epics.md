@@ -178,7 +178,7 @@ People find out without watching the page: email to confirmed subscribers, RSS/A
 An operator drafts incident updates, postmortems and weekly digests with assistance, and queries status history in natural language. Every output is human-approved; nothing is published autonomously.
 **FRs covered:** FR22, FR23, FR24, FR25
 
-**BLOCKED.** `docs/genesis/AI.md` line 35 still carries an unresolved `TODO(human)`: the Azure AI Foundry model name, deployment name, API version, endpoint configuration and credential source. Every other genesis TODO has been closed. A swappable provider port does not help if the adapter cannot authenticate to be tested. Resolve before this epic starts, not during it.
+**Unblocked 2026-09-21.** The `TODO(human)` that held this epic is resolved in `docs/genesis/AI.md` section 2.0: `DeepSeek-V4-Flash` (version 2026-04-23) on the `/openai/v1/` route, so there is no API version to pin, authenticated by an API key from `.env`. The epic's first story adds the three `AZURE_AI_FOUNDRY_*` variables to `src/config/env.ts`, all optional, so a missing key degrades to unavailable assistance rather than failing boot, and CI needs no key. The chosen model is a reasoning model without schema-enforced output, and section 2.0 records what that obliges the adapter to do.
 
 ### Epic 8: Release readiness
 
