@@ -53,7 +53,7 @@ A customer-visible component on the status page.
 | `service_group_id` | `uuid null` | FK -> `service_groups.id` |
 | `name` | `text` | Required |
 | `slug` | `text` | Unique per `org_id` including archived services, so archiving reserves a slug permanently. Chosen over a partial index on `archived_at is null`: reuse is rare, and a uniqueness rule that depends on a mutable column is a sharper edge than a reserved name. Reversible with a one-line migration if it proves wrong. |
-| `description` | `text null` | Optional |
+| `description` | `text null` | Optional. Customer-facing: the public page shows it with the service, so it is written for customers and is never an operator's note. Decided by the Epic 3 retrospective (2026-09-21, C-1), after story 3.3 had already published it. |
 | `manual_status_override` | `text null` | CHECK: `operational`, `degraded`, `partial_outage`, `major_outage`, `maintenance`; manual override wins over computed status |
 | `is_public` | `boolean` | Whether shown on public page. Also decides what the page says about incidents and windows naming the service; see Public status page. |
 | `display_order` | `integer` | Public ordering |
@@ -206,7 +206,7 @@ Scheduled maintenance window affecting one or more services.
 | `id` | `uuid` | PK |
 | `org_id` | `text` | FK -> Better Auth `organization.id` |
 | `title` | `text` | Required |
-| `description` | `text null` | Optional |
+| `description` | `text null` | Optional. Customer-facing on the same terms as a service's: the public page shows it with the window. |
 | `status` | `text` | CHECK: `scheduled`, `in_progress`, `completed` |
 | `scheduled_start_at` | `timestamptz` | Required |
 | `scheduled_end_at` | `timestamptz` | Required |

@@ -1,6 +1,7 @@
 const updateMaintenanceSchema = `
   input UpdateMaintenancePayload {
     title: String
+    "Shown to customers on the public status page."
     description: String
     scheduledStartAt: String
     scheduledEndAt: String

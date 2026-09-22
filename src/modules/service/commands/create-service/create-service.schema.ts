@@ -24,7 +24,9 @@ export const createServiceRequestDtoSchema = Type.Object({
     pattern: SLUG_PATTERN,
   }),
   description: Type.Optional(
-    Type.String({ description: 'Optional detail shown on the status page' }),
+    Type.String({
+      description: 'Shown to customers on the public status page',
+    }),
   ),
   isPublic: Type.Optional(
     Type.Boolean({

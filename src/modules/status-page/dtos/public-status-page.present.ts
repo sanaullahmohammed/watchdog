@@ -78,7 +78,6 @@ function groupServices(
     groups[index].services.push({
       id: service.id,
       name: service.name,
-      slug: service.slug,
       description: service.description,
       status: service.status,
       displayOrder: service.displayOrder,

@@ -10,7 +10,6 @@ import type {
 export type PublicServiceRow = {
   id: string;
   name: string;
-  slug: string;
   description: string | null;
   status: ServiceStatus;
   displayOrder: number;
@@ -98,7 +97,6 @@ export default function publicStatusRepository() {
         {
           id: string;
           name: string;
-          slug: string;
           description: string | null;
           last_known_status: ServiceStatus;
           display_order: number;
@@ -108,7 +106,7 @@ export default function publicStatusRepository() {
         }[]
       >`
         select
-          s.id, s.name, s.slug, s.description, s.last_known_status,
+          s.id, s.name, s.description, s.last_known_status,
           s.display_order,
           g.id as group_id, g.name as group_name,
           g.display_order as group_display_order
@@ -124,7 +122,6 @@ export default function publicStatusRepository() {
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
-        slug: row.slug,
         description: row.description,
         // Read, never recomputed: the recomputation handler keeps this current,
         // and a public read that recomputed would do it on every request.

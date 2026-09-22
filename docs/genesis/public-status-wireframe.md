@@ -21,24 +21,26 @@ payload was designed against, and struck through if it ever stops matching.
 │                                                                      │
 │  ACTIVE INCIDENT                                                     │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │ Elevated error rates on the Public API          major · 40m     │  │
-│  │ identified                                                      │  │
-│  │                                                                 │  │
-│  │ 14:41  The cause is a misconfigured connection pool in the      │  │
-│  │        latest API deploy. A rollback is in progress.            │  │
-│  │ 14:24  We are investigating elevated 5xx responses.             │  │
-│  │                                                                 │  │
-│  │ Affects: Public API, Webhooks                                   │  │
+│  │ Elevated error rates on the Public API          major · 40m    │  │
+│  │ identified                                                     │  │
+│  │                                                                │  │
+│  │ 14:41  The cause is a misconfigured connection pool in the     │  │
+│  │        latest API deploy. A rollback is in progress.           │  │
+│  │ 14:24  We are investigating elevated 5xx responses.            │  │
+│  │                                                                │  │
+│  │ Affects: Public API, Webhooks                                  │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  SCHEDULED MAINTENANCE                                               │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │ Primary database version upgrade              18 Sep 02:00 UTC  │  │
-│  │ scheduled · 2h          Affects: Primary database, Public API   │  │
+│  │ Primary database version upgrade              18 Sep 02:00 UTC │  │
+│  │ scheduled · 2h          Affects: Primary database, Public API  │  │
+│  │ Writes pause for up to five minutes during the restart.        │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  CORE PLATFORM                                                       │
 │    Public API            ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄░░░░  partial outage     │
+│      REST and GraphQL endpoints for integrations                     │
 │    Web dashboard         ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄  operational        │
 │    Authentication        ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄  operational        │
 │                                                                      │
@@ -63,18 +65,24 @@ payload was designed against, and struck through if it ever stops matching.
 | "checked 15:04 UTC" | `generatedAt` | When the payload was composed. A poller needs it; a cache needs it |
 | Group headings, and their order | `groups[].name`, `groups[].displayOrder` | `service_groups` |
 | Service name and status | `groups[].services[].name`, `.status` | `services.last_known_status`, never recomputed per request |
+| The line under "Public API" | `groups[].services[].description` | `services.description`; null when the operator wrote none. Customer-facing (DOMAIN, Service) |
 | Service ordering within a group | `groups[].services[].displayOrder` | `services.display_order`, then name |
 | Services in no group | `groups[]` entry with a null id | `services.service_group_id is null` |
 | Incident title, impact, status | `activeIncidents[].title`, `.impact`, `.status` | `incidents` |
 | "40m" | derived from `activeIncidents[].startedAt` | `incidents.started_at` |
 | The two timestamped update lines | `activeIncidents[].updates[]` (`status`, `message`, `createdAt`) | `incident_updates`, oldest to newest; the renderer reverses |
 | "Affects: Public API, Webhooks" | `activeIncidents[].affectedServiceIds` | `incident_service_impacts`, visible services only. An incident naming only hidden services is not listed (DOMAIN, "Public status page") |
-| Window title, time, duration | `maintenance[].title`, `.scheduledStartAt`, `.scheduledEndAt` | `maintenance` |
+| Window title, time, duration | `maintenance[].title`, `.scheduledStartAt`, `.scheduledEndAt`, and `.startedAt`, which is null until the window actually begins | `maintenance` |
+| "Writes pause for up to five minutes…" | `maintenance[].description` | `maintenance.description`; null when the operator wrote none. Customer-facing (DOMAIN, Maintenance) |
 | Window status (`scheduled` / `in_progress`) | `maintenance[].status` | `maintenance` |
 | "Affects: Primary database, Public API" | `maintenance[].affectedServiceIds` | `maintenance_services`, under the same rule as incidents |
-| The 90-day bars | `uptime` | Shaped now, empty until Epic 5's rollups (decision recorded in the epic) |
+| The 90-day bars | `uptime.windowDays`, `uptime.services[].serviceId`, `.days[].date`, `.days[].uptimeRatio` | Shaped now, empty until Epic 5's rollups (decision recorded in the epic) |
 
-Nothing on the sketch is left without a field, so nothing is struck out.
+Nothing on the sketch is left without a field.
+
+**Fields with nothing drawn.** The `id` on each group, service, incident, update and window. `groups[].id` is null for the ungrouped bucket, as above. A service's `id` is what `affectedServiceIds` and `uptime.services[].serviceId` point at, so the "Affects:" lines and the bars resolve through it. The rest give a renderer a key per row. They are also the ids the domain events already carry: each event names its aggregate by `id`, and `incident.update_posted` names its entry as `updateId`. So a live update from Epic 4 can find its row without matching titles.
+
+**Struck from the payload.** `groups[].services[].slug`. Nothing on the page shows it, and nothing resolves through it: rows are keyed by `id`. Story 3.3 added it without a trace here. It was struck while no integrator depended on the payload, because adding a field later breaks nobody and removing one does.
 
 ## What the shape can and cannot say
 
@@ -115,3 +123,8 @@ The payload is one document with seven top-level keys: `organization`,
 `overallStatus`, so every renderer reduces the ladder the same way rather than
 each inventing a banner, and `generatedAt`, so a poller can tell one answer
 from the next.
+
+## Revisions
+
+- **2026-09-22, Epic 3 retrospective C-1.** Story 3.3 shipped three fields this file did not trace, `groups[].services[].slug`, `.description` and `maintenance[].description`, and did not update it. The two descriptions are now drawn on the sketch and traced, the decision that they are customer-facing is recorded in DOMAIN, and `slug` is struck. The fields that had no row, the identity fields and `maintenance[].startedAt`, are accounted for above. The incident and window cards were also one column wider than the frame, and now fit it.
+- **2026-09-21, Epic 3 retrospective R-1, R-2, R-12.** The banner and "Affects:" rows follow DOMAIN's "Public status page" rule.

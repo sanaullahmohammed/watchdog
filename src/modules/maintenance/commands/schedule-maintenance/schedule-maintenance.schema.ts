@@ -2,7 +2,11 @@ import { type Static, Type } from 'typebox';
 
 export const scheduleMaintenanceRequestDtoSchema = Type.Object({
   title: Type.String({ minLength: 1, maxLength: 200 }),
-  description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  description: Type.Optional(
+    Type.Union([Type.String(), Type.Null()], {
+      description: 'Shown to customers on the public status page',
+    }),
+  ),
   scheduledStartAt: Type.String({ format: 'date-time' }),
   scheduledEndAt: Type.String({ format: 'date-time' }),
   affectedServiceIds: Type.Optional(

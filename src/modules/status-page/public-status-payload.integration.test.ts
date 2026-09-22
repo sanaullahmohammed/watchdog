@@ -94,7 +94,7 @@ const PAGE_SELECTION = `
   generatedAt
   groups {
     id name displayOrder
-    services { id name slug description status displayOrder }
+    services { id name description status displayOrder }
   }
   activeIncidents {
     id title impact status startedAt affectedServiceIds
@@ -419,16 +419,20 @@ describe('Story 3.3: serve the public status payload', () => {
     assert.ok(!body.includes(id.archived), 'an archived service stayed off');
   });
 
-  it('carries each service as the admin API describes it', async () => {
+  it('carries each service with exactly the fields the wireframe traces', async () => {
     const page = await fetchPage(slugA);
     const delta = page.groups
       .flatMap((group) => group.services)
       .find((service) => service.id === id.delta);
 
+    // Exact, so a field added to the service's response schema fails here
+    // until the wireframe traces it, which story 3.3's `slug` never did (Epic
+    // 3 retrospective, C-1). A presenter-only field would not reach this far:
+    // the REST serializer drops what the schema does not declare. The
+    // description is the operator's, written for customers.
     assert.deepEqual(delta, {
       id: id.delta,
       name: 'Delta',
-      slug: `${tag}-delta`,
       description: 'A service with something to say',
       status: 'operational',
       displayOrder: 0,
