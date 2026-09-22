@@ -54,9 +54,18 @@ export default function makeGetPublicStatusPage({
       // organization the slug resolved to, so RLS decides what is visible and
       // one page can never carry another tenant's rows.
       //
-      // One transaction for all three reads: the page is a single answer, and
-      // an incident that resolves between two of them would otherwise appear
-      // on the timeline of a service already shown as operational.
+      // The three reads share one snapshot: repeatable read, read only. Under
+      // the default, read committed, each statement would see what had
+      // committed when it began, and an incident declared between two of them
+      // could appear on a page whose services were read before it existed.
+      //
+      // One snapshot is not one answer about status, though. A service's
+      // `last_known_status` is written by a recomputation that runs after the
+      // command that moved it commits (DOMAIN, "Status settles just after the
+      // command that moved it"), so for as long as that handler takes, the
+      // page can list a new incident beside services still showing their
+      // previous status. The banner folds in listed incidents' impact, so it
+      // does not wait for the recomputation.
       const reads = await withTenantTransaction(
         organization.id,
         async (tx): Promise<PublicStatusReads> => ({
@@ -64,6 +73,7 @@ export default function makeGetPublicStatusPage({
           incidents: await publicStatusRepository.listActiveIncidents(tx),
           maintenance: await publicStatusRepository.listOpenMaintenance(tx),
         }),
+        { isolation: 'repeatable read', readOnly: true },
       );
 
       return {

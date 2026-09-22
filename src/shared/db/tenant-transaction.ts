@@ -67,6 +67,30 @@ export type TenantTransaction = {
 };
 
 /**
+ * How a tenant transaction reads. Omitted, it is Postgres's default, READ
+ * COMMITTED, read write: every statement sees what had committed when that
+ * statement began, so two reads in one transaction can disagree. Sharing a
+ * transaction does not make them one answer (Epic 3 retrospective, R-3), just
+ * as it does not serialize a read-check-write.
+ */
+export type TenantTransactionOptions = {
+  /**
+   * `repeatable read` gives every statement the snapshot taken at the
+   * transaction's first, so several reads describe one instant. A read-only
+   * one never fails with a serialization error; it has nothing to conflict.
+   */
+  isolation?: 'read committed' | 'repeatable read';
+  readOnly?: boolean;
+};
+
+/** The `begin` options, built only from the values the type admits. */
+function beginOptions({ isolation, readOnly }: TenantTransactionOptions) {
+  return [isolation && `isolation level ${isolation}`, readOnly && 'read only']
+    .filter(Boolean)
+    .join(' ');
+}
+
+/**
  * Runs `work` inside a transaction scoped to `orgId`.
  *
  * The id is validated before the transaction opens so that a resolution bug
@@ -77,10 +101,11 @@ export type TenantTransaction = {
 export async function withTenantTransaction<T>(
   orgId: string,
   work: (tx: TenantTransaction) => Promise<T>,
+  options: TenantTransactionOptions = {},
 ): Promise<T> {
   assertValidBetterAuthOrgId(orgId);
 
-  return sql.begin(async (tx) => {
+  return sql.begin(beginOptions(options), async (tx) => {
     const scoped = tx as unknown as Sql;
     await scoped`select set_config(${CURRENT_ORG_GUC}, ${orgId}, true)`;
     return work({ sql: scoped, orgId });
