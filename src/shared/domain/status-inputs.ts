@@ -5,8 +5,11 @@
  * produces, and monitor-derived state, which `monitoring` will. The public
  * status payload reads all three lifecycles at once. Modules may not import one
  * another, so every ladder more than one module names lives here rather than
- * inside any one producer, and each module re-exports what it owns. See
- * DOMAIN.md, Status model.
+ * inside any one producer, and each module re-exports what it owns. Rules over
+ * those ladders that more than one module applies live here too: the worst-of
+ * reduction, and the mapping from incident impact to service status, which the
+ * status recomputation and the public page's banner both use. See DOMAIN.md,
+ * Status model.
  */
 
 /** Per-service and overall incident impact. */
@@ -62,6 +65,25 @@ export function worstServiceStatus(
         : worst,
     'operational',
   );
+}
+
+/**
+ * DOMAIN's impact mapping. A `major` incident is a partial outage; only a
+ * `critical` one is a major outage.
+ */
+export function statusFromIncidentImpact(
+  impact: IncidentImpact,
+): ServiceStatus {
+  switch (impact) {
+    case 'none':
+      return 'operational';
+    case 'minor':
+      return 'degraded';
+    case 'major':
+      return 'partial_outage';
+    case 'critical':
+      return 'major_outage';
+  }
 }
 
 /** The incident lifecycle from DOMAIN.md. */

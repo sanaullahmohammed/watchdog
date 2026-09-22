@@ -54,7 +54,7 @@ A customer-visible component on the status page.
 | `slug` | `text` | Unique per `org_id` including archived services, so archiving reserves a slug permanently. Chosen over a partial index on `archived_at is null`: reuse is rare, and a uniqueness rule that depends on a mutable column is a sharper edge than a reserved name. Reversible with a one-line migration if it proves wrong. |
 | `description` | `text null` | Optional |
 | `manual_status_override` | `text null` | CHECK: `operational`, `degraded`, `partial_outage`, `major_outage`, `maintenance`; manual override wins over computed status |
-| `is_public` | `boolean` | Whether shown on public page |
+| `is_public` | `boolean` | Whether shown on public page. Also decides what the page says about incidents and windows naming the service; see Public status page. |
 | `display_order` | `integer` | Public ordering |
 | `last_known_status` | `text` | Not null, default `operational`; CHECK as the ladder above. Last result of `resolveServiceStatus`, written only by the recomputation handler. See Status recomputation. |
 | `archived_at` | `timestamptz null` | Set when archived; null when active |
@@ -948,6 +948,33 @@ Archived services are skipped. They appear on no public or active list, so annou
 **The risk is a derived column drifting from its inputs**, and there are two ways it can. A future write path could move an input without emitting one of the events above; the event catalog is the guard for that, since a command that changes status without emitting is already a defect by the definition of done. The other way is a recomputation that simply fails: the events are one-shot and nothing re-emits them, so a transient database error, or a process that died mid-flight, leaves `last_known_status` wrong until some unrelated change in that organization.
 
 **The worker therefore reconciles.** Every pass recomputes each organization after its other work, which is the same recomputation the events trigger: idempotent, and silent when nothing moved, so a healthy system pays one cheap read per organization per pass and announces nothing. Drift that it does correct is logged, because a correction means an event was lost and that is worth knowing about. This was deferred to post-v1 until the Epic 2 retrospective found the failure path (R-7).
+
+### Public status page
+
+What `/status/:orgSlug` shows, and the one status it leads with. Decided 2026-09-21 by the Epic 3 retrospective (R-1, R-2, R-12). Until then the banner rule lived only in the story 3.1 wireframe, and the page published what the rule below now withholds.
+
+**A service is visible** when it is `is_public` and not archived. Only visible services are listed.
+
+**Incidents and windows are judged by the services they name.** The page considers active incidents (`investigating`, `identified`, `monitoring`) and open windows (`scheduled`, `in_progress`), and for each one:
+
+| It names | The page |
+|---|---|
+| no service | lists it, with no affected services. Blast radius is often unknown when an incident is declared, and an operator who has not named services yet still means customers to see it. |
+| at least one visible service | lists it, with only the visible services as affected. |
+| only services that are not visible | leaves it off. It describes components the organization chose not to publish. |
+
+An affected-service reference that is not visible is never published, even as an opaque id: it announces a component the organization withheld, and it names nothing a renderer has in its service list.
+
+Visibility is judged from current rows at read time. Making a service private, or archiving it, takes the incidents and windows that named only it off the page with it; nothing about them is stored.
+
+**The banner.** `overallStatus` is `worstOf` over two lists:
+
+- every visible service's `last_known_status`;
+- every *listed* incident's headline impact (`incidents.impact`), through `statusFromIncidentImpact`.
+
+The second list is why a listed `critical` incident can never sit under an `operational` banner, whether it names no service, names services that are private, or names public ones whose own status has not caught up. The headline impact is the one the page prints beside the incident, so the banner agrees with what a reader sees. An incident the rule leaves off contributes nothing, so a private incident cannot raise the banner by the back door. A window reaches the banner only through the services it puts in `maintenance`.
+
+This rule is written for the page; it is not yet applied everywhere these items are referenced publicly. The public event gate sketched in `ARCHITECTURE.md` section 5.4 checks only the draft status, so an event about an incident this rule leaves off would pass it. Epic 4 builds that gate and must apply this rule there too.
 
 ---
 

@@ -1,32 +1,29 @@
-import type { PublicOrganization } from '@/modules/status-page/database/organization.repository';
-import type {
-  PublicServiceRow,
-  PublicStatusReads,
-} from '@/modules/status-page/database/public-status.repository';
+import type { PublicServiceRow } from '@/modules/status-page/database/public-status.repository';
+import { overallStatus } from '@/modules/status-page/domain/public-page';
 import {
   type PublicStatusPageResponseDto,
   UPTIME_WINDOW_DAYS,
 } from '@/modules/status-page/dtos/public-status-page.response.dto';
-import { worstServiceStatus } from '@/shared/domain/status-inputs';
+import type { PublicStatusPageView } from '@/modules/status-page/queries/get-public-status-page/get-public-status-page.handler';
 
 /**
  * One presenter for both surfaces, as every other module read has. The parity
  * contract compares the request shapes, never the responses, so two hand-written
  * mappings would be free to drift (Epic 2 retrospective, AV-4).
  */
-export function toPublicStatusPage(
-  organization: PublicOrganization,
-  reads: PublicStatusReads,
-  generatedAt: Date,
-): PublicStatusPageResponseDto {
+export function toPublicStatusPage({
+  organization,
+  services,
+  incidents,
+  maintenance,
+  generatedAt,
+}: PublicStatusPageView): PublicStatusPageResponseDto {
   return {
     organization: { name: organization.name, slug: organization.slug },
-    overallStatus: worstServiceStatus(
-      reads.services.map((service) => service.status),
-    ),
+    overallStatus: overallStatus(services, incidents),
     generatedAt: generatedAt.toISOString(),
-    groups: groupServices(reads.services),
-    activeIncidents: reads.incidents.map((incident) => ({
+    groups: groupServices(services),
+    activeIncidents: incidents.map((incident) => ({
       id: incident.id,
       title: incident.title,
       impact: incident.impact,
@@ -40,7 +37,7 @@ export function toPublicStatusPage(
         createdAt: update.createdAt.toISOString(),
       })),
     })),
-    maintenance: reads.maintenance.map((window) => ({
+    maintenance: maintenance.map((window) => ({
       id: window.id,
       title: window.title,
       description: window.description,

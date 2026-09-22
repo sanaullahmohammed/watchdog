@@ -27,6 +27,7 @@ const publicStatusPageSchema = `
     impact: IncidentImpact!
     status: IncidentStatus!
     startedAt: String!
+    "Visible services only. Empty when the incident names none yet."
     affectedServiceIds: [ID!]!
     "Oldest first. A renderer showing the latest reads the end."
     updates: [IncidentUpdate!]!
@@ -40,6 +41,7 @@ const publicStatusPageSchema = `
     scheduledStartAt: String!
     scheduledEndAt: String!
     startedAt: String
+    "Visible services only. Empty when the window names none."
     affectedServiceIds: [ID!]!
   }
 
@@ -61,7 +63,7 @@ const publicStatusPageSchema = `
 
   type PublicStatusPage {
     organization: PublicStatusOrganization!
-    "The worst of the public services' statuses, reduced once here."
+    "The worst of the visible services' statuses and the listed incidents' headline impact."
     overallStatus: ServiceStatus!
     generatedAt: String!
     groups: [PublicStatusGroup!]!

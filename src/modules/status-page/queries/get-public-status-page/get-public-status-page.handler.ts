@@ -1,6 +1,15 @@
 import { statusPageActionCreator } from '@/modules/status-page';
 import type { PublicOrganization } from '@/modules/status-page/database/organization.repository';
-import type { PublicStatusReads } from '@/modules/status-page/database/public-status.repository';
+import type {
+  PublicIncidentRow,
+  PublicMaintenanceRow,
+  PublicServiceRow,
+  PublicStatusReads,
+} from '@/modules/status-page/database/public-status.repository';
+import {
+  type Published,
+  publishable,
+} from '@/modules/status-page/domain/public-page';
 import {
   type ResolveOrganizationBySlugQueryResult,
   resolveOrganizationBySlugQuery,
@@ -8,12 +17,15 @@ import {
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 
 /**
- * What one page is made of. The presenter turns this into the response both
+ * What one page is made of, with DOMAIN's listing rule already applied: only
+ * what a visitor may see. The presenter turns this into the response both
  * surfaces send; a query may not reach into the api layer to do that itself.
  */
 export type PublicStatusPageView = {
   organization: PublicOrganization;
-  reads: PublicStatusReads;
+  services: PublicServiceRow[];
+  incidents: Published<PublicIncidentRow>[];
+  maintenance: Published<PublicMaintenanceRow>[];
   generatedAt: Date;
 };
 
@@ -47,14 +59,20 @@ export default function makeGetPublicStatusPage({
       // on the timeline of a service already shown as operational.
       const reads = await withTenantTransaction(
         organization.id,
-        async (tx) => ({
+        async (tx): Promise<PublicStatusReads> => ({
           services: await publicStatusRepository.listPublicServices(tx),
           incidents: await publicStatusRepository.listActiveIncidents(tx),
           maintenance: await publicStatusRepository.listOpenMaintenance(tx),
         }),
       );
 
-      return { organization, reads, generatedAt: new Date() };
+      return {
+        organization,
+        services: reads.services,
+        incidents: publishable(reads.incidents),
+        maintenance: publishable(reads.maintenance),
+        generatedAt: new Date(),
+      };
     },
     init() {
       queryBus.register(getPublicStatusPageQuery.type, this.handler);

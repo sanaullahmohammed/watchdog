@@ -59,7 +59,7 @@ payload was designed against, and struck through if it ever stops matching.
 | On the sketch | Payload field | Source |
 |---|---|---|
 | "Acme Cloud" | `organization.name`, `organization.slug` | Better Auth `organization`, read on the pre-tenant path (story 3.2) |
-| "Partial outage" banner | `overallStatus` | Worst-of the public services' statuses, by DOMAIN's `SERVICE_STATUS_RANK` |
+| "Partial outage" banner | `overallStatus` | Worst-of the visible services' statuses and the listed incidents' headline impact. The rule is DOMAIN's, section "Public status page"; this row first said services only, which let a listed critical incident sit under an operational banner |
 | "checked 15:04 UTC" | `generatedAt` | When the payload was composed. A poller needs it; a cache needs it |
 | Group headings, and their order | `groups[].name`, `groups[].displayOrder` | `service_groups` |
 | Service name and status | `groups[].services[].name`, `.status` | `services.last_known_status`, never recomputed per request |
@@ -68,10 +68,10 @@ payload was designed against, and struck through if it ever stops matching.
 | Incident title, impact, status | `activeIncidents[].title`, `.impact`, `.status` | `incidents` |
 | "40m" | derived from `activeIncidents[].startedAt` | `incidents.started_at` |
 | The two timestamped update lines | `activeIncidents[].updates[]` (`status`, `message`, `createdAt`) | `incident_updates`, oldest to newest; the renderer reverses |
-| "Affects: Public API, Webhooks" | `activeIncidents[].affectedServiceIds` | `incident_service_impacts` |
+| "Affects: Public API, Webhooks" | `activeIncidents[].affectedServiceIds` | `incident_service_impacts`, visible services only. An incident naming only hidden services is not listed (DOMAIN, "Public status page") |
 | Window title, time, duration | `maintenance[].title`, `.scheduledStartAt`, `.scheduledEndAt` | `maintenance` |
 | Window status (`scheduled` / `in_progress`) | `maintenance[].status` | `maintenance` |
-| "Affects: Primary database, Public API" | `maintenance[].affectedServiceIds` | `maintenance_services` |
+| "Affects: Primary database, Public API" | `maintenance[].affectedServiceIds` | `maintenance_services`, under the same rule as incidents |
 | The 90-day bars | `uptime` | Shaped now, empty until Epic 5's rollups (decision recorded in the epic) |
 
 Nothing on the sketch is left without a field, so nothing is struck out.

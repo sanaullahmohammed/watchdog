@@ -32,7 +32,8 @@ export const publicStatusPageResponseDtoSchema = Type.Object({
     slug: Type.String(),
   }),
   /**
-   * The worst of the public services' statuses, reduced once here so every
+   * The worst of the visible services' statuses and the listed incidents'
+   * headline impact (DOMAIN, "Public status page"), reduced once here so every
    * renderer says the same thing rather than each inventing a banner.
    */
   overallStatus: serviceStatus,
@@ -63,6 +64,7 @@ export const publicStatusPageResponseDtoSchema = Type.Object({
       impact: incidentImpact,
       status: incidentStatus,
       startedAt: Type.String({ format: 'date-time' }),
+      /** Visible services only. Empty when the incident names none yet. */
       affectedServiceIds: Type.Array(Type.String({ format: 'uuid' })),
       /** Oldest first. A renderer showing "latest" reads the end. */
       updates: Type.Array(
@@ -87,6 +89,7 @@ export const publicStatusPageResponseDtoSchema = Type.Object({
         Type.String({ format: 'date-time' }),
         Type.Null(),
       ]),
+      /** Visible services only. Empty when the window names none. */
       affectedServiceIds: Type.Array(Type.String({ format: 'uuid' })),
     }),
   ),
