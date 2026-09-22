@@ -2,25 +2,11 @@ import type { ServiceStatus } from '@/modules/service/domain/service.types';
 import {
   type IncidentImpact,
   type MonitorDerivedState,
+  statusFromIncidentImpact,
   worstServiceStatus,
 } from '@/shared/domain/status-inputs';
 
 export { SERVICE_STATUS_RANK } from '@/shared/domain/status-inputs';
-
-export function statusFromIncidentImpact(
-  impact: IncidentImpact,
-): ServiceStatus {
-  switch (impact) {
-    case 'none':
-      return 'operational';
-    case 'minor':
-      return 'degraded';
-    case 'major':
-      return 'partial_outage';
-    case 'critical':
-      return 'major_outage';
-  }
-}
 
 export function statusFromMonitorState(
   state: MonitorDerivedState,

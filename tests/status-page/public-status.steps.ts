@@ -10,8 +10,12 @@ const hour = 60 * 60 * 1000;
 type PublicPage = {
   overallStatus: string;
   groups: { services: { name: string; status: string }[] }[];
-  activeIncidents: { title: string }[];
-  maintenance: { title: string; status: string }[];
+  activeIncidents: { title: string; affectedServiceIds: string[] }[];
+  maintenance: {
+    title: string;
+    status: string;
+    affectedServiceIds: string[];
+  }[];
 };
 
 /**
@@ -91,6 +95,46 @@ Given(
       scheduledStartAt: new Date(Date.now() + 24 * hour).toISOString(),
       scheduledEndAt: new Date(Date.now() + 25 * hour).toISOString(),
       affectedServiceIds: [this.context.services[service]],
+    });
+  },
+);
+
+Given(
+  'an active incident {string} affecting {string} and {string}',
+  async function (this: ICustomWorld, title: string, a: string, b: string) {
+    await adminPost(this, '/incidents', {
+      title,
+      impact: 'minor',
+      affectedServices: [a, b].map((name) => ({
+        serviceId: this.context.services[name],
+        impact: 'minor',
+      })),
+    });
+  },
+);
+
+Given(
+  'a critical incident {string} affecting only {string}',
+  async function (this: ICustomWorld, title: string, service: string) {
+    // Critical, so that if it leaked it would take the banner to major_outage.
+    await adminPost(this, '/incidents', {
+      title,
+      impact: 'critical',
+      affectedServices: [
+        { serviceId: this.context.services[service], impact: 'critical' },
+      ],
+    });
+  },
+);
+
+Given(
+  'a scheduled maintenance window {string} affecting {string} and {string}',
+  async function (this: ICustomWorld, title: string, a: string, b: string) {
+    await adminPost(this, '/maintenance', {
+      title,
+      scheduledStartAt: new Date(Date.now() + 26 * hour).toISOString(),
+      scheduledEndAt: new Date(Date.now() + 27 * hour).toISOString(),
+      affectedServiceIds: [a, b].map((name) => this.context.services[name]),
     });
   },
 );
@@ -178,6 +222,38 @@ Then(
   'the overall status is {string}',
   function (this: ICustomWorld, status: string) {
     assert.equal(page(this).overallStatus, status);
+  },
+);
+
+Then(
+  'it lists the incident {string} affecting only {string}',
+  function (this: ICustomWorld, title: string, service: string) {
+    const incident = page(this).activeIncidents.find((i) => i.title === title);
+    assert.ok(incident, `${title} is not on the page`);
+    assert.deepEqual(incident.affectedServiceIds, [
+      this.context.services[service],
+    ]);
+  },
+);
+
+Then(
+  'it lists the window {string} affecting only {string}',
+  function (this: ICustomWorld, title: string, service: string) {
+    const window = page(this).maintenance.find((w) => w.title === title);
+    assert.ok(window, `${title} is not on the page`);
+    assert.deepEqual(window.affectedServiceIds, [
+      this.context.services[service],
+    ]);
+  },
+);
+
+Then(
+  'it does not mention the id of {string}',
+  function (this: ICustomWorld, name: string) {
+    // Names alone would miss the ids an incident or window points at (R-1).
+    const id = this.context.services[name];
+    assert.ok(id, `no fixture service called ${name}`);
+    assert.ok(!this.context.body.includes(id), `${name}'s id reached the page`);
   },
 );
 

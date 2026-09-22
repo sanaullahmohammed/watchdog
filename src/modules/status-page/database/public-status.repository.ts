@@ -1,3 +1,4 @@
+import type { AffectedService } from '@/modules/status-page/domain/public-page';
 import type { TenantTransaction } from '@/shared/db/tenant-transaction';
 import type {
   IncidentImpact,
@@ -24,7 +25,8 @@ export type PublicIncidentRow = {
   impact: IncidentImpact;
   status: IncidentStatus;
   startedAt: Date;
-  affectedServiceIds: string[];
+  /** Every service named, visible or not. `publishable` decides what shows. */
+  affectedServices: AffectedService[];
   updates: {
     id: string;
     status: IncidentStatus;
@@ -41,10 +43,15 @@ export type PublicMaintenanceRow = {
   scheduledStartAt: Date;
   scheduledEndAt: Date;
   startedAt: Date | null;
-  affectedServiceIds: string[];
+  /** Every service named, visible or not. `publishable` decides what shows. */
+  affectedServices: AffectedService[];
 };
 
-/** Everything one page shows, read together under one transaction. */
+/**
+ * Everything one page is built from, read together under one transaction.
+ * Incidents and windows arrive unfiltered by the services they name: which of
+ * them the page lists is DOMAIN's rule, applied once in `publishable`.
+ */
 export type PublicStatusReads = {
   services: PublicServiceRow[];
   incidents: PublicIncidentRow[];
@@ -153,12 +160,18 @@ export default function publicStatusRepository() {
 
       const ids = incidents.map((incident) => incident.id);
 
+      // Visible is the services query's own predicate. A link to a service
+      // that is private or archived is still returned, so the rule can tell an
+      // incident naming only hidden services from one naming none.
       const impacts = await tx.sql<
-        { incident_id: string; service_id: string }[]
+        { incident_id: string; service_id: string; visible: boolean }[]
       >`
-        select incident_id, service_id from incident_service_impacts
-        where incident_id in ${tx.sql(ids)}
-        order by service_id asc
+        select isi.incident_id, isi.service_id,
+               (s.is_public and s.archived_at is null) as visible
+        from incident_service_impacts isi
+        join services s on s.id = isi.service_id and s.org_id = isi.org_id
+        where isi.incident_id in ${tx.sql(ids)}
+        order by isi.service_id asc
       `;
 
       const updates = await tx.sql<
@@ -182,9 +195,9 @@ export default function publicStatusRepository() {
         impact: incident.impact,
         status: incident.status,
         startedAt: incident.started_at,
-        affectedServiceIds: impacts
+        affectedServices: impacts
           .filter((row) => row.incident_id === incident.id)
-          .map((row) => row.service_id),
+          .map((row) => ({ serviceId: row.service_id, visible: row.visible })),
         updates: updates
           .filter((row) => row.incident_id === incident.id)
           .map((row) => ({
@@ -222,11 +235,14 @@ export default function publicStatusRepository() {
       }
 
       const affected = await tx.sql<
-        { maintenance_id: string; service_id: string }[]
+        { maintenance_id: string; service_id: string; visible: boolean }[]
       >`
-        select maintenance_id, service_id from maintenance_services
-        where maintenance_id in ${tx.sql(windows.map((window) => window.id))}
-        order by service_id asc
+        select ms.maintenance_id, ms.service_id,
+               (s.is_public and s.archived_at is null) as visible
+        from maintenance_services ms
+        join services s on s.id = ms.service_id and s.org_id = ms.org_id
+        where ms.maintenance_id in ${tx.sql(windows.map((window) => window.id))}
+        order by ms.service_id asc
       `;
 
       return windows.map((window) => ({
@@ -237,9 +253,9 @@ export default function publicStatusRepository() {
         scheduledStartAt: window.scheduled_start_at,
         scheduledEndAt: window.scheduled_end_at,
         startedAt: window.started_at,
-        affectedServiceIds: affected
+        affectedServices: affected
           .filter((row) => row.maintenance_id === window.id)
-          .map((row) => row.service_id),
+          .map((row) => ({ serviceId: row.service_id, visible: row.visible })),
       }));
     },
   };

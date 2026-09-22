@@ -21,11 +21,22 @@ Feature: Public status page
     Given a private service "Billing internals"
     And an archived service "Legacy API"
     And a draft incident "Monitor noise" the monitor has not confirmed
+    And an active incident "Search is flaky" affecting "Search" and "Billing internals"
+    And a scheduled maintenance window "Search upgrade" affecting "Search" and "Legacy API"
+    And a critical incident "Ledger rebuild" affecting only "Billing internals"
+    And a scheduled maintenance window "Legacy cleanup" affecting "Legacy API"
     When a visitor opens the organization's status page with no credentials
     Then the page answers 200
+    And it lists the incident "Search is flaky" affecting only "Search"
+    And it lists the window "Search upgrade" affecting only "Search"
     And it does not mention "Billing internals"
     And it does not mention "Legacy API"
+    And it does not mention the id of "Billing internals"
+    And it does not mention the id of "Legacy API"
     And it does not mention "Monitor noise"
+    And it does not mention "Ledger rebuild"
+    And it does not mention "Legacy cleanup"
+    And the overall status is "degraded"
 
   Scenario: A slug that matches no organization reveals nothing
     When a visitor opens the status page for a slug no organization has

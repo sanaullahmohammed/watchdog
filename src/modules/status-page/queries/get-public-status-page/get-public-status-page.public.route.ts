@@ -36,11 +36,7 @@ export default async function getPublicStatusPage(
           getPublicStatusPageQuery({ slug: req.params.orgSlug }),
         );
 
-      return res
-        .status(200)
-        .send(
-          toPublicStatusPage(view.organization, view.reads, view.generatedAt),
-        );
+      return res.status(200).send(toPublicStatusPage(view));
     },
   });
 }

@@ -23,11 +23,7 @@ export default async function getPublicStatusPageResolver(
             getPublicStatusPageQuery({ slug: args.orgSlug }),
           );
 
-        return toPublicStatusPage(
-          view.organization,
-          view.reads,
-          view.generatedAt,
-        );
+        return toPublicStatusPage(view);
       },
     },
   });

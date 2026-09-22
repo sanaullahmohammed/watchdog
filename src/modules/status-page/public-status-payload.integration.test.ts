@@ -24,6 +24,16 @@ let orgBId = '';
 const slugA = `${tag}-a`;
 const slugB = `${tag}-b`;
 
+/**
+ * One banner per page, so each banner case has an organization of its own. In
+ * both, the only public service is operational: whatever the banner says
+ * beyond that, only the incident rule can have put there.
+ */
+const banner = {
+  unnamed: { slug: `${tag}-unnamed`, cookie: '', userId: '', orgId: '' },
+  privateOnly: { slug: `${tag}-private`, cookie: '', userId: '', orgId: '' },
+};
+
 /** Fixture ids, named so an assertion reads as the thing rather than a uuid. */
 const id: Record<string, string> = {};
 
@@ -181,12 +191,14 @@ describe('Story 3.3: serve the public status payload', () => {
       serviceGroupId: beta,
       isPublic: false,
     });
+    // Archived only once the incident and window below name it: the way a
+    // real one gets there, since nothing stops an operator archiving a
+    // service an open incident still names.
     id.archived = await createService(cookieA, {
       name: 'Archived',
       slug: `${tag}-archived`,
       serviceGroupId: beta,
     });
-    await post(cookieA, `/services/${id.archived}/archive`);
 
     // Incidents. The older one carries impact `none` and names no service, so
     // it changes no status and this file's status assertions stay readable.
@@ -202,7 +214,13 @@ describe('Story 3.3: serve the public status payload', () => {
       await post(cookieA, '/incidents', {
         title: 'Checkout is degraded',
         impact: 'minor',
-        affectedServices: [{ serviceId: id.solo, impact: 'minor' }],
+        // Hidden and Archived ride along, so the exclusion checks below look
+        // at affected-service ids as well as at the service list (R-1).
+        affectedServices: [
+          { serviceId: id.solo, impact: 'minor' },
+          { serviceId: id.hidden, impact: 'minor' },
+          { serviceId: id.archived, impact: 'minor' },
+        ],
         message: 'We are looking into it.',
       })
     ).id as string;
@@ -210,6 +228,18 @@ describe('Story 3.3: serve the public status payload', () => {
       status: 'identified',
       message: 'A bad deploy; rolling back.',
     });
+
+    // Names only a private service, so the page leaves it off (R-2). Declared
+    // last, it is the newest: were it listed, it would come first. Its
+    // `critical` would also take the banner to major_outage, which the banner
+    // test below rules out.
+    id.privateIncident = (
+      await post(cookieA, '/incidents', {
+        title: 'Internal ledger rebuild',
+        impact: 'critical',
+        affectedServices: [{ serviceId: id.hidden, impact: 'critical' }],
+      })
+    ).id as string;
 
     id.resolvedIncident = (
       await post(cookieA, '/incidents', {
@@ -257,9 +287,22 @@ describe('Story 3.3: serve the public status payload', () => {
         title: 'Cache migration',
         scheduledStartAt: new Date(Date.now() + 2 * hour).toISOString(),
         scheduledEndAt: new Date(Date.now() + 3 * hour).toISOString(),
-        affectedServiceIds: [id.cobalt],
+        affectedServiceIds: [id.cobalt, id.hidden, id.archived],
       })
     ).id as string;
+
+    // Names only services the page does not show. It starts between the two
+    // listed windows, so were it listed it would sit in the middle.
+    id.privateWindow = (
+      await post(cookieA, '/maintenance', {
+        title: 'Private rack move',
+        scheduledStartAt: new Date(Date.now() + 1.5 * hour).toISOString(),
+        scheduledEndAt: new Date(Date.now() + 2.5 * hour).toISOString(),
+        affectedServiceIds: [id.hidden, id.archived],
+      })
+    ).id as string;
+
+    await post(cookieA, `/services/${id.archived}/archive`);
 
     id.completedWindow = (
       await post(cookieA, '/maintenance', {
@@ -290,6 +333,37 @@ describe('Story 3.3: serve the public status payload', () => {
       })
     ).id as string;
 
+    for (const org of Object.values(banner)) {
+      ({
+        cookie: org.cookie,
+        userId: org.userId,
+        orgId: org.orgId,
+      } = await signUpWithOrg(app, org.slug));
+      await createService(org.cookie, {
+        name: 'Front door',
+        slug: `${org.slug}-front`,
+      });
+    }
+    // No service named yet: blast radius is often unknown at first.
+    id.unnamedIncident = (
+      await post(banner.unnamed.cookie, '/incidents', {
+        title: 'Something is wrong',
+        impact: 'major',
+      })
+    ).id as string;
+    const backOffice = await createService(banner.privateOnly.cookie, {
+      name: 'Back office',
+      slug: `${banner.privateOnly.slug}-back`,
+      isPublic: false,
+    });
+    id.backOfficeIncident = (
+      await post(banner.privateOnly.cookie, '/incidents', {
+        title: 'Back office outage',
+        impact: 'critical',
+        affectedServices: [{ serviceId: backOffice, impact: 'critical' }],
+      })
+    ).id as string;
+
     // Last, and deliberately so: status recomputation is event-driven and
     // recomputes the whole organization, so anything written before the events
     // above have settled would be corrected back out from under the tests.
@@ -299,8 +373,18 @@ describe('Story 3.3: serve the public status payload', () => {
   });
 
   after(async () => {
-    await sql`delete from "organization" where "id" in (${orgAId}, ${orgBId})`;
-    await sql`delete from "user" where "id" in (${userAId}, ${userBId})`;
+    const orgIds = [
+      orgAId,
+      orgBId,
+      ...Object.values(banner).map((o) => o.orgId),
+    ];
+    const userIds = [
+      userAId,
+      userBId,
+      ...Object.values(banner).map((o) => o.userId),
+    ];
+    await sql`delete from "organization" where "id" in ${sql(orgIds)}`;
+    await sql`delete from "user" where "id" in ${sql(userIds)}`;
     await app.close();
     await sql.end({ timeout: 5 });
   });
@@ -405,6 +489,48 @@ describe('Story 3.3: serve the public status payload', () => {
       ],
       'oldest to newest, so a renderer showing the latest reads the end',
     );
+  });
+
+  it('leaves off an incident or window that names only services the page does not show', async () => {
+    const body = JSON.stringify(await fetchPage(slugA));
+
+    for (const [what, value] of [
+      ['the private incident', id.privateIncident],
+      ['its title', 'Internal ledger rebuild'],
+      ['the private window', id.privateWindow],
+      ['its title', 'Private rack move'],
+    ]) {
+      assert.ok(!body.includes(value), `${what} stayed off the page`);
+    }
+  });
+
+  it('lists an incident that names no service, and lets its impact raise the banner', async () => {
+    const page = await fetchPage(banner.unnamed.slug);
+
+    assert.deepEqual(
+      page.activeIncidents.map((incident) => [
+        incident.id,
+        incident.affectedServiceIds,
+      ]),
+      [[id.unnamedIncident, []]],
+    );
+    // Front door is operational. The banner can only be partial_outage because
+    // the listed `major` incident is folded in, by DOMAIN's impact mapping.
+    assert.deepEqual(
+      page.groups.flatMap((group) => group.services.map((s) => s.status)),
+      ['operational'],
+    );
+    assert.equal(page.overallStatus, 'partial_outage');
+  });
+
+  it('keeps an incident naming only a private service off the banner too', async () => {
+    const page = await fetchPage(banner.privateOnly.slug);
+
+    assert.deepEqual(page.activeIncidents, []);
+    // Back office sits at major_outage and its incident is critical. Neither
+    // is listed, so neither may reach the banner.
+    assert.equal(page.overallStatus, 'operational');
+    assert.ok(!JSON.stringify(page).includes(id.backOfficeIncident));
   });
 
   it('shows neither a resolved incident nor a draft one', async () => {
