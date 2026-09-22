@@ -70,7 +70,7 @@ payload was designed against, and struck through if it ever stops matching.
 | Services in no group | `groups[]` entry with a null id | `services.service_group_id is null` |
 | Incident title, impact, status | `activeIncidents[].title`, `.impact`, `.status` | `incidents` |
 | "40m" | derived from `activeIncidents[].startedAt` | `incidents.started_at` |
-| The two timestamped update lines | `activeIncidents[].updates[]` (`status`, `message`, `createdAt`) | `incident_updates`, oldest to newest; the renderer reverses |
+| The two timestamped update lines | `activeIncidents[].updates[]` (`status`, `message`, `createdAt`) | `incident_updates`, oldest to newest, leaving out entries from the incident's draft era (DOMAIN, "Public status page"); the renderer reverses |
 | "Affects: Public API, Webhooks" | `activeIncidents[].affectedServiceIds` | `incident_service_impacts`, visible services only. An incident naming only hidden services is not listed (DOMAIN, "Public status page") |
 | Window title, time, duration | `maintenance[].title`, `.scheduledStartAt`, `.scheduledEndAt`, and `.startedAt`, which is null until the window actually begins | `maintenance` |
 | "Writes pause for up to five minutes…" | `maintenance[].description` | `maintenance.description`; null when the operator wrote none. Customer-facing (DOMAIN, Maintenance) |

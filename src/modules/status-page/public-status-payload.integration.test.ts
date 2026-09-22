@@ -40,6 +40,9 @@ const banner = {
 /** An organization of its own, because its test adds an incident mid-read. */
 const snapshot = { slug: `${tag}-snap`, cookie: '', userId: '', orgId: '' };
 
+/** A draft that was confirmed after operators posted notes to it. */
+const confirmed = { slug: `${tag}-conf`, cookie: '', userId: '', orgId: '' };
+
 /** Fixture ids, named so an assertion reads as the thing rather than a uuid. */
 const id: Record<string, string> = {};
 
@@ -339,7 +342,7 @@ describe('Story 3.3: serve the public status payload', () => {
       })
     ).id as string;
 
-    for (const org of [...Object.values(banner), snapshot]) {
+    for (const org of [...Object.values(banner), snapshot, confirmed]) {
       ({
         cookie: org.cookie,
         userId: org.userId,
@@ -370,6 +373,34 @@ describe('Story 3.3: serve the public status payload', () => {
       })
     ).id as string;
 
+    // Monitor-born, the way Epic 5 will write it. Then two triage notes while
+    // it is still a draft, then the confirmation, then one note after. The
+    // draft-era notes are the oldest entries, so if they leaked they would
+    // open the timeline.
+    [{ id: id.confirmedDraft }] = await withTenantTransaction(
+      confirmed.orgId,
+      ({ sql: tx }) => tx<{ id: string }[]>`
+        insert into incidents (org_id, title, status, impact, source)
+        values (${confirmed.orgId}, 'Checkout errors', 'draft', 'major', 'monitoring')
+        returning id
+      `,
+    );
+    for (const note of [
+      'Triage: probably the canary deploy.',
+      'Triage: paging the payments on-call.',
+    ]) {
+      await post(confirmed.cookie, `/incidents/${id.confirmedDraft}/updates`, {
+        message: note,
+      });
+    }
+    await post(confirmed.cookie, `/incidents/${id.confirmedDraft}/transition`, {
+      status: 'investigating',
+      message: 'We are investigating errors at checkout.',
+    });
+    await post(confirmed.cookie, `/incidents/${id.confirmedDraft}/updates`, {
+      message: 'A fix is being deployed.',
+    });
+
     // Last, and deliberately so: status recomputation is event-driven and
     // recomputes the whole organization, so anything written before the events
     // above have settled would be corrected back out from under the tests.
@@ -384,12 +415,14 @@ describe('Story 3.3: serve the public status payload', () => {
       orgBId,
       ...Object.values(banner).map((o) => o.orgId),
       snapshot.orgId,
+      confirmed.orgId,
     ];
     const userIds = [
       userAId,
       userBId,
       ...Object.values(banner).map((o) => o.userId),
       snapshot.userId,
+      confirmed.userId,
     ];
     await sql`delete from "organization" where "id" in ${sql(orgIds)}`;
     await sql`delete from "user" where "id" in ${sql(userIds)}`;
@@ -555,6 +588,47 @@ describe('Story 3.3: serve the public status payload', () => {
     // A draft describes an outage customers were never told about. Publishing
     // one would announce an incident the operator has not confirmed.
     assert.ok(!body.includes(id.draftIncident), 'a draft was never public');
+  });
+
+  it('keeps the notes posted to a draft off its timeline once it is confirmed', async () => {
+    const page = await fetchPage(confirmed.slug);
+
+    // The whole timeline, so an entry that leaked, or one lost with them,
+    // shows here. It opens at the confirmation: nothing before it was public.
+    assert.deepEqual(
+      page.activeIncidents.map((incident) => [
+        incident.id,
+        incident.updates.map((update) => [update.status, update.message]),
+      ]),
+      [
+        [
+          id.confirmedDraft,
+          [
+            ['investigating', 'We are investigating errors at checkout.'],
+            ['investigating', 'A fix is being deployed.'],
+          ],
+        ],
+      ],
+    );
+    assert.ok(
+      !JSON.stringify(page).includes('Triage'),
+      'no triage note leaked',
+    );
+
+    // The notes were stored, and stored as draft-era entries: the page leaves
+    // them out by that status, not because they were never written.
+    const stored = await withTenantTransaction(
+      confirmed.orgId,
+      ({ sql: tx }) => tx<{ status: string }[]>`
+        select status from incident_updates
+        where incident_id = ${id.confirmedDraft}
+        order by created_at, id
+      `,
+    );
+    assert.deepEqual(
+      stored.map((row) => row.status),
+      ['draft', 'draft', 'investigating', 'investigating'],
+    );
   });
 
   it('shows scheduled and in-progress maintenance with the services it affects', async () => {
