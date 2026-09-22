@@ -18,8 +18,11 @@ import { parse, type TypeNode } from 'graphql';
  *   validation constraints Swagger needs and SDL cannot express them.
  *
  * Two checks, in increasing strength. Coverage: a capability exposed over one
- * surface must be exposed over both. Fields: where both exist, their field
- * names must agree.
+ * surface must be exposed over both. Fields: where a capability has both a
+ * `.schema.ts` and a `.graphql-schema.ts`, their request field names must
+ * agree, and a pair the check cannot compare fails rather than passing
+ * unexamined. It once skipped such a pair silently, and the public status page
+ * passed with nothing compared (Epic 3 retrospective, R-9).
  *
  * Needs no database; runs with the unit suite so it fails in CI's cheap job.
  */
@@ -75,22 +78,29 @@ function discoverCapabilities(): Capability[] {
 }
 
 /**
- * The field names of the request payload an SDL fragment describes.
+ * The field names of the request an SDL fragment describes.
  *
- * The payload is the input type named by the operation's argument, not simply
- * the first type declared. Picking by declaration order was the original
- * heuristic and it produced a false positive the moment a file declared a
- * nested input type before its payload, as create-incident does with
- * AffectedServiceInput.
+ * When an argument names an input type declared in the same fragment, that type
+ * is the payload, and its fields are the request. Picking the first type
+ * declared was the original heuristic, and it produced a false positive the
+ * moment a file declared a nested input type before its payload, as
+ * create-incident does with AffectedServiceInput. Scalar arguments beside a
+ * payload, such as `id: ID!`, are REST path parameters that no `.schema.ts`
+ * describes, so they are left out.
  *
- * Scalar arguments such as `id: ID!` are skipped; only a type defined in the
- * same fragment can be the payload.
+ * When no argument names a declared type, the scalar arguments are the whole
+ * request, and REST carries them as path parameters, which the slice's
+ * `.schema.ts` then describes: `publicStatusPage(orgSlug: ID!)` against
+ * `{ orgSlug }`.
+ *
+ * Undefined when the fragment declares no operation with an argument.
  */
-function sdlPayloadFields(sdl: string): string[] | undefined {
+function sdlRequestFields(sdl: string): string[] | undefined {
   const document = parse(sdl);
 
   const declared = new Map<string, string[]>();
   const operations: string[] = [];
+  const argumentNames: string[] = [];
 
   const OPERATION_TYPES = ['Mutation', 'Query', 'Subscription'];
 
@@ -105,6 +115,7 @@ function sdlPayloadFields(sdl: string): string[] | undefined {
           let type: TypeNode = arg.type;
           while (type.kind !== 'NamedType') type = type.type;
           operations.push(type.name.value);
+          argumentNames.push(arg.name.value);
         }
       }
       continue;
@@ -126,7 +137,7 @@ function sdlPayloadFields(sdl: string): string[] | undefined {
     if (fields) return fields;
   }
 
-  return undefined;
+  return argumentNames.length > 0 ? argumentNames : undefined;
 }
 
 /** Property names of every TypeBox object exported by a schema module. */
@@ -174,8 +185,9 @@ describe('REST and GraphQL surface parity', () => {
     );
   });
 
-  it('agrees on field names where both surfaces describe a payload', async () => {
+  it('agrees on request field names wherever both surfaces describe one', async () => {
     const divergences: string[] = [];
+    let compared = 0;
 
     for (const capability of capabilities) {
       if (!capability.schemaFile || !capability.graphqlFile) continue;
@@ -187,16 +199,35 @@ describe('REST and GraphQL surface parity', () => {
         join(capability.dir, capability.graphqlFile)
       )) as { default: string };
 
-      const restShapes = [...typeBoxFieldNames(schemaModule).values()];
-      const sdlPayload = sdlPayloadFields(graphqlModule.default);
+      const restShapes = [...typeBoxFieldNames(schemaModule).entries()];
+      const sdlRequest = sdlRequestFields(graphqlModule.default);
 
-      if (restShapes.length === 0 || sdlPayload === undefined) continue;
+      // A `.schema.ts` describes one request. A second TypeBox object there is
+      // ambiguous: the status page's once held only its response, which would
+      // have been compared as the request had the SDL side produced anything.
+      if (restShapes.length !== 1) {
+        divergences.push(
+          `${capability.label}: ${capability.schemaFile} exports ` +
+            `${restShapes.length} TypeBox objects ` +
+            `(${restShapes.map(([name]) => name).join(', ') || 'none'}); ` +
+            'it must export exactly one, the request, for the contract to compare',
+        );
+        continue;
+      }
+      if (sdlRequest === undefined) {
+        divergences.push(
+          `${capability.label}: ${capability.graphqlFile} declares no operation ` +
+            'argument, so there is nothing to compare the REST request with',
+        );
+        continue;
+      }
 
-      // Compare the request payload each surface accepts. Both are authored by
-      // hand, so a field added to one and forgotten on the other is the exact
-      // drift this test exists to catch.
-      const rest = new Set(restShapes[0]);
-      const sdl = new Set(sdlPayload);
+      // Compare the request each surface accepts. Both are authored by hand,
+      // so a field added to one and forgotten on the other is the exact drift
+      // this test exists to catch.
+      compared += 1;
+      const rest = new Set(restShapes[0][1]);
+      const sdl = new Set(sdlRequest);
 
       const onlyRest = [...rest].filter((f) => !sdl.has(f));
       const onlySdl = [...sdl].filter((f) => !rest.has(f));
@@ -219,5 +250,13 @@ describe('REST and GraphQL surface parity', () => {
     }
 
     assert.deepEqual(divergences, []);
+    // Every path above either compares a pair or reports why it could not.
+    // This holds the loop to that: a bare `continue` added later, which is how
+    // a pair once passed unexamined, fails here.
+    assert.equal(
+      compared,
+      capabilities.filter((c) => c.schemaFile && c.graphqlFile).length,
+      'every capability with both files was compared',
+    );
   });
 });
