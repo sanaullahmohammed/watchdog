@@ -9,7 +9,11 @@ import { type Static, Type } from 'typebox';
  */
 export const updateServiceRequestDtoSchema = Type.Object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-  description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  description: Type.Optional(
+    Type.Union([Type.String(), Type.Null()], {
+      description: 'Shown to customers on the public status page',
+    }),
+  ),
   isPublic: Type.Optional(Type.Boolean()),
   displayOrder: Type.Optional(Type.Integer({ minimum: 0 })),
   // Assignment to a group. Null detaches. A group in another organization is

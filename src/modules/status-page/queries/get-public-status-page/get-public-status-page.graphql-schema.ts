@@ -7,7 +7,7 @@ const publicStatusPageSchema = `
   type PublicStatusService {
     id: ID!
     name: String!
-    slug: String!
+    "Written by the operator for customers."
     description: String
     status: ServiceStatus!
     displayOrder: Int!
@@ -36,6 +36,7 @@ const publicStatusPageSchema = `
   type PublicStatusMaintenance {
     id: ID!
     title: String!
+    "Written by the operator for customers."
     description: String
     status: MaintenanceStatus!
     scheduledStartAt: String!

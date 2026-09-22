@@ -49,7 +49,7 @@ export const publicStatusPageResponseDtoSchema = Type.Object({
         Type.Object({
           id: Type.String({ format: 'uuid' }),
           name: Type.String(),
-          slug: Type.String(),
+          /** Written by the operator for customers (DOMAIN, Service). */
           description: Type.Union([Type.String(), Type.Null()]),
           status: serviceStatus,
           displayOrder: Type.Integer(),
@@ -81,6 +81,7 @@ export const publicStatusPageResponseDtoSchema = Type.Object({
     Type.Object({
       id: Type.String({ format: 'uuid' }),
       title: Type.String(),
+      /** Written by the operator for customers (DOMAIN, Maintenance). */
       description: Type.Union([Type.String(), Type.Null()]),
       status: maintenanceStatus,
       scheduledStartAt: Type.String({ format: 'date-time' }),
