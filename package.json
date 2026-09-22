@@ -19,8 +19,8 @@
     "lint:ci": "biome lint .",
     "type:check": "tsc --noEmit",
     "test": "pnpm run test:unit",
-    "test:unit": "node --import tsx --test src/**/*.spec.ts",
-    "test:coverage": "c8 node --import tsx --test src/**/*.spec.ts",
+    "test:unit": "node --import tsx --test 'src/**/*.spec.ts'",
+    "test:coverage": "c8 node --import tsx --test 'src/**/*.spec.ts'",
     "test:e2e": "cucumber-js --exit",
     "test:k6:smoke": "k6 run tests/load/smoke.js",
     "test:k6:load": "k6 run tests/load/load.js",
@@ -36,7 +36,7 @@
     "generate:client-types": "npx openapi-typescript http://127.0.0.1:3000/api-docs/json -o ./client.schema.d.ts",
     "prepare": "husky",
     "outdated": "pnpm update --interactive --latest",
-    "test:integration": "node --import tsx --test src/**/*.integration.test.ts"
+    "test:integration": "node --import tsx --test 'src/**/*.integration.test.ts'"
   },
   "engines": {
     "node": ">=24.0.0",
