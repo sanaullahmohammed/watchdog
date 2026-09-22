@@ -480,7 +480,7 @@ This is the shape for every scheduled task: maintenance transitions, monitor exe
 
 Role creation is environment-owned, not committed migration SQL with embedded passwords.
 
-- `watchdog_owner` owns schema and runs migrations through the owner `DATABASE_URL`.
+- `watchdog_owner` owns schema and runs migrations through `DBMATE_DATABASE_URL`.
 - `watchdog_app` is a login, nosuperuser runtime role used by `api`, `worker`, and tests through the app `DATABASE_URL`.
 - In Docker Compose, `watchdog_app` is created by a Postgres init script mounted into `/docker-entrypoint-initdb.d/` and parameterized by environment variables.
 - In CI, an explicit setup step creates `watchdog_app` with `watchdog_app_test_password` before integration tests.
@@ -502,6 +502,8 @@ grant usage, select on sequences to watchdog_app;
 ```
 
 The owner/app URL split is mandatory under `FORCE ROW LEVEL SECURITY`: migrations run as `watchdog_owner`; application traffic runs as `watchdog_app`.
+
+`api` and `worker` enforce the split at boot. Before serving or doing any work, each reads `rolsuper` and `rolbypassrls` for its connection's role and refuses to start if either is set (`src/shared/db/runtime-role.ts`). RLS is the only tenant boundary, since no repository adds an `org_id` predicate, and a superuser or BYPASSRLS role is exempt from every policy. In Compose the owner is the Postgres superuser, one line from `DATABASE_URL` in `.env.example`. Before the guard, swapping the two URLs served every tenant's rows to anyone, `/status/:orgSlug` included (Epic 3 retrospective, R-14).
 
 ### 6.2 Transaction GUC contract
 

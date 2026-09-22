@@ -35,6 +35,21 @@ jobs:
   database:
     runs-on: ubuntu-latest
 
+    # The environment, declared once for every step. A step overrides only
+    # where it genuinely differs, and says why. There is no .env in CI, so
+    # everything src/config requires without a default is here. The E2E step
+    # once carried a hand copy of the integration step's variables, dropped
+    # LOG_LEVEL, and failed only in CI (Epic 3 retrospective, P1).
+    env:
+      # The application role, bound by RLS: what the suites and the app use.
+      DATABASE_URL: postgres://watchdog_app:watchdog_app_test_password@localhost:5432/watchdog_test?sslmode=disable
+      # The owner, a superuser here as in Compose. DBMate migrates with it,
+      # and the boot-guard suite proves api and worker refuse to start as it.
+      DBMATE_DATABASE_URL: postgres://watchdog_owner:watchdog_owner_test_password@localhost:5432/watchdog_test?sslmode=disable
+      BETTER_AUTH_SECRET: test_secret_at_least_32_characters_long
+      LOG_LEVEL: info
+      NODE_ENV: test
+
     services:
       postgres:
         image: postgres:17-alpine
@@ -66,7 +81,7 @@ jobs:
       # volume init. The grants migration needs the role to already exist.
       - name: Create the application role
         run: |
-          psql "$OWNER_URL" -v ON_ERROR_STOP=1 -v app_password="$APP_PASSWORD" <<'SQL'
+          psql "$DBMATE_DATABASE_URL" -v ON_ERROR_STOP=1 -v app_password="$APP_PASSWORD" <<'SQL'
           select format(
             'create role watchdog_app login password %L '
             || 'nosuperuser nocreatedb nocreaterole noinherit nobypassrls',
@@ -76,48 +91,30 @@ jobs:
           \gexec
           SQL
         env:
-          OWNER_URL: postgres://watchdog_owner:watchdog_owner_test_password@localhost:5432/watchdog_test?sslmode=disable
           APP_PASSWORD: watchdog_app_test_password
 
       - name: Run migrations
         run: pnpm run db:migrate
-        env:
-          DBMATE_DATABASE_URL: postgres://watchdog_owner:watchdog_owner_test_password@localhost:5432/watchdog_test?sslmode=disable
 
       # Fails if Better Auth expects schema no committed migration provides,
       # which pins the better-auth version to the committed FK contract.
+      # Differs: it introspects the schema, so it connects as the owner.
       - name: Better Auth schema drift check
         run: pnpm run auth:schema:check
         env:
-          DATABASE_URL: postgres://watchdog_owner:watchdog_owner_test_password@localhost:5432/watchdog_test?sslmode=disable
-          BETTER_AUTH_SECRET: test_secret_at_least_32_characters_long
+          DATABASE_URL: ${{ env.DBMATE_DATABASE_URL }}
 
       # Connects as watchdog_app, never the owner. The suite asserts that role
       # is neither superuser nor BYPASSRLS, so pointing this at the owner URL
       # fails loudly instead of passing vacuously.
       - name: Integration tests (tenant isolation)
         run: pnpm run test:integration
-        env:
-          DATABASE_URL: postgres://watchdog_app:watchdog_app_test_password@localhost:5432/watchdog_test?sslmode=disable
-          BETTER_AUTH_SECRET: test_secret_at_least_32_characters_long
-          LOG_LEVEL: info
-          NODE_ENV: test
 
       # The same role and database as the integration suite. Each scenario
       # builds its own organization through the API and removes it after, so
       # nothing here depends on the seed or on another scenario.
-      #
-      # There is no .env in CI, so every variable src/config requires without
-      # a default has to be here: DATABASE_URL, BETTER_AUTH_SECRET, LOG_LEVEL
-      # and NODE_ENV. Local runs read the rest from .env and cannot notice one
-      # missing.
       - name: E2E (Cucumber)
         run: pnpm run test:e2e
-        env:
-          DATABASE_URL: postgres://watchdog_app:watchdog_app_test_password@localhost:5432/watchdog_test?sslmode=disable
-          BETTER_AUTH_SECRET: test_secret_at_least_32_characters_long
-          LOG_LEVEL: info
-          NODE_ENV: test
 
       - name: Keep the E2E report when a scenario fails
         if: failure()

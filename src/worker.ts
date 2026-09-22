@@ -7,7 +7,8 @@ import {
   recomputeServiceStatusCommand,
 } from '@/modules/service/commands/recompute-service-status/recompute-service-status.event-handler';
 import { buildApp } from '@/server/build-app';
-import { closeDbConnection } from '@/shared/db/postgres';
+import sql, { closeDbConnection } from '@/shared/db/postgres';
+import { assertTenantBoundRole } from '@/shared/db/runtime-role';
 import { listOrganizationIds } from '@/shared/db/tenants';
 import { singleFlight } from '@/shared/utils/single-flight';
 
@@ -101,6 +102,14 @@ export async function startWorker() {
   const app = await buildApp({ logger: { level: env.log.level } });
   await app.ready();
   const logger = app.log;
+
+  // Before any pass: a role exempt from RLS would reach every tenant's rows.
+  try {
+    await assertTenantBoundRole(sql);
+  } catch (error) {
+    logger.fatal(error);
+    process.exit(1);
+  }
 
   const writeHeartbeat = () => {
     try {
