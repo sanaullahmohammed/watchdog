@@ -183,6 +183,10 @@ export default function publicStatusRepository() {
         select incident_id, id, status, message, created_at
         from incident_updates
         where incident_id in ${tx.sql(ids)}
+          -- Entries from the incident's draft era were never public: a draft
+          -- was not shown to customers, and nor were the notes posted to it.
+          -- DOMAIN, "Public status page"; Epic 3 retrospective, R-4.
+          and status <> 'draft'
         order by created_at asc, id asc
       `;
 

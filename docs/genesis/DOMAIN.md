@@ -968,6 +968,8 @@ An affected-service reference that is not visible is never published, even as an
 
 Visibility is judged from current rows at read time. Making a service private, or archiving it, takes the incidents and windows that named only it off the page with it; nothing about them is stored.
 
+**An incident's timeline leaves out its draft era.** The page shows a listed incident's entries oldest first, except those recorded with status `draft`. A draft was never shown to customers, and neither were the notes taken while it was one. A posted update records the incident's current status, and nothing stops an update being posted to a draft (Epic 2's D-4 is the open question of whether anything should), so before this rule, confirming a draft published every triage note written on it (Epic 3 retrospective, R-4). A confirmed draft's timeline therefore opens at its confirmation, the `draft -> investigating` entry.
+
 **The banner.** `overallStatus` is `worstOf` over two lists:
 
 - every visible service's `last_known_status`;
