@@ -8,6 +8,7 @@ import type { FastifyInstance } from 'fastify';
 import mercurius from 'mercurius';
 import env from '@/config/env';
 import { di } from '@/server/di';
+import { graphqlErrorFormatter } from '@/server/graphql-error-formatter';
 import getGQL from '@/server/plugins/gql';
 
 export default async function createServer(fastify: FastifyInstance) {
@@ -16,6 +17,7 @@ export default async function createServer(fastify: FastifyInstance) {
     schema: await getGQL(),
     graphiql: env.isDevelopment,
     defineMutation: true,
+    errorFormatter: graphqlErrorFormatter,
   });
 
   // Set sensible default security headers
