@@ -43,6 +43,9 @@ const snapshot = { slug: `${tag}-snap`, cookie: '', userId: '', orgId: '' };
 /** A draft that was confirmed after operators posted notes to it. */
 const confirmed = { slug: `${tag}-conf`, cookie: '', userId: '', orgId: '' };
 
+/** Groups and services tied on everything but their ids. */
+const ties = { slug: `${tag}-ties`, cookie: '', userId: '', orgId: '' };
+
 /** Fixture ids, named so an assertion reads as the thing rather than a uuid. */
 const id: Record<string, string> = {};
 
@@ -342,7 +345,7 @@ describe('Story 3.3: serve the public status payload', () => {
       })
     ).id as string;
 
-    for (const org of [...Object.values(banner), snapshot, confirmed]) {
+    for (const org of [...Object.values(banner), snapshot, confirmed, ties]) {
       ({
         cookie: org.cookie,
         userId: org.userId,
@@ -401,6 +404,62 @@ describe('Story 3.3: serve the public status payload', () => {
       message: 'A fix is being deployed.',
     });
 
+    // Two groups tied on display order and name. The one with the higher id
+    // gets the service that sorts first, so a sort that stopped at the name
+    // would let the service columns put that group first.
+    const twin = async (n: number) =>
+      (
+        await post(ties.cookie, '/service-groups', {
+          name: 'Twin',
+          slug: `${ties.slug}-twin-${n}`,
+          displayOrder: 3,
+        })
+      ).id as string;
+    [id.twinLow, id.twinHigh] = [await twin(1), await twin(2)].sort();
+    await createService(ties.cookie, {
+      name: 'First',
+      slug: `${ties.slug}-first`,
+      serviceGroupId: id.twinHigh,
+      displayOrder: 0,
+    });
+    await createService(ties.cookie, {
+      name: 'Second',
+      slug: `${ties.slug}-second`,
+      serviceGroupId: id.twinLow,
+      displayOrder: 1,
+    });
+
+    // Two services tied on display order and name. The one with the higher id
+    // is made to come first in the table, which is the order a sort that
+    // stopped at the name would keep.
+    const echoes = (
+      await post(ties.cookie, '/service-groups', {
+        name: 'Echoes',
+        slug: `${ties.slug}-echoes`,
+        displayOrder: 4,
+      })
+    ).id as string;
+    const echo = (n: number) =>
+      createService(ties.cookie, {
+        name: 'Echo',
+        slug: `${ties.slug}-echo-${n}`,
+        serviceGroupId: echoes,
+        displayOrder: 0,
+      });
+    const firstEcho = await echo(1);
+    const secondEcho = await echo(2);
+    [id.echoLow, id.echoHigh] = [firstEcho, secondEcho].sort();
+    if (firstEcho === id.echoLow) {
+      // An update writes the row's new version after the other in the table.
+      const moved = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/services/${firstEcho}`,
+        headers: { cookie: ties.cookie, origin: TEST_ORIGIN },
+        payload: { description: 'Rewritten, so it now sits behind its twin' },
+      });
+      assert.equal(moved.statusCode, 200, moved.body);
+    }
+
     // Last, and deliberately so: status recomputation is event-driven and
     // recomputes the whole organization, so anything written before the events
     // above have settled would be corrected back out from under the tests.
@@ -416,6 +475,7 @@ describe('Story 3.3: serve the public status payload', () => {
       ...Object.values(banner).map((o) => o.orgId),
       snapshot.orgId,
       confirmed.orgId,
+      ties.orgId,
     ];
     const userIds = [
       userAId,
@@ -423,6 +483,7 @@ describe('Story 3.3: serve the public status payload', () => {
       ...Object.values(banner).map((o) => o.userId),
       snapshot.userId,
       confirmed.userId,
+      ties.userId,
     ];
     await sql`delete from "organization" where "id" in ${sql(orgIds)}`;
     await sql`delete from "user" where "id" in ${sql(userIds)}`;
@@ -478,6 +539,30 @@ describe('Story 3.3: serve the public status payload', () => {
       status: 'operational',
       displayOrder: 0,
     });
+  });
+
+  it('settles every remaining tie by id, so equal rows cannot swap', async () => {
+    const page = await fetchPage(ties.slug);
+
+    // The lower-id Twin first, though its only service sorts after the other
+    // Twin's. The group's own id settles it, not its services.
+    assert.deepEqual(
+      page.groups.map((group) => [
+        group.id,
+        group.services.map((service) => service.name),
+      ]),
+      [
+        [id.twinLow, ['Second']],
+        [id.twinHigh, ['First']],
+        [page.groups[2]?.id, ['Echo', 'Echo']],
+        [null, ['Front door']],
+      ],
+    );
+    // And the Echoes by id, against the order they sit in the table.
+    assert.deepEqual(
+      page.groups[2]?.services.map((service) => service.id),
+      [id.echoLow, id.echoHigh],
+    );
   });
 
   it('reads each status from last_known_status rather than recomputing it', async () => {
