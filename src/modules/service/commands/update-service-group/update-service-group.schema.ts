@@ -1,12 +1,13 @@
 import { type Static, Type } from 'typebox';
+import { SLUG_MAX_LENGTH, SLUG_PATTERN } from '@/shared/domain/slug';
 
 export const updateServiceGroupRequestDtoSchema = Type.Object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   slug: Type.Optional(
     Type.String({
       minLength: 1,
-      maxLength: 120,
-      pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$',
+      maxLength: SLUG_MAX_LENGTH,
+      pattern: SLUG_PATTERN,
     }),
   ),
   displayOrder: Type.Optional(Type.Integer({ minimum: 0 })),

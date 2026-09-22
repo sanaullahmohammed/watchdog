@@ -264,10 +264,34 @@ Then(
   },
 );
 
+/** A miss body without its per-request correlation id. */
+function missBody(body: string) {
+  const { correlationId, ...rest } = JSON.parse(body);
+  assert.match(correlationId, /^[0-9a-f-]{36}$/);
+  return rest;
+}
+
 Then(
-  "it does not mention the organization's slug",
+  'the body is the one answer every miss gets',
   function (this: ICustomWorld) {
-    // The miss must not become a way to learn which organizations exist.
-    assert.ok(!this.context.body.includes(`"${this.context.slug}"`));
+    // The whole body. Checking only that the slug is absent passed with no
+    // public route at all, because the router's own 404 never names it (VG-A).
+    assert.deepEqual(missBody(this.context.body), {
+      statusCode: 404,
+      message: 'Status page not found',
+      error: 'Not Found',
+    });
+  },
+);
+
+Then(
+  'a slug over 100 characters gets that same answer',
+  async function (this: ICustomWorld) {
+    // Past the router's default param limit, where it once answered with its
+    // own 404, echoing the path (R-8). Over a real socket, as a visitor sends it.
+    const first = this.context.body;
+    await visit(this, `${this.context.slug}-${'n'.repeat(150)}`);
+    assert.equal(this.context.status, 404, this.context.body);
+    assert.deepEqual(missBody(this.context.body), missBody(first));
   },
 );
