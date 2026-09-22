@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
+import type { Sql } from 'postgres';
 import sql from '@/shared/db/postgres';
 import {
   InvalidOrganizationIdError,
+  type TenantTransactionOptions,
   withTenantTransaction,
 } from '@/shared/db/tenant-transaction';
 
@@ -208,6 +210,95 @@ describe('tenant isolation on service_groups', () => {
     ] as const) {
       assert.equal(await countGroupsFor(orgId), expected);
     }
+  });
+
+  it('reads under read committed, read write, unless asked otherwise', async () => {
+    const settings = (options?: TenantTransactionOptions) =>
+      withTenantTransaction(
+        orgA,
+        async ({ sql: tx }) => {
+          const [row] = await tx<{ isolation: string; readOnly: string }[]>`
+            select current_setting('transaction_isolation') as isolation,
+                   current_setting('transaction_read_only') as "readOnly"
+          `;
+          return row;
+        },
+        options,
+      );
+
+    assert.deepEqual(await settings(), {
+      isolation: 'read committed',
+      readOnly: 'off',
+    });
+    assert.deepEqual(
+      await settings({ isolation: 'repeatable read', readOnly: true }),
+      { isolation: 'repeatable read', readOnly: 'on' },
+    );
+  });
+
+  it('gives every read one snapshot under repeatable read, and not by default', async () => {
+    const count = async (tx: Sql) =>
+      Number(
+        (
+          await tx<
+            { n: string }[]
+          >`select count(*)::text as n from service_groups`
+        )[0].n,
+      );
+
+    // Two reads of one table, with a row committed by another transaction
+    // between them. The difference between the reads is what each one saw.
+    const readTwiceAroundACommit = (options?: TenantTransactionOptions) =>
+      withTenantTransaction(
+        orgA,
+        async ({ sql: tx }) => {
+          const first = await count(tx);
+          const slug = `mid-read-${randomBytes(4).toString('hex')}`;
+          await withTenantTransaction(orgA, async ({ sql: other }) => {
+            await other`
+              insert into service_groups (org_id, name, slug)
+              values (${orgA}, ${slug}, ${slug})
+            `;
+          });
+          return (await count(tx)) - first;
+        },
+        options,
+      );
+
+    assert.equal(
+      await readTwiceAroundACommit(),
+      1,
+      'by default the second read sees a row the first did not',
+    );
+    assert.equal(
+      await readTwiceAroundACommit({
+        isolation: 'repeatable read',
+        readOnly: true,
+      }),
+      0,
+      'under repeatable read both reads describe the same instant',
+    );
+
+    await withTenantTransaction(orgA, async ({ sql: tx }) => {
+      await tx`delete from service_groups where slug like 'mid-read-%'`;
+    });
+  });
+
+  it('refuses a write in a read-only transaction', async () => {
+    await assert.rejects(
+      withTenantTransaction(
+        orgA,
+        async ({ sql: tx }) => {
+          await tx`
+            insert into service_groups (org_id, name, slug)
+            values (${orgA}, 'nope', 'nope')
+          `;
+        },
+        { readOnly: true },
+      ),
+      (error: { code?: string }) => error.code === '25006',
+      'read_only_sql_transaction',
+    );
   });
 
   it('rejects a malformed organization id before opening a transaction', async () => {

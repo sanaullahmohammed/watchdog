@@ -6,7 +6,10 @@ import type { PublicStatusPageResponseDto } from '@/modules/status-page/dtos/pub
 import { UPTIME_WINDOW_DAYS } from '@/modules/status-page/dtos/public-status-page.response.dto';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
-import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import {
+  type TenantTransaction,
+  withTenantTransaction,
+} from '@/shared/db/tenant-transaction';
 import { signUpWithOrg, TEST_ORIGIN } from '@/shared/testing/tenant';
 
 /** Story 3.3 — serve the public status payload. */
@@ -33,6 +36,9 @@ const banner = {
   unnamed: { slug: `${tag}-unnamed`, cookie: '', userId: '', orgId: '' },
   privateOnly: { slug: `${tag}-private`, cookie: '', userId: '', orgId: '' },
 };
+
+/** An organization of its own, because its test adds an incident mid-read. */
+const snapshot = { slug: `${tag}-snap`, cookie: '', userId: '', orgId: '' };
 
 /** Fixture ids, named so an assertion reads as the thing rather than a uuid. */
 const id: Record<string, string> = {};
@@ -333,7 +339,7 @@ describe('Story 3.3: serve the public status payload', () => {
       })
     ).id as string;
 
-    for (const org of Object.values(banner)) {
+    for (const org of [...Object.values(banner), snapshot]) {
       ({
         cookie: org.cookie,
         userId: org.userId,
@@ -377,11 +383,13 @@ describe('Story 3.3: serve the public status payload', () => {
       orgAId,
       orgBId,
       ...Object.values(banner).map((o) => o.orgId),
+      snapshot.orgId,
     ];
     const userIds = [
       userAId,
       userBId,
       ...Object.values(banner).map((o) => o.userId),
+      snapshot.userId,
     ];
     await sql`delete from "organization" where "id" in ${sql(orgIds)}`;
     await sql`delete from "user" where "id" in ${sql(userIds)}`;
@@ -606,6 +614,51 @@ describe('Story 3.3: serve the public status payload', () => {
       b.activeIncidents.map((incident) => incident.id),
       [id.otherIncident],
     );
+  });
+
+  it('composes the page from one snapshot, even when a write lands between its reads', async () => {
+    // The singleton the handler holds. Wrapping its incidents read puts a
+    // committed write exactly where R-3's race was: after the page read its
+    // services, before it reads incidents.
+    const repository = app.diContainer.resolve(
+      'publicStatusRepository' as never,
+    ) as {
+      listActiveIncidents: (tx: TenantTransaction) => Promise<unknown>;
+    };
+    const listActiveIncidents = repository.listActiveIncidents;
+    repository.listActiveIncidents = async (tx) => {
+      await withTenantTransaction(snapshot.orgId, async ({ sql: other }) => {
+        await other`
+          insert into incidents (org_id, title, status, impact, source)
+          values (
+            ${snapshot.orgId}, 'Declared mid-read',
+            'investigating', 'critical', 'manual'
+          )
+        `;
+      });
+      return listActiveIncidents.call(repository, tx);
+    };
+
+    let during: PublicStatusPageResponseDto;
+    try {
+      during = await fetchPage(snapshot.slug);
+    } finally {
+      repository.listActiveIncidents = listActiveIncidents;
+    }
+
+    // Under read committed the incidents read would see it: a critical
+    // incident, and a major_outage banner, over services read before it
+    // existed. One snapshot means the page predates it entirely.
+    assert.deepEqual(during.activeIncidents, []);
+    assert.equal(during.overallStatus, 'operational');
+
+    // And it was really there to be seen: the next page shows it.
+    const afterwards = await fetchPage(snapshot.slug);
+    assert.deepEqual(
+      afterwards.activeIncidents.map((incident) => incident.title),
+      ['Declared mid-read'],
+    );
+    assert.equal(afterwards.overallStatus, 'major_outage');
   });
 
   it('answers the same values over REST and GraphQL', async () => {

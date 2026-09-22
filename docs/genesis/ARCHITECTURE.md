@@ -521,6 +521,8 @@ One detail that matters when reasoning about the policies below: after a transac
 
 Both fail closed, because `org_id = ''` is false and `org_id = NULL` is NULL, and neither matches a row. The consequence is a rule rather than a caveat: a policy must never treat "unset" as "unrestricted". Nothing of the form `current_setting(...) is null or ...` belongs in a tenant policy, and `coalesce` on the GUC is equally dangerous. `src/shared/db/tenant-transaction.integration.test.ts` pins this behaviour.
 
+**Isolation.** A tenant transaction runs at Postgres's default, READ COMMITTED, read write, unless asked otherwise. Each statement then sees what had committed when that statement began. So sharing a transaction neither serializes a read-check-write, which needs a row lock, nor makes several reads one answer. A read that must describe one instant passes `{ isolation: 'repeatable read', readOnly: true }` to `withTenantTransaction`: every statement sees the snapshot taken at the transaction's first, and a read-only transaction at that level cannot fail with a serialization error, having nothing to conflict. The public status page reads this way. Its handler once claimed a single answer from a shared READ COMMITTED transaction (Epic 3 retrospective, R-3). A consistency claim names its isolation level, and a test backs it.
+
 ### 6.3 Policy shape
 
 Every WatchDog tenant-scoped table that carries `org_id` uses the same shape. `enable row level security` is immediately followed by `force row level security`.
