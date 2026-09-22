@@ -1,11 +1,11 @@
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
-import { Type } from 'typebox';
 import { toPublicStatusPage } from '@/modules/status-page/dtos/public-status-page.present';
+import { publicStatusPageResponseDtoSchema } from '@/modules/status-page/dtos/public-status-page.response.dto';
 import {
   type GetPublicStatusPageQueryResult,
   getPublicStatusPageQuery,
 } from './get-public-status-page.handler';
-import { publicStatusPageResponseDtoSchema } from './get-public-status-page.schema';
+import { getPublicStatusPageRequestParamsSchema } from './get-public-status-page.schema';
 
 /**
  * `.public.route.ts`, not `.route.ts`: the loader registers these without the
@@ -26,7 +26,7 @@ export default async function getPublicStatusPage(
     url: '/status/:orgSlug',
     schema: {
       description: "Read an organization's public status page",
-      params: Type.Object({ orgSlug: Type.String({ minLength: 1 }) }),
+      params: getPublicStatusPageRequestParamsSchema,
       response: { 200: publicStatusPageResponseDtoSchema },
       tags: ['public'],
     },
