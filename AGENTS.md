@@ -43,6 +43,7 @@ Self-hosted, multi-tenant status page platform. TypeScript on Node 24, Fastify 5
 - Status ladders are `text` with a `CHECK` constraint, never Postgres enum types — a ladder change should be a one-line migration.
 - Read configuration only through `src/config/`. env-schema validates `.env` into an object and never writes to `process.env`, so a module reading `process.env` directly sees nothing from `.env`.
 - Modules never import each other. Cross-module contracts go in `src/shared/events/` with their own payload types, not a re-export of the emitting module's DTO. `dependency-cruiser` enforces this.
+- A query whose order is part of a response ends at a unique column, usually `id`. Names are not unique, and rows tied on every sort column may come back in either order, so a page could swap two of them between requests.
 - Services are archived, never hard-deleted.
 - Append-only tables revoke `UPDATE` and `DELETE` from `watchdog_app` in their migration. A repository that merely omits the methods is not enforcement; anything holding a tenant transaction can write raw SQL. RLS policies alone would make an edit a silent no-op rather than an error. `incident_updates` does this, and `check_results` must when it arrives.
 

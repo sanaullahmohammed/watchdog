@@ -84,6 +84,12 @@ export default function publicStatusRepository() {
      * the order the page shows them: groups by display order then name,
      * services the same way inside a group, and ungrouped services last.
      *
+     * Each ends at its id, because names are not unique. Without `g.id`, two
+     * groups tied on display order and name had their rows interleaved by the
+     * service columns, so which group came first depended on its services.
+     * Without `s.id`, two services tied on both could swap between requests.
+     * (Epic 3 retrospective, R-13.)
+     *
      * `nulls last` is what puts that ungrouped bucket at the end. Both group
      * columns are not null, so a null one here means the left join matched no
      * group. An explicit `(g.id is null) asc` ahead of them sorted nothing they
@@ -116,7 +122,8 @@ export default function publicStatusRepository() {
         where s.archived_at is null and s.is_public = true
         order by
           g.display_order asc nulls last, g.name asc nulls last,
-          s.display_order asc, s.name asc
+          g.id asc nulls last,
+          s.display_order asc, s.name asc, s.id asc
       `;
 
       return rows.map((row) => ({
