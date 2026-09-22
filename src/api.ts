@@ -1,10 +1,19 @@
 import GracefulServer from '@gquittet/graceful-server';
 import { env } from '@/config';
 import { buildApp } from '@/server/build-app';
-import { closeDbConnection } from '@/shared/db/postgres';
+import sql, { closeDbConnection } from '@/shared/db/postgres';
+import { assertTenantBoundRole } from '@/shared/db/runtime-role';
 
 export async function startApi() {
   const fastify = await buildApp();
+
+  // Before listening: a role exempt from RLS would serve every tenant's rows.
+  try {
+    await assertTenantBoundRole(sql);
+  } catch (error) {
+    fastify.log.fatal(error);
+    process.exit(1);
+  }
 
   const gracefulServer = GracefulServer(fastify.server, {
     // graceful-server closes the HTTP server itself and then awaits these. It
