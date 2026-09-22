@@ -38,7 +38,8 @@ Feature: Public status page
     And it does not mention "Legacy cleanup"
     And the overall status is "degraded"
 
-  Scenario: A slug that matches no organization reveals nothing
+  Scenario: Every slug that names no page gets the same answer
     When a visitor opens the status page for a slug no organization has
     Then the page answers 404
-    And it does not mention the organization's slug
+    And the body is the one answer every miss gets
+    And a slug over 100 characters gets that same answer

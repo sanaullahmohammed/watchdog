@@ -8,7 +8,13 @@ import { type Static, Type } from 'typebox';
  * there, as every other route imports its response.
  */
 export const getPublicStatusPageRequestParamsSchema = Type.Object({
-  orgSlug: Type.String({ minLength: 1 }),
+  // Deliberately unconstrained. A schema failure answers 400, which would make
+  // a malformed slug a different miss from an unknown one; the query applies
+  // the slug rule and answers both with the same 404.
+  orgSlug: Type.String({
+    description:
+      'The organization slug. Anything that names no page, malformed or unknown, gets the same 404.',
+  }),
 });
 
 export type GetPublicStatusPageRequestParams = Static<

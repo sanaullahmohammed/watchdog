@@ -1,4 +1,5 @@
 import { type Static, Type } from 'typebox';
+import { SLUG_MAX_LENGTH, SLUG_PATTERN } from '@/shared/domain/slug';
 
 /**
  * The request payload. `orgId` is deliberately absent: the organization comes
@@ -19,8 +20,8 @@ export const createServiceRequestDtoSchema = Type.Object({
     description:
       'Unique per organization, and reserved permanently once archived',
     minLength: 1,
-    maxLength: 120,
-    pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$',
+    maxLength: SLUG_MAX_LENGTH,
+    pattern: SLUG_PATTERN,
   }),
   description: Type.Optional(
     Type.String({ description: 'Optional detail shown on the status page' }),

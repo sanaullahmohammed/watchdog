@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { maxHeaderSize } from 'node:http';
 import Fastify, {
   type FastifyInstance,
   type FastifyServerOptions,
@@ -25,7 +26,16 @@ export async function buildApp(
       // header best practice: don't use "x-" https://www.rfc-editor.org/info/rfc6648 and keep it lowercase
       return (req.headers['request-id'] as string) ?? randomUUID();
     },
-    ignoreDuplicateSlashes: true,
+    routerOptions: {
+      ignoreDuplicateSlashes: true,
+      // The router's own 404 for a param over this length echoes the path,
+      // and it answered every public slug longer than the default 100 before
+      // the handler could (Epic 3 retrospective, R-8). No request line can
+      // exceed Node's header limit, so at this length the router never answers
+      // a single-segment /status path first; the handler does. The limit
+      // exists to bound regex params, and no route declares one.
+      maxParamLength: maxHeaderSize,
+    },
     ajv: {
       customOptions: {
         keywords: ['example'],

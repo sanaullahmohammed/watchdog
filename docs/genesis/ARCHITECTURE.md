@@ -671,6 +671,8 @@ Better Auth-owned tables are excluded from WatchDog tenant RLS. They are accesse
 
 After those reads resolve the Better Auth `organization.id`, WatchDog repositories use that id as `app.current_org_id` for tenant-scoped tables.
 
+The slug lookup is the one pre-tenant read an anonymous caller drives, so it gives every miss the same answer (DOMAIN, Better-Auth-owned references). Two pieces of wiring hold that. The query refuses a slug outside the slug rule before any SQL, with the same exception as an unknown one, so both surfaces, and Epic 4's event stream, inherit it by calling the query. And the router never answers first: its `maxParamLength`, 100 by default, is raised to Node's `http.maxHeaderSize`, which no request line can exceed, so every single-segment `/status/...` path reaches the handler. Before that, a slug longer than 100 characters got the router's own 404, which echoes the path (Epic 3 retrospective, R-8). A route that must answer every miss itself cannot rely on its params schema either: a schema failure is a 400.
+
 ---
 
 ## 7. Auth integration
