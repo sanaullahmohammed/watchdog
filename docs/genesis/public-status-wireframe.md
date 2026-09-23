@@ -98,7 +98,7 @@ monitor state, there is no such timestamp anywhere: `last_known_status` is
 written by the recomputation handler, which deliberately leaves `updated_at`
 alone so it still records human edits. So the sketch's per-service "since" is
 **out of scope for v1**, and the cheapest fix when it is wanted is a
-`status_changed_at` column written by that same handler when, and only when,
+`status_changed_at` column written by that same handler (DOMAIN's Status recomputation now records this gap too, since this file is throwaway and that one is not) when, and only when,
 the status actually moves. It is one column and one line, and it is not being
 added speculatively.
 
