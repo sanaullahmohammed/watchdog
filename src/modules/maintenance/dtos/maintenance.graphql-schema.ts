@@ -1,10 +1,4 @@
 const maintenanceSchema = `
-  enum MaintenanceStatus {
-    scheduled
-    in_progress
-    completed
-  }
-
   type Maintenance {
     id: ID!
     title: String!

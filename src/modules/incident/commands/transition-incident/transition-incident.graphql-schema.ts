@@ -1,12 +1,4 @@
 const transitionIncidentSchema = `
-  enum IncidentStatus {
-    draft
-    investigating
-    identified
-    monitoring
-    resolved
-  }
-
   input TransitionIncidentPayload {
     status: IncidentStatus!
     message: String
