@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import pino from 'pino';
 import { transitionDueMaintenanceCommand } from '@/modules/maintenance/commands/transition-due-maintenance/transition-due-maintenance.handler';
+import { updateMaintenanceCommand } from '@/modules/maintenance/commands/update-maintenance/update-maintenance.handler';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
@@ -56,6 +57,39 @@ async function window(
   });
 }
 
+/**
+ * A service and a window's cover over it, written directly: this suite has no
+ * operator session, and the `service` module may not be imported from here.
+ */
+async function service(orgId: string, slug: string) {
+  return withTenantTransaction(orgId, async ({ sql: tx }) => {
+    const rows = await tx<{ id: string }[]>`
+      insert into services (org_id, name, slug)
+      values (${orgId}, ${slug}, ${slug})
+      returning id
+    `;
+    return rows[0].id;
+  });
+}
+
+async function cover(orgId: string, maintenanceId: string, serviceId: string) {
+  await withTenantTransaction(orgId, async ({ sql: tx }) => {
+    await tx`
+      insert into maintenance_services (org_id, maintenance_id, service_id)
+      values (${orgId}, ${maintenanceId}, ${serviceId})
+    `;
+  });
+}
+
+function statusOf(orgId: string, serviceId: string) {
+  return withTenantTransaction(orgId, async ({ sql: tx }) => {
+    const rows = await tx<{ last_known_status: string }[]>`
+      select last_known_status from services where id = ${serviceId}
+    `;
+    return rows[0].last_known_status;
+  });
+}
+
 function stateOf(orgId: string, id: string) {
   return withTenantTransaction(orgId, async ({ sql: tx }) => {
     const rows = await tx<
@@ -98,6 +132,45 @@ describe('Story 2.15: transition due maintenance automatically', () => {
 
     assert.ok(ids.includes(orgAId));
     assert.ok(ids.includes(orgBId));
+  });
+
+  it('starts a due window, and follows an edit to what it covers', async () => {
+    // The chain through the product's own paths: the worker's transition, the
+    // maintenance.started it emits, the recomputation that follows, then an
+    // edit and the recomputation after that. Every other in-progress fixture
+    // is an insert with the event emitted by hand, which is what Epic 2's
+    // VG-2 was left open for, and the Epic 3 retrospective carried as item 19.
+    const covered = await service(orgAId, `${tag}-covered`);
+    const moved = await service(orgAId, `${tag}-moved`);
+    const windowId = await window(
+      orgAId,
+      'Due cover',
+      'scheduled',
+      -hour,
+      hour,
+    );
+    await cover(orgAId, windowId, covered);
+
+    const moves = await app.commandBus.execute<
+      Promise<{ started: number; completed: number }>
+    >(transitionDueMaintenanceCommand({ orgId: orgAId }));
+    assert.equal(moves.started, 1, 'the worker started the window');
+    await app.eventBus.drain();
+
+    assert.equal(await statusOf(orgAId, covered), 'maintenance');
+    assert.equal(await statusOf(orgAId, moved), 'operational');
+
+    await app.commandBus.execute(
+      updateMaintenanceCommand({
+        orgId: orgAId,
+        id: windowId,
+        affectedServiceIds: [moved],
+      }),
+    );
+    await app.eventBus.drain();
+
+    assert.equal(await statusOf(orgAId, covered), 'operational');
+    assert.equal(await statusOf(orgAId, moved), 'maintenance');
   });
 
   it('starts a window whose start time has passed', async () => {

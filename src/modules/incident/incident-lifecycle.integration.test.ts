@@ -182,6 +182,18 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
       'a dismissed draft must never announce itself as resolved',
     );
     assert.equal((await statusOf(orgAId, id)).status, 'resolved');
+
+    // The entry it wrote, read back. Unit specs pin this wording and the
+    // event; nothing read the row a dismissal actually appends (Epic 2's
+    // VG-3, carried by the Epic 3 retrospective as its item 19).
+    assert.deepEqual(
+      (await timelineOf(orgAId, id)).map((entry) => [
+        entry.status,
+        entry.message,
+      ]),
+      [['resolved', 'Dismissed: this alert did not describe a real incident.']],
+      'worded as a dismissal, never as a resolution: no outage happened',
+    );
   });
 
   it('announces a confirmed draft as incident.confirmed, and only that move', async () => {
