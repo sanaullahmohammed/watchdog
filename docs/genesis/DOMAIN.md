@@ -177,6 +177,7 @@ Who writes an entry, and what announces it:
 
 - Declaring an incident and every transition append one, in the same transaction as the status they record, so the timeline cannot disagree with the incident. The operator may supply the message; otherwise a default worded for customers is written, and a blank message counts as none. `created_by_user_id` is whoever made the move.
 - `PostIncidentUpdateCommand` appends one at the incident's current status.
+- A `draft` may take posted updates, and an operator triaging one in place is the reason; from Epic 5 a monitor writes into a draft too. An entry recorded at status `draft` is an operator's note, not a customer update: the public page leaves the incident's draft era off its timeline, so confirming a draft publishes nothing written before it (Epic 3 retrospective, R-4). Decided 2026-09-23, closing Epic 2's D-4.
 - A public lifecycle transition announces the entry it appended as `incident.update_posted`, carrying that entry's id. `incident.state_changed` is admin-only, so without this a move to `identified` or `monitoring` would reach no public subscriber at all.
 - A move out of `draft` is not a public lifecycle transition, because a draft was never shown to customers. Confirming announces `incident.confirmed`, dismissing announces `incident.dismissed`, and neither emits `incident.update_posted`. The declaration is announced by `incident.created`, which is draft-gated.
 - Commit `87259e6` briefly said the opposite, that only a posted update announces. It traded a double notification for no public notification at all, and contradicted the invariant below. Withdrawn by the Epic 2 retrospective, R-5.
@@ -1231,13 +1232,15 @@ Payloads are illustrative and versionable. Visibility is authoritative for publi
 | `incident.created` | Human-created incident is created directly | Yes | Public, draft-gated |
 | `incident.draft_created` | Monitoring creates a draft incident | Yes | Admin-only |
 | `incident.confirmed` | Draft incident is confirmed | Yes | Public |
-| `incident.updated` | Incident title, impact, affected services, or metadata changes | Yes | Public |
-| `incident.update_posted` | Append-only incident update is created | Yes | Public |
+| `incident.updated` | Incident title, impact, affected services, or metadata changes | Yes | Public, draft-gated |
+| `incident.update_posted` | Append-only incident update is created | Yes | Public, draft-gated |
 | `incident.state_changed` | Incident lifecycle state changes | Yes | Admin-only |
 | `incident.resolved` | Incident reaches `resolved` | Yes | Public |
 | `incident.dismissed` | Draft incident is dismissed | Yes | Admin-only |
 
-`incident.created` is public only when the incident-status check finds `status != 'draft'`. That admits direct human-created incidents immediately and suppresses monitor-born drafts.
+`incident.created` is public only when the incident-status check finds `status != 'draft'`. That admits direct human-created incidents immediately and suppresses monitor-born drafts. The same gate covers `incident.updated` and `incident.update_posted`, which is what keeps an edit to a draft, or a note posted to one, from reaching a public subscriber: an action taken while an incident is a draft announces itself to admin surfaces only. Decided 2026-09-23 with the rule above, closing Epic 2's D-4.
+
+An `*.updated` event announces a change, not an attempt. `UpdateIncidentCommand` and `UpdateMaintenanceCommand` compare the row as it was against the row as it is, and the cover it had against the cover it has, and emit nothing when they match: a no-op edit would otherwise trigger a status recomputation and wake every public subscriber. Neither command serializes that read against a concurrent edit, so two edits arriving together may both announce; neither can stay silent about a change it made. Decided 2026-09-23, closing Epic 2's D-3.
 
 ### Maintenance events
 
