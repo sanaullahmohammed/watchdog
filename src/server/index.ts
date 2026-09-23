@@ -2,6 +2,7 @@ import path from 'node:path';
 import AutoLoad from '@fastify/autoload';
 import Cors from '@fastify/cors';
 import Helmet from '@fastify/helmet';
+import RateLimit from '@fastify/rate-limit';
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import UnderPressure from '@fastify/under-pressure';
 import type { FastifyInstance } from 'fastify';
@@ -9,7 +10,9 @@ import mercurius from 'mercurius';
 import env from '@/config/env';
 import { di } from '@/server/di';
 import { graphqlErrorFormatter } from '@/server/graphql-error-formatter';
+import { onePublicPagePerOperation } from '@/server/graphql-public-page-limit';
 import getGQL from '@/server/plugins/gql';
+import { TooManyRequestsException } from '@/shared/exceptions';
 
 export default async function createServer(fastify: FastifyInstance) {
   // Graphql
@@ -18,6 +21,52 @@ export default async function createServer(fastify: FastifyInstance) {
     graphiql: env.isDevelopment,
     defineMutation: true,
     errorFormatter: graphqlErrorFormatter,
+    // One page per operation: aliasing the field is how a single request asks
+    // for a hundred page compositions (Epic 3 retrospective, R-5).
+    validationRules: [onePublicPagePerOperation],
+  });
+
+  // Anonymous traffic is bounded by client IP. `global: false`, so only the
+  // surfaces below opt in: the public page through its route's config, and
+  // /graphql through the hook after it, for callers arriving with no session
+  // cookie. An operator's own requests are not rationed.
+  await fastify.register(RateLimit, {
+    global: false,
+    max: env.publicSurface.rateLimit.max,
+    timeWindow: env.publicSurface.rateLimit.windowMs,
+    // The plugin throws what this returns. Anything but an ExceptionBase would
+    // be masked as a 500 by the error handler, so a rationed caller would be
+    // told the server broke.
+    errorResponseBuilder: (_request, context) =>
+      new TooManyRequestsException(
+        `Rate limit exceeded, retry in ${context.after}`,
+      ),
+  });
+
+  const limitAnonymous = fastify.createRateLimit({
+    max: env.publicSurface.rateLimit.max,
+    timeWindow: env.publicSurface.rateLimit.windowMs,
+  });
+
+  fastify.addHook('onRequest', async (request, reply) => {
+    const anonymous =
+      request.method === 'POST' &&
+      request.url.startsWith('/graphql') &&
+      !request.headers.cookie;
+    if (!anonymous) return;
+
+    // `isAllowed` is true only for an allow-listed key; a request within the
+    // limit comes back with `isExceeded: false`, which is the field to read.
+    const status = await limitAnonymous(request);
+    if (status.isAllowed || !status.isExceeded) return;
+
+    reply.header('retry-after', status.ttlInSeconds);
+    reply.header('x-ratelimit-limit', status.max);
+    reply.header('x-ratelimit-remaining', 0);
+    reply.header('x-ratelimit-reset', status.ttlInSeconds);
+    throw new TooManyRequestsException(
+      `Rate limit exceeded, retry in ${status.ttlInSeconds} seconds`,
+    );
   });
 
   // Set sensible default security headers

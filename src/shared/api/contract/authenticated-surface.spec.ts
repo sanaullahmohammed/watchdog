@@ -43,6 +43,11 @@ const PUBLIC_BY_DESIGN: ReadonlyMap<string, string> = new Map([
       'read behind it is still tenant-scoped.',
   ],
   [
+    'OPTIONS /status/:orgSlug',
+    'The preflight a cross-origin conditional fetch of that page needs. It ' +
+      'touches no data: it answers with the CORS headers and nothing else.',
+  ],
+  [
     'Query.publicStatusPage',
     'The same public page over GraphQL, public for the same reason.',
   ],

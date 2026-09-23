@@ -5,6 +5,7 @@ enum ExceptionError {
   UNAUTHORIZED = 'Unauthorized',
   CONFLICT = 'Conflict',
   NOT_FOUND = 'Not Found',
+  TOO_MANY_REQUESTS = 'Too Many Requests',
   INTERNAL_SERVER_ERROR = 'Internal Server Error',
   DATABASE_ERROR = 'Database Error',
 }
@@ -61,6 +62,26 @@ export class NotFoundException extends ExceptionBase {
   readonly statusCode = 404;
 
   constructor(message: string = NotFoundException.message) {
+    super(message);
+  }
+}
+
+/**
+ * Used to refuse a caller who has asked too often, on a surface that rations
+ * requests. An `ExceptionBase`, so both surfaces pass its message through and
+ * log it as the caller's mistake rather than masking it as a server fault:
+ * `@fastify/rate-limit` throws whatever its `errorResponseBuilder` returns, and
+ * anything else would reach the client as a 500 (Epic 3 retrospective, R-5).
+ *
+ * @class TooManyRequestsException
+ * @extends {ExceptionBase}
+ */
+export class TooManyRequestsException extends ExceptionBase {
+  static readonly message = ExceptionError.TOO_MANY_REQUESTS;
+  readonly error = ExceptionError.TOO_MANY_REQUESTS;
+  readonly statusCode = 429;
+
+  constructor(message: string = TooManyRequestsException.message) {
     super(message);
   }
 }

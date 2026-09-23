@@ -34,6 +34,11 @@ const schema = Type.Object({
     default: '/tmp/watchdog-worker-heartbeat',
   }),
   WORKER_HEARTBEAT_MAX_AGE_MS: Type.Number({ default: 60_000 }),
+  // The public surface's bounds (Epic 3 retrospective, R-5). Defaulted, so no
+  // environment has to declare them, and tunable where one wants to.
+  PUBLIC_PAGE_MAX_AGE_SECONDS: Type.Number({ default: 10, minimum: 0 }),
+  PUBLIC_RATE_LIMIT_MAX: Type.Number({ default: 120, minimum: 1 }),
+  PUBLIC_RATE_LIMIT_WINDOW_MS: Type.Number({ default: 60_000, minimum: 1_000 }),
   WORKER_MAINTENANCE_INTERVAL_MS: Type.Number({
     default: 30_000,
     // A zero or negative interval would spin setInterval as a tight loop.
@@ -65,6 +70,13 @@ export default {
   auth: {
     secret: env.BETTER_AUTH_SECRET,
     baseUrl: env.BETTER_AUTH_URL,
+  },
+  publicSurface: {
+    maxAgeSeconds: env.PUBLIC_PAGE_MAX_AGE_SECONDS,
+    rateLimit: {
+      max: env.PUBLIC_RATE_LIMIT_MAX,
+      windowMs: env.PUBLIC_RATE_LIMIT_WINDOW_MS,
+    },
   },
   worker: {
     heartbeatPath: env.WORKER_HEARTBEAT_PATH,
