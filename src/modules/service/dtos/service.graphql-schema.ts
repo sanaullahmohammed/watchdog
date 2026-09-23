@@ -1,12 +1,4 @@
 const serviceSchema = `
-  enum ServiceStatus {
-    operational
-    degraded
-    partial_outage
-    major_outage
-    maintenance
-  }
-
   type Service {
     id: ID!
     serviceGroupId: ID

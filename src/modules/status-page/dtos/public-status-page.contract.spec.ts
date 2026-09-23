@@ -1,12 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import {
-  type EnumTypeDefinitionNode,
-  type ObjectTypeDefinitionNode,
-  parse,
-} from 'graphql';
+import { type ObjectTypeDefinitionNode, parse, type TypeNode } from 'graphql';
 import { publicStatusPageResponseDtoSchema } from '@/modules/status-page/dtos/public-status-page.response.dto';
 import publicStatusPageSchema from '@/modules/status-page/queries/get-public-status-page/get-public-status-page.graphql-schema';
+import getGQL from '@/server/plugins/gql';
 import { UPTIME_DAY_STATUSES } from '@/shared/domain/status-inputs';
 
 /**
@@ -42,13 +39,6 @@ const sdlType = (name: string) =>
   document.definitions.find(
     (definition): definition is ObjectTypeDefinitionNode =>
       definition.kind === 'ObjectTypeDefinition' &&
-      definition.name.value === name,
-  );
-
-const sdlEnum = (name: string) =>
-  document.definitions.find(
-    (definition): definition is EnumTypeDefinitionNode =>
-      definition.kind === 'EnumTypeDefinition' &&
       definition.name.value === name,
   );
 
@@ -91,9 +81,89 @@ describe("The uptime day's contract", () => {
       ],
     );
 
-    assert.deepEqual(
-      sdlEnum('UptimeDayStatus')?.values?.map((value) => value.name.value),
-      [...UPTIME_DAY_STATUSES],
+    // The enum itself lives with the other ladders, and
+    // `status-ladders.spec.ts` holds its values to the TypeScript ones.
+    assert.equal(
+      fields.find((field) => field.name.value === 'worstStatus')?.type.kind ===
+        'NamedType' &&
+        (
+          fields.find((field) => field.name.value === 'worstStatus')?.type as {
+            name: { value: string };
+          }
+        ).name.value,
+      'UptimeDayStatus',
     );
+  });
+});
+
+/**
+ * Epic 3 retrospective, action item 13 (R-10): the public contract is the
+ * page's own, not the admin types it once borrowed.
+ *
+ * `PublicStatusIncident.updates` was `[IncidentUpdate!]!`, the incident
+ * module's admin type, so a field added there for operators would have become
+ * selectable anonymously. This walks the merged schema from the public query
+ * and pins every type it can reach.
+ */
+describe('The types the public query can reach', () => {
+  it('reaches its own types and the shared ladders, and nothing else', async () => {
+    const document = parse(await getGQL());
+
+    const byName = new Map(
+      document.definitions.flatMap((definition) =>
+        'name' in definition && definition.name
+          ? [[definition.name.value, definition] as const]
+          : [],
+      ),
+    );
+
+    const named = (type: TypeNode): string =>
+      type.kind === 'NamedType' ? type.name.value : named(type.type);
+
+    const query = byName.get('Query');
+    assert.ok(query && query.kind === 'ObjectTypeDefinition');
+    const entry = query.fields?.find(
+      (field) => field.name.value === 'publicStatusPage',
+    );
+    assert.ok(entry, 'the public query is in the schema');
+
+    // GraphQL's own scalars are nobody's to own.
+    const BUILT_IN = new Set(['String', 'ID', 'Int', 'Float', 'Boolean']);
+
+    const reached = new Set<string>();
+    const pending = [named(entry.type)];
+    while (pending.length > 0) {
+      const name = pending.pop() as string;
+      if (reached.has(name) || BUILT_IN.has(name)) continue;
+      reached.add(name);
+      const definition = byName.get(name);
+      if (definition?.kind !== 'ObjectTypeDefinition') continue;
+      for (const field of definition.fields ?? []) {
+        pending.push(named(field.type));
+        for (const argument of field.arguments ?? []) {
+          pending.push(named(argument.type));
+        }
+      }
+    }
+
+    // Exact, so borrowing an admin type, or adding a type to the public
+    // surface, fails here until someone decides it belongs.
+    assert.deepEqual([...reached].sort(), [
+      'IncidentImpact',
+      'IncidentStatus',
+      'MaintenanceStatus',
+      'PublicStatusGroup',
+      'PublicStatusIncident',
+      'PublicStatusIncidentUpdate',
+      'PublicStatusMaintenance',
+      'PublicStatusOrganization',
+      'PublicStatusPage',
+      'PublicStatusService',
+      'PublicStatusUptime',
+      'PublicStatusUptimeDay',
+      'PublicStatusUptimeService',
+      'ServiceStatus',
+      'UptimeDayStatus',
+    ]);
   });
 });

@@ -1,11 +1,4 @@
 const incidentCreateSchema = `
-  enum IncidentImpact {
-    none
-    minor
-    major
-    critical
-  }
-
   input AffectedServiceInput {
     serviceId: ID!
     impact: IncidentImpact!

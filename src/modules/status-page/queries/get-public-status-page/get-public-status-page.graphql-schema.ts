@@ -1,3 +1,10 @@
+/**
+ * The page's own types. `PublicStatusIncidentUpdate` is deliberately not the
+ * incident module's `IncidentUpdate`: a field added there for operators, an
+ * author or an internal note, would otherwise become selectable anonymously
+ * through `publicStatusPage` (Epic 3 retrospective, R-10). The status ladders
+ * it names are declared once in `src/shared/domain/status-ladders.graphql-schema.ts`.
+ */
 const publicStatusPageSchema = `
   type PublicStatusOrganization {
     name: String!
@@ -30,7 +37,15 @@ const publicStatusPageSchema = `
     "Visible services only. Empty when the incident names none yet."
     affectedServiceIds: [ID!]!
     "Oldest first. A renderer showing the latest reads the end."
-    updates: [IncidentUpdate!]!
+    updates: [PublicStatusIncidentUpdate!]!
+  }
+
+  "An update as the page publishes it: no field an operator added."
+  type PublicStatusIncidentUpdate {
+    id: ID!
+    status: IncidentStatus!
+    message: String!
+    createdAt: String!
   }
 
   type PublicStatusMaintenance {
@@ -44,13 +59,6 @@ const publicStatusPageSchema = `
     startedAt: String
     "Visible services only. Empty when the window names none."
     affectedServiceIds: [ID!]!
-  }
-
-  "DOMAIN's rollup scale: computed from checks alone, never from incidents."
-  enum UptimeDayStatus {
-    operational
-    degraded
-    major_outage
   }
 
   type PublicStatusUptimeDay {
