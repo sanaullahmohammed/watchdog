@@ -380,6 +380,15 @@ async function isPubliclyVisibleEvent(
 
 The visibility rule is name-set intersection draft-gate. `aggregateType` never bypasses the public-name whitelist. This prevents admin-only incident events such as `incident.dismissed` and `incident.state_changed` from leaking simply because their aggregate is no longer in `draft` status. Draft dismissal must emit `incident.dismissed` only and never `incident.resolved`; `incident.resolved` is reserved for confirmed or directly created incidents that resolve through the public lifecycle. `incident.created` needs no special branch: direct human-created incidents pass the draft gate, while monitor-born drafts do not.
 
+### 5.4.1 What bounds the anonymous surface
+
+Decided 2026-09-21 by the Epic 3 retrospective (R-5, R-15), after the first anonymous route arrived with no bound of any kind. Epic 4's `/status/:orgSlug/events` inherits all four, and an SSE connection is long-lived, so each matters more there.
+
+- **One page per GraphQL operation.** A mercurius validation rule (`src/server/graphql-public-page-limit.ts`) counts selections of `publicStatusPage`, aliases and fragments included, and refuses a second. One 6 KB request aliasing it a hundred times ran a hundred page compositions against a pool of ten connections. REST needs no equivalent: one request is one page.
+- **A rate limit by client IP.** `@fastify/rate-limit`, registered with `global: false`, so a surface opts in: the page through its route's `config.rateLimit`, and `/graphql` through an `onRequest` hook for requests arriving with no session cookie. An operator's own traffic is not rationed. The limiter throws a `TooManyRequestsException`, because the error handler masks anything that is not an `ExceptionBase` and would answer 500 instead of 429. `PUBLIC_RATE_LIMIT_MAX` and `PUBLIC_RATE_LIMIT_WINDOW_MS` tune it; both default.
+- **Cache validators.** `Cache-Control: public, max-age=PUBLIC_PAGE_MAX_AGE_SECONDS`, and an `ETag` over the body with `generatedAt` removed, since that field changes on every response and a tag over it could never match. A matching `If-None-Match` answers 304 with no body and no `Content-Length`.
+- **CORS for any origin, without credentials.** Only on the public page, which sets the headers itself: the global registration stays `origin: false`, because a page anyone may fetch is not one any site may read with a session attached. Helmet's default `Cross-Origin-Resource-Policy: same-origin` is relaxed to `cross-origin` there, or a browser could not read the response at all, and `ETag` is exposed so a script can revalidate. `If-None-Match` is not CORS-safelisted, so the route answers the preflight too.
+
 ### 5.5 SSE handler skeleton
 
 Public status pages use REST for initial state and SSE for live updates.
