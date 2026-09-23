@@ -27,6 +27,15 @@ export function captureCookie(headers: Record<string, unknown>): string {
   return values.map((value) => value.split(';')[0]).join('; ');
 }
 
+/**
+ * The display name an organization gets, deliberately unlike its slug.
+ *
+ * Both were the label, so a presenter that returned the slug where the page
+ * shows the name passed every suite, and the wireframe's heading, "Acme Cloud",
+ * is exactly that field (Epic 3 retrospective, VG-H).
+ */
+export const displayNameFor = (label: string) => `${label} Display Name`;
+
 /** Signs a new operator up and gives them an organization of their own. */
 export async function signUpWithOrg(app: FastifyInstance, label: string) {
   const email = `${label}@example.test`;
@@ -46,9 +55,14 @@ export async function signUpWithOrg(app: FastifyInstance, label: string) {
     method: 'POST',
     url: '/api/auth/organization/create',
     headers: { cookie, origin: TEST_ORIGIN },
-    payload: { name: label, slug: label },
+    payload: { name: displayNameFor(label), slug: label },
   });
   assert.equal(org.statusCode, 200, org.body);
 
-  return { cookie, userId, orgId: JSON.parse(org.body).id as string };
+  return {
+    cookie,
+    userId,
+    orgId: JSON.parse(org.body).id as string,
+    name: displayNameFor(label),
+  };
 }

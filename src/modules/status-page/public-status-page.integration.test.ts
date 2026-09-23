@@ -5,7 +5,11 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { SLUG_MAX_LENGTH } from '@/shared/domain/slug';
-import { signUpWithOrg, TEST_ORIGIN } from '@/shared/testing/tenant';
+import {
+  displayNameFor,
+  signUpWithOrg,
+  TEST_ORIGIN,
+} from '@/shared/testing/tenant';
 
 /** Story 3.2 — resolve an organization from its public slug. */
 
@@ -102,10 +106,14 @@ describe('Story 3.2: resolve an organization from its public slug', () => {
     assert.equal(response.statusCode, 200, response.body);
     // The rest of the payload is story 3.3's; this suite is about which
     // organization the slug resolved to.
+    // The name is the organization's own, not its slug: a presenter that
+    // returned the slug here passed every suite while both were the label
+    // (VG-H).
     assert.deepEqual(JSON.parse(response.body).organization, {
-      name: slugA,
+      name: displayNameFor(slugA),
       slug: slugA,
     });
+    assert.notEqual(displayNameFor(slugA), slugA);
   });
 
   it('resolves each slug to its own organization', async () => {
