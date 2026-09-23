@@ -49,6 +49,19 @@ const ties = { slug: `${tag}-ties`, cookie: '', userId: '', orgId: '' };
 /** Fixture ids, named so an assertion reads as the thing rather than a uuid. */
 const id: Record<string, string> = {};
 
+/**
+ * The timestamps the fixture posts, so a test can assert the values and not
+ * only their order. None was read back before, so a copy-paste that set a
+ * window's end to its start would have passed (Epic 3 retrospective, VG-G).
+ */
+const at = {
+  olderIncident: new Date(Date.now() - 3 * hour).toISOString(),
+  runningFrom: new Date(Date.now() - hour).toISOString(),
+  runningTo: new Date(Date.now() + hour).toISOString(),
+  scheduledFrom: new Date(Date.now() + 2 * hour).toISOString(),
+  scheduledTo: new Date(Date.now() + 3 * hour).toISOString(),
+};
+
 async function post(cookie: string, path: string, payload: object = {}) {
   const response = await app.inject({
     method: 'POST',
@@ -172,19 +185,38 @@ describe('Story 3.3: serve the public status payload', () => {
       serviceGroupId: beta,
       displayOrder: 5,
     });
-    id.cobalt = await createService(cookieA, {
-      name: 'Cobalt',
-      slug: `${tag}-cobalt`,
-      serviceGroupId: beta,
-      displayOrder: 0,
-    });
-    id.delta = await createService(cookieA, {
-      name: 'Delta',
-      slug: `${tag}-delta`,
-      serviceGroupId: beta,
-      displayOrder: 0,
-      description: 'A service with something to say',
-    });
+    // Cobalt and Delta tie on display order, so only the name settles them.
+    // Their names are assigned after creation, to the service whose id
+    // contradicts them: the page must read Cobalt first although Delta holds
+    // the lower id, which is what the final `s.id` tiebreaker would otherwise
+    // decide. Insertion order alone proved nothing (VG-D).
+    const tied = [
+      await createService(cookieA, {
+        name: 'Tied one',
+        slug: `${tag}-tied-1`,
+        serviceGroupId: beta,
+        displayOrder: 0,
+      }),
+      await createService(cookieA, {
+        name: 'Tied two',
+        slug: `${tag}-tied-2`,
+        serviceGroupId: beta,
+        displayOrder: 0,
+      }),
+    ].sort();
+    [id.delta, id.cobalt] = tied;
+    for (const [serviceId, name, description] of [
+      [id.cobalt, 'Cobalt', null],
+      [id.delta, 'Delta', 'A service with something to say'],
+    ] as const) {
+      const named = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/services/${serviceId}`,
+        headers: { cookie: cookieA, origin: TEST_ORIGIN },
+        payload: description === null ? { name } : { name, description },
+      });
+      assert.equal(named.statusCode, 200, named.body);
+    }
     id.late = await createService(cookieA, {
       name: 'Late',
       slug: `${tag}-late`,
@@ -214,14 +246,6 @@ describe('Story 3.3: serve the public status payload', () => {
 
     // Incidents. The older one carries impact `none` and names no service, so
     // it changes no status and this file's status assertions stay readable.
-    id.olderIncident = (
-      await post(cookieA, '/incidents', {
-        title: 'Older, still open',
-        impact: 'none',
-        startedAt: new Date(Date.now() - 3 * hour).toISOString(),
-        message: 'Watching a slow queue.',
-      })
-    ).id as string;
     id.activeIncident = (
       await post(cookieA, '/incidents', {
         title: 'Checkout is degraded',
@@ -240,6 +264,17 @@ describe('Story 3.3: serve the public status payload', () => {
       status: 'identified',
       message: 'A bad deploy; rolling back.',
     });
+
+    // Created after the incident that outranks it, and back-dated, so the page
+    // cannot be ordering by creation time (VG-G).
+    id.olderIncident = (
+      await post(cookieA, '/incidents', {
+        title: 'Older, still open',
+        impact: 'none',
+        startedAt: at.olderIncident,
+        message: 'Watching a slow queue.',
+      })
+    ).id as string;
 
     // The one status no fixture covered: dropping `monitoring` from the active
     // subset passed every suite, while the recomputation kept its services
@@ -290,12 +325,23 @@ describe('Story 3.3: serve the public status payload', () => {
     );
 
     // Maintenance. The running window starts in the past so it sorts first.
+
+    id.scheduledWindow = (
+      await post(cookieA, '/maintenance', {
+        title: 'Cache migration',
+        scheduledStartAt: at.scheduledFrom,
+        scheduledEndAt: at.scheduledTo,
+        affectedServiceIds: [id.cobalt, id.hidden, id.archived],
+      })
+    ).id as string;
+    // Created after the window it precedes, so ordering by creation time would
+    // put them the wrong way round (VG-G).
     id.runningWindow = (
       await post(cookieA, '/maintenance', {
         title: 'Database failover',
         description: 'Brief interruptions while we fail over.',
-        scheduledStartAt: new Date(Date.now() - hour).toISOString(),
-        scheduledEndAt: new Date(Date.now() + hour).toISOString(),
+        scheduledStartAt: at.runningFrom,
+        scheduledEndAt: at.runningTo,
         affectedServiceIds: [id.late],
       })
     ).id as string;
@@ -308,15 +354,6 @@ describe('Story 3.3: serve the public status payload', () => {
         where id = ${id.runningWindow}
       `,
     );
-
-    id.scheduledWindow = (
-      await post(cookieA, '/maintenance', {
-        title: 'Cache migration',
-        scheduledStartAt: new Date(Date.now() + 2 * hour).toISOString(),
-        scheduledEndAt: new Date(Date.now() + 3 * hour).toISOString(),
-        affectedServiceIds: [id.cobalt, id.hidden, id.archived],
-      })
-    ).id as string;
 
     // Names only services the page does not show. It starts between the two
     // listed windows, so were it listed it would sit in the middle.
@@ -627,13 +664,42 @@ describe('Story 3.3: serve the public status payload', () => {
       ],
     );
 
+    // Every listed incident's affected services, not just one incident's:
+    // mapping every impact row to every incident passed while only this one
+    // was asserted (VG-E).
+    assert.deepEqual(
+      page.activeIncidents.map((incident) => [
+        incident.id,
+        incident.affectedServiceIds,
+      ]),
+      [
+        [id.monitoringIncident, []],
+        [id.activeIncident, [id.solo]],
+        [id.olderIncident, []],
+      ],
+    );
+
     const current = page.activeIncidents.find(
       (incident) => incident.id === id.activeIncident,
     );
     assert.ok(current);
     assert.equal(current.status, 'identified');
     assert.equal(current.impact, 'minor');
-    assert.deepEqual(current.affectedServiceIds, [id.solo]);
+
+    // The value, not only the order: nothing read a timestamp back (VG-G).
+    const older = page.activeIncidents.find(
+      (incident) => incident.id === id.olderIncident,
+    );
+    assert.equal(older?.startedAt, at.olderIncident);
+
+    const written = current.updates.map((update) =>
+      Date.parse(update.createdAt),
+    );
+    assert.deepEqual(
+      written,
+      [...written].sort((a, b) => a - b),
+      'each entry was written after the one before it',
+    );
     assert.deepEqual(
       current.updates.map((update) => [update.status, update.message]),
       [
@@ -752,7 +818,28 @@ describe('Story 3.3: serve the public status payload', () => {
     );
     assert.deepEqual(page.maintenance[0].affectedServiceIds, [id.late]);
     assert.deepEqual(page.maintenance[1].affectedServiceIds, [id.cobalt]);
-    assert.ok(page.maintenance[0].startedAt !== null, 'a running window began');
+
+    // The times themselves. A window whose end was copied from its start, or
+    // whose bounds came from the other window, read as ordered before (VG-G).
+    assert.deepEqual(
+      page.maintenance.map((window) => [
+        window.scheduledStartAt,
+        window.scheduledEndAt,
+      ]),
+      [
+        [at.runningFrom, at.runningTo],
+        [at.scheduledFrom, at.scheduledTo],
+      ],
+    );
+
+    const [running] = page.maintenance;
+    assert.ok(running.startedAt, 'a running window began');
+    assert.notEqual(
+      running.startedAt,
+      running.scheduledStartAt,
+      'it began when the worker started it, not when it was due',
+    );
+    assert.ok(Date.parse(running.startedAt) > Date.parse(at.runningFrom));
     assert.equal(page.maintenance[1].startedAt, null);
     assert.equal(
       page.maintenance[0].description,
