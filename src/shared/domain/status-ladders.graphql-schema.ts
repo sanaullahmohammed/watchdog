@@ -10,8 +10,11 @@
  * `status-ladders.spec.ts` fails if a ladder here and its TypeScript
  * counterpart drift apart.
  *
- * `mergeTypeDefs` is configured to throw on conflict, so each of these may be
- * declared in exactly one file.
+ * `mergeTypeDefs` will not protect this. Its `throwOnConflict` guards
+ * conflicting object and interface fields; two declarations of one enum are
+ * merged by unioning their values, with no error, so a slice re-declaring a
+ * ladder with an extra value would reach the served schema quietly.
+ * `status-ladders.spec.ts` reads the merged schema and is what refuses it.
  */
 const statusLaddersSchema = `
   enum ServiceStatus {
