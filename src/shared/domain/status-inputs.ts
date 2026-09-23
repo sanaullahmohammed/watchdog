@@ -114,6 +114,25 @@ export const INCIDENT_STATUSES = [
 
 export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
 
+/**
+ * The statuses a customer has been told about: a draft never was, and a
+ * resolved incident is over.
+ *
+ * One definition for two readers. The status recomputation asks which
+ * incidents move a service's status, and the public page asks which to list,
+ * and each had its own copy: a SQL literal in `service-status.repository.ts`
+ * and a constant in `public-status.repository.ts`. A status added to one and
+ * not the other would show incidents that move no status, or hide ones that do
+ * (Epic 3 retrospective, AV-3).
+ */
+export const ACTIVE_INCIDENT_STATUSES = [
+  'investigating',
+  'identified',
+  'monitoring',
+] as const satisfies readonly IncidentStatus[];
+
+export type ActiveIncidentStatus = (typeof ACTIVE_INCIDENT_STATUSES)[number];
+
 /** The maintenance lifecycle from DOMAIN.md. */
 export const MAINTENANCE_STATUSES = [
   'scheduled',

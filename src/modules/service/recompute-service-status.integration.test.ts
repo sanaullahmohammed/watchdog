@@ -245,6 +245,24 @@ describe('Story 2.17: recompute and announce service status', () => {
     assert.equal(await statusOf(orgAId, id), 'major_outage');
   });
 
+  it('counts an incident in monitoring, the status the page also lists', async () => {
+    // Which statuses are active is one shared subset now, so this and the
+    // public page cannot disagree about what "active" means (AV-3). No fixture
+    // anywhere reached `monitoring` before (VG-F).
+    const id = await createService(cookieA, `${tag}-watching`);
+    await silentIncident(orgAId, id, 'major', 'monitoring');
+
+    assert.deepEqual(
+      (await recomputer.recompute(orgAId)).map((change) => [
+        change.slug,
+        change.to,
+      ]),
+      [[`${tag}-watching`, 'partial_outage']],
+      'a mitigation being watched is still an outage to a customer',
+    );
+    assert.equal(await statusOf(orgAId, id), 'partial_outage');
+  });
+
   it('follows an edit that drops the service from an active incident', async () => {
     const id = await createService(cookieA, `${tag}-dropped`);
     const incidentId = await declare(cookieA, id, 'critical');

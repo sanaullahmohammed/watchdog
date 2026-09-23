@@ -1,6 +1,9 @@
 import type { ServiceStatus } from '@/modules/service/domain/service.types';
 import type { TenantTransaction } from '@/shared/db/tenant-transaction';
-import type { IncidentImpact } from '@/shared/domain/status-inputs';
+import {
+  ACTIVE_INCIDENT_STATUSES,
+  type IncidentImpact,
+} from '@/shared/domain/status-inputs';
 
 /** One live service and everything its effective status is computed from. */
 export type LiveServiceStatusInputs = {
@@ -53,15 +56,17 @@ export default function serviceStatusRepository() {
       `;
       if (services.length === 0) return [];
 
-      // The per-service impact, not the incident's headline one. Drafts were
-      // never shown to customers and resolved incidents are over.
+      // The per-service impact, not the incident's headline one. Which
+      // statuses count is the shared subset the public page lists by, so the
+      // two cannot drift: an incident that moves a status is one a customer
+      // can see (Epic 3 retrospective, AV-3).
       const impacts = await tx.sql<
         { service_id: string; impact: IncidentImpact }[]
       >`
         select isi.service_id, isi.impact
         from incident_service_impacts isi
         join incidents i on i.id = isi.incident_id and i.org_id = isi.org_id
-        where i.status in ('investigating', 'identified', 'monitoring')
+        where i.status in ${tx.sql(ACTIVE_INCIDENT_STATUSES)}
       `;
 
       const underMaintenance = await tx.sql<{ service_id: string }[]>`
