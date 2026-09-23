@@ -46,13 +46,24 @@ const publicStatusPageSchema = `
     affectedServiceIds: [ID!]!
   }
 
+  "DOMAIN's rollup scale: computed from checks alone, never from incidents."
+  enum UptimeDayStatus {
+    operational
+    degraded
+    major_outage
+  }
+
   type PublicStatusUptimeDay {
     date: String!
-    uptimeRatio: Float!
+    "Null on a day the rollups have no row for: no checks ran."
+    uptimeRatio: Float
+    "What colours the day's bar. Null on a day with no checks."
+    worstStatus: UptimeDayStatus
   }
 
   type PublicStatusUptimeService {
     serviceId: ID!
+    "One entry per day in the window, oldest first."
     days: [PublicStatusUptimeDay!]!
   }
 
