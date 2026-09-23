@@ -979,7 +979,8 @@ So that anyone holding the link can fetch the page.
 
 **Given** a slug that matches no organization
 **When** it is resolved
-**Then** the answer is 404 and the body distinguishes nothing further, so the route cannot be used to enumerate organizations
+**Then** the answer is 404 and the body distinguishes nothing further, so a miss reveals nothing beyond "not found"
+**And** that is all it claims: a hit answers 200 with the organization's name, and every organization has a public page from the moment it is created, so the route is not what would prevent enumeration (reworded after the fact — Epic 3 retrospective, R-11)
 
 **Given** a resolved id
 **When** it reaches a repository
@@ -1040,7 +1041,7 @@ So that FR17 is verified by the layer its verification line names.
 
 **Actor:** system
 **Satisfies:** FR17 verification — "E2E tests cover public route rendering by org slug"; NFR28, which says an E2E suite exists
-**Files:** `tests/status-page/public-status.feature`, `tests/status-page/public-status.steps.ts`, `tests/support/`, `.github/workflows/ci.yml`
+**Files:** `tests/status-page/public-status.feature`, `tests/status-page/public-status.steps.ts`, `tests/support/`, `.github/workflows/ci.yml`, `cucumber.mjs`, `package.json` (the last two amended after the fact: the story's PR changed both, and they carry behaviour — Epic 3 retrospective, AV-7)
 **Verification layer:** E2E (Cucumber)
 
 **Acceptance Criteria:**
