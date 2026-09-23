@@ -76,7 +76,7 @@ payload was designed against, and struck through if it ever stops matching.
 | "Writes pause for up to five minutes…" | `maintenance[].description` | `maintenance.description`; null when the operator wrote none. Customer-facing (DOMAIN, Maintenance) |
 | Window status (`scheduled` / `in_progress`) | `maintenance[].status` | `maintenance` |
 | "Affects: Primary database, Public API" | `maintenance[].affectedServiceIds` | `maintenance_services`, under the same rule as incidents |
-| The 90-day bars | `uptime.windowDays`, `uptime.services[].serviceId`, `.days[].date`, `.days[].uptimeRatio` | Shaped now, empty until Epic 5's rollups (decision recorded in the epic) |
+| The 90-day bars | `uptime.windowDays`, `uptime.services[].serviceId`, `.days[].date`, `.days[].uptimeRatio`, `.days[].worstStatus` | Shaped now, empty until Epic 5's rollups (decision recorded in the epic). One entry per day, oldest first; a day with no checks carries both values null, and `worstStatus` is what colours a bar (DOMAIN, "Public status page") |
 
 Nothing on the sketch is left without a field.
 
@@ -126,5 +126,6 @@ from the next.
 
 ## Revisions
 
+- **2026-09-23, Epic 3 retrospective R-17.** The uptime day gained `worstStatus`, the field that colours a bar, and the table records how a day with no checks is represented.
 - **2026-09-22, Epic 3 retrospective C-1.** Story 3.3 shipped three fields this file did not trace, `groups[].services[].slug`, `.description` and `maintenance[].description`, and did not update it. The two descriptions are now drawn on the sketch and traced, the decision that they are customer-facing is recorded in DOMAIN, and `slug` is struck. The fields that had no row, the identity fields and `maintenance[].startedAt`, are accounted for above. The incident and window cards were also one column wider than the frame, and now fit it.
 - **2026-09-21, Epic 3 retrospective R-1, R-2, R-12.** The banner and "Affects:" rows follow DOMAIN's "Public status page" rule.

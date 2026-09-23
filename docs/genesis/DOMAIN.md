@@ -341,6 +341,7 @@ Implementation:
 - Preferred v1: rollup table refreshed by worker for deterministic updates and easy public query shape.
 - Rollups use a deliberate 3-level monitor-observed scale: `operational`, `degraded`, `major_outage`.
 - `worst_status` is computed solely from `check_results`. It is intentionally distinct from incident-declared effective service status and must not fold incidents or maintenance into the rollup.
+- A day with no checks produces no row at all: the upsert aggregates `check_results` grouped by day. The public page says so explicitly rather than omitting the day; see Public status page.
 
 ---
 
@@ -976,6 +977,8 @@ Visibility is judged from current rows at read time. Making a service private, o
 - every *listed* incident's headline impact (`incidents.impact`), through `statusFromIncidentImpact`.
 
 The second list is why a listed `critical` incident can never sit under an `operational` banner, whether it names no service, names services that are private, or names public ones whose own status has not caught up. The headline impact is the one the page prints beside the incident, so the banner agrees with what a reader sees. An incident the rule leaves off contributes nothing, so a private incident cannot raise the banner by the back door. A window reaches the banner only through the services it puts in `maintenance`.
+
+**Uptime is shaped now and filled in Epic 5.** `uptime.windowDays` is 90. `uptime.services` is empty until rollups exist, which is how an integrator tells "no data yet" from "100% uptime". Once they exist, each service carries one entry per day in the window, oldest first, so a renderer draws its bars without date arithmetic. A day the rollups have no row for carries `uptimeRatio: null` and `worstStatus: null`: no checks ran that day, because the monitor did not exist yet or the worker was down, and that is a gap rather than an outage. `worstStatus` is the rollup's `worst_status`, the three-level monitor scale (`operational`, `degraded`, `major_outage`) computed from `check_results` alone, and it is what colours a day's bar. The payload carried no such field until the Epic 3 retrospective added it (R-17), while the contract still had no integrator to break.
 
 This rule is written for the page; it is not yet applied everywhere these items are referenced publicly. The public event gate sketched in `ARCHITECTURE.md` section 5.4 checks only the draft status, so an event about an incident this rule leaves off would pass it. Epic 4 builds that gate and must apply this rule there too.
 

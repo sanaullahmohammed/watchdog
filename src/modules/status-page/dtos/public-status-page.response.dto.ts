@@ -8,6 +8,8 @@ import {
   type MaintenanceStatus,
   SERVICE_STATUSES,
   type ServiceStatus,
+  UPTIME_DAY_STATUSES,
+  type UptimeDayStatus,
 } from '@/shared/domain/status-inputs';
 
 const serviceStatus = Type.Unsafe<ServiceStatus>(
@@ -21,6 +23,9 @@ const incidentImpact = Type.Unsafe<IncidentImpact>(
 );
 const maintenanceStatus = Type.Unsafe<MaintenanceStatus>(
   Type.String({ enum: [...MAINTENANCE_STATUSES] }),
+);
+const uptimeDayStatus = Type.Unsafe<UptimeDayStatus>(
+  Type.String({ enum: [...UPTIME_DAY_STATUSES] }),
 );
 
 /** 90 days of history, the window DOMAIN's rollups are sized for. */
@@ -97,17 +102,26 @@ export const publicStatusPageResponseDtoSchema = Type.Object({
   /**
    * Shaped now, filled in Epic 5. `services` is empty until rollups exist, so
    * an integrator can tell "no data yet" from "100% uptime"; the per-day shape
-   * is the one DOMAIN's `uptime_rollups` already implies.
+   * is the one DOMAIN's `uptime_rollups` already implies. See DOMAIN, "Public
+   * status page", for what a day with no checks carries.
    */
   uptime: Type.Object({
     windowDays: Type.Integer(),
     services: Type.Array(
       Type.Object({
         serviceId: Type.String({ format: 'uuid' }),
+        /** One entry per day in the window, oldest first. */
         days: Type.Array(
           Type.Object({
             date: Type.String({ format: 'date' }),
-            uptimeRatio: Type.Number(),
+            /** Null on a day the rollups have no row for: no checks ran. */
+            uptimeRatio: Type.Union([Type.Number(), Type.Null()]),
+            /**
+             * The worst a check saw that day, on the rollups' three-level
+             * monitor scale, and what colours the day's bar. Null on a day
+             * with no checks, like `uptimeRatio`.
+             */
+            worstStatus: Type.Union([uptimeDayStatus, Type.Null()]),
           }),
         ),
       }),
