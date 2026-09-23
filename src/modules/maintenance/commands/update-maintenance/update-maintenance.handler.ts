@@ -3,6 +3,7 @@ import type { UpdateMaintenanceProps } from '@/modules/maintenance/domain/mainte
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { maintenanceUpdatedEvent } from '@/shared/events/maintenance.events';
 import { NotFoundException } from '@/shared/exceptions';
+import { anyChanged, sameSet } from '@/shared/utils/changes';
 import {
   assertNoDuplicates,
   assertNoNullFields,
@@ -73,14 +74,38 @@ export default function makeUpdateMaintenance({
           );
         }
 
-        return window;
+        return {
+          window,
+          // The window as it was against the window as it is, and the cover it
+          // had against the cover it has. An edit that changed nothing
+          // announces nothing, which would otherwise trigger a recomputation
+          // and, from Epic 4, wake every subscriber (Epic 2 retrospective,
+          // D-3). Two concurrent edits are not serialized here, so both may
+          // announce; neither can stay silent about a change it made.
+          changed:
+            anyChanged(current, window, [
+              'title',
+              'description',
+              'scheduledStartAt',
+              'scheduledEndAt',
+            ]) ||
+            (affectedServiceIds !== undefined &&
+              !sameSet(current.affectedServiceIds, affectedServiceIds)),
+        };
       });
 
+      if (!updated.changed) {
+        return updated.window.id;
+      }
+
       eventBus.emit(
-        maintenanceUpdatedEvent({ id: updated.id, orgId: updated.orgId }),
+        maintenanceUpdatedEvent({
+          id: updated.window.id,
+          orgId: updated.window.orgId,
+        }),
       );
 
-      return updated.id;
+      return updated.window.id;
     },
     init() {
       commandBus.register(updateMaintenanceCommand.type, this.handler);

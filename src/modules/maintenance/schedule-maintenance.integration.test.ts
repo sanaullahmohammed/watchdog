@@ -195,6 +195,32 @@ describe('Story 2.12: schedule a maintenance window', () => {
     assert.equal(row.scheduled_end_at.toISOString(), newEnd);
   });
 
+  it('says nothing when an edit changes nothing', async () => {
+    const created = await schedule(cookieA, {
+      title: 'Settled',
+      scheduledStartAt: startAt,
+      scheduledEndAt: endAt,
+    });
+    const { id } = JSON.parse(created.body);
+
+    // The same title and the same window again. Announcing would trigger a
+    // recomputation and, from Epic 4, wake every subscriber for nothing
+    // (Epic 2's D-3, decided 2026-09-23).
+    const { result, captured } = await capturing(
+      maintenanceUpdatedEvent.type,
+      () =>
+        app.inject({
+          method: 'PATCH',
+          url: `/api/v1/maintenance/${id}`,
+          headers: { cookie: cookieA, origin: ORIGIN },
+          payload: { title: 'Settled', scheduledEndAt: endAt },
+        }),
+    );
+
+    assert.equal(result.statusCode, 200, result.body);
+    assert.deepEqual(captured, []);
+  });
+
   it('rejects an edit that would invert an existing window', async () => {
     const created = await schedule(cookieA, {
       title: 'Do not invert',

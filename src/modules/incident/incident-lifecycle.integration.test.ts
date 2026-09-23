@@ -49,6 +49,26 @@ function transition(cookie: string, id: string, status: string) {
   });
 }
 
+function patch(cookie: string, id: string, payload: object) {
+  return app.inject({
+    method: 'PATCH',
+    url: `/api/v1/incidents/${id}`,
+    headers: { cookie, origin: ORIGIN },
+    payload,
+  });
+}
+
+async function createService(cookie: string, slug: string) {
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/v1/services',
+    headers: { cookie, origin: ORIGIN },
+    payload: { name: slug, slug },
+  });
+  assert.equal(response.statusCode, 201, response.body);
+  return JSON.parse(response.body).id as string;
+}
+
 async function capturing<T>(types: string[], run: () => Promise<T>) {
   const seen: string[] = [];
   for (const type of types) {
@@ -344,6 +364,77 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
     assert.equal(row.title, 'Clearer title');
     assert.equal(row.impact, 'minor');
     assert.equal(row.status, 'investigating');
+  });
+
+  it('says nothing when an edit changes nothing', async () => {
+    const id = await declare(cookieA, 'Unchanged');
+    const serviceId = await createService(cookieA, `${tag}-unchanged`);
+    const affectedServices = [{ serviceId, impact: 'minor' }];
+    await patch(cookieA, id, { title: 'Settled title', affectedServices });
+
+    // The same values again, and the same cover in another order. Announcing
+    // would trigger a recomputation and, from Epic 4, wake every subscriber
+    // for nothing (Epic 2's D-3, decided 2026-09-23).
+    const { seen } = await capturing([incidentUpdatedEvent.type], async () => {
+      const repeat = await patch(cookieA, id, {
+        title: 'Settled title',
+        affectedServices,
+      });
+      assert.equal(repeat.statusCode, 200, repeat.body);
+    });
+    assert.deepEqual(seen, []);
+
+    // And it still announces a change, so silence is not the only answer it
+    // knows.
+    const moved = await capturing([incidentUpdatedEvent.type], () =>
+      patch(cookieA, id, { title: 'Moved on' }),
+    );
+    assert.deepEqual(moved.seen, [incidentUpdatedEvent.type]);
+  });
+
+  it('says something when only the cover changes', async () => {
+    const id = await declare(cookieA, 'Cover');
+    const serviceId = await createService(cookieA, `${tag}-cover`);
+    await patch(cookieA, id, { affectedServices: [] });
+
+    const { seen } = await capturing([incidentUpdatedEvent.type], () =>
+      patch(cookieA, id, {
+        affectedServices: [{ serviceId, impact: 'major' }],
+      }),
+    );
+    assert.deepEqual(seen, [incidentUpdatedEvent.type]);
+  });
+
+  it('accepts an update posted to a draft, and records it as a draft entry', async () => {
+    // Decided 2026-09-23 (Epic 2's D-4): operators triage in place, and from
+    // Epic 5 monitors write into drafts. The entry stays off the public page
+    // (item 6), and every event from a draft-era action is draft-gated.
+    const [{ id }] = await withTenantTransaction(
+      orgAId,
+      ({ sql: tx }) =>
+        tx<{ id: string }[]>`
+        insert into incidents (org_id, title, status, impact, source)
+        values (${orgAId}, 'Monitor noise', 'draft', 'major', 'monitoring')
+        returning id
+      `,
+    );
+
+    const posted = await app.inject({
+      method: 'POST',
+      url: `/api/v1/incidents/${id}/updates`,
+      headers: { cookie: cookieA, origin: ORIGIN },
+      payload: { message: 'Triage: the canary looks unhealthy.' },
+    });
+    assert.ok(posted.statusCode < 300, posted.body);
+
+    assert.deepEqual(
+      (await timelineOf(orgAId, id)).map((entry) => [
+        entry.status,
+        entry.message,
+      ]),
+      [['draft', 'Triage: the canary looks unhealthy.']],
+      'recorded at the status the incident holds, which is what hides it',
+    );
   });
 
   it('does not let another organization transition an incident', async () => {
