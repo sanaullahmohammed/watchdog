@@ -241,6 +241,21 @@ describe('Story 3.3: serve the public status payload', () => {
       message: 'A bad deploy; rolling back.',
     });
 
+    // The one status no fixture covered: dropping `monitoring` from the active
+    // subset passed every suite, while the recomputation kept its services
+    // degraded (VG-F). Impact `none` and no service named, so org A's banner
+    // and statuses are untouched; what it proves is that the page lists it.
+    id.monitoringIncident = (
+      await post(cookieA, '/incidents', {
+        title: 'Watching the fix',
+        impact: 'none',
+      })
+    ).id as string;
+    await post(cookieA, `/incidents/${id.monitoringIncident}/transition`, {
+      status: 'monitoring',
+      message: 'The fix is deployed; watching.',
+    });
+
     // Names only a private service, so the page leaves it off (R-2). Declared
     // last, it is the newest: were it listed, it would come first. Its
     // `critical` would also take the banner to major_outage, which the banner
@@ -603,11 +618,19 @@ describe('Story 3.3: serve the public status payload', () => {
     const page = await fetchPage(slugA);
 
     assert.deepEqual(
-      page.activeIncidents.map((incident) => incident.id),
-      [id.activeIncident, id.olderIncident],
+      page.activeIncidents.map((incident) => [incident.id, incident.status]),
+      [
+        // Newest first. The monitoring one was declared last.
+        [id.monitoringIncident, 'monitoring'],
+        [id.activeIncident, 'identified'],
+        [id.olderIncident, 'investigating'],
+      ],
     );
 
-    const [current] = page.activeIncidents;
+    const current = page.activeIncidents.find(
+      (incident) => incident.id === id.activeIncident,
+    );
+    assert.ok(current);
     assert.equal(current.status, 'identified');
     assert.equal(current.impact, 'minor');
     assert.deepEqual(current.affectedServiceIds, [id.solo]);

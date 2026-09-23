@@ -1,10 +1,11 @@
 import type { AffectedService } from '@/modules/status-page/domain/public-page';
 import type { TenantTransaction } from '@/shared/db/tenant-transaction';
-import type {
-  IncidentImpact,
-  IncidentStatus,
-  MaintenanceStatus,
-  ServiceStatus,
+import {
+  ACTIVE_INCIDENT_STATUSES,
+  type IncidentImpact,
+  type IncidentStatus,
+  type MaintenanceStatus,
+  type ServiceStatus,
 } from '@/shared/domain/status-inputs';
 
 export type PublicServiceRow = {
@@ -56,13 +57,6 @@ export type PublicStatusReads = {
   incidents: PublicIncidentRow[];
   maintenance: PublicMaintenanceRow[];
 };
-
-/** Statuses a customer is told about. A draft never was; a resolved one is over. */
-const ACTIVE_INCIDENT_STATUSES = [
-  'investigating',
-  'identified',
-  'monitoring',
-] as const;
 
 /** What is happening or about to. A completed window is history. */
 const OPEN_MAINTENANCE_STATUSES = ['scheduled', 'in_progress'] as const;
