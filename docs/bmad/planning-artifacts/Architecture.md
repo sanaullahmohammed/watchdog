@@ -1,6 +1,8 @@
 ---
 title: WatchDog Architecture
 stepsCompleted: []
+kind: genesis-adapter
+validated: 2026-10-06
 ---
 
 # WatchDog Architecture
@@ -9,7 +11,7 @@ stepsCompleted: []
 
 The architecture of record is `docs/genesis/ARCHITECTURE.md` (runtime wiring, CQRS/module topology, the api/worker split, LISTEN/NOTIFY fanout, SSE and GraphQL subscriptions, RLS enforcement mechanics, Compose, CI) together with `docs/genesis/DOMAIN.md` (entities, ERD, RLS policies, state machines, status-resolution precedence, monitoring persistence, retention, and the canonical event catalog).
 
-This file exists because `bmad-create-epics-and-stories` requires an architecture input. It does not restate those documents. It records which decisions are settled, which are already implemented, and the constraints that shape every story — so that decomposition treats them as given rather than re-deriving them.
+This file exists because `bmad-create-epics-and-stories` requires an architecture input. It does not restate those documents. It records which decisions are settled and the constraints that shape every story — so that decomposition treats them as given rather than re-deriving them.
 
 ## Settled decisions
 
@@ -33,17 +35,13 @@ Do not reopen these during story creation. Each is owned by the document named.
 | `incident.*` events are public only after name whitelisting and only when not `draft` | ARCHITECTURE §5.4 |
 | Retention defaults: 30 days of raw check results, 400 days of rollups | DOMAIN |
 | All AI output is human-in-the-loop behind a provider port; Azure AI Foundry is one adapter | AI.md |
+| v1 is API-only: no public or admin browser UI | ROADMAP §4 |
+| Monitoring runs in the worker and needs no backplane; delivered before real-time | ROADMAP §2, DOMAIN |
+| Notifications are derived from durable history into a delivery ledger, at-least-once | ARCHITECTURE §5.6, DOMAIN |
 
 ## Already implemented
 
-Stories must build on these rather than re-plan them.
-
-- **Scaffold and toolchain.** pnpm 12 single package (not a workspace), Biome, k6, `tsx` in development and `tsc` + `resolve-tspaths` for production. `pnpm run check` runs Biome, `tsc --noEmit` and dependency-cruiser.
-- **Module boundaries are enforced.** `dependency-cruiser` fails a build where one slice imports another, alongside the inherited layer rules. Cross-module contracts live in `src/shared/events/`.
-- **Better Auth schema is frozen.** `db/migrations/*_better_auth_schema.sql` is the FK contract; `pnpm run auth:schema:check` fails if Better Auth expects anything no migration provides. Table names are `"user"`, `"session"`, `"account"`, `"verification"`, `"organization"`, `"team"`, `"teamMember"`, `"member"`, `"invitation"` — all requiring quotes.
-- **Runtime topology works.** `docker compose up` runs postgres, mailpit, a one-shot migrate, api and worker, all healthy. `src/index.ts` dispatches on `process.argv[2]`.
-- **Roles and grants.** `db/init/001-create-watchdog-app.sh` creates the runtime role; a grants migration uses `ALTER DEFAULT PRIVILEGES` so future tables are covered automatically.
-- **Tenant isolation is proven.** `src/shared/db/tenant-transaction.ts` is the helper every repository uses. `service_groups` is the first tenant-scoped table. Twelve integration tests cover cross-tenant read, update, delete, `WITH CHECK`, unscoped reads, pooled-connection reuse and id validation, plus a structural test asserting every `org_id`-carrying table has RLS enabled, `FORCE`d and policied.
+What is built is tracked in `docs/bmad/implementation-artifacts/sprint-status.yaml` and evidenced by tests. This file lists only settled decisions and the constraints every story inherits.
 
 ## Constraints that shape every story
 

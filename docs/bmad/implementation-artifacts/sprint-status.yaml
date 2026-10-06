@@ -1,0 +1,147 @@
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created, ready for development
+#   - in-progress: Developer actively working on implementation
+#   - review: Implementation complete, ready for review
+#   - done: Story completed
+
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; the status view surfaces open ones
+generated: 10-06-2026 12:00
+last_updated: 10-06-2026 12:00
+project: watchdog
+project_key: NOKEY
+tracking_system: file-system
+story_location: docs/bmad/implementation-artifacts
+development_status:
+  epic-1: done
+  1-1-switch-the-active-organization: done
+  1-2-belong-to-more-than-one-organization: done
+  epic-1-retrospective: optional
+
+  epic-2: done
+  2-1-keep-rest-and-graphql-from-drifting-apart: done
+  2-2-create-and-update-a-service: done
+  2-3-group-services: done
+  2-4-archive-and-restore-a-service: done
+  2-5-exclude-archived-services-from-active-and-public-lists: done
+  2-6-override-a-service-s-status-by-hand: done
+  2-7-resolve-incident-state-transitions: done
+  2-8-declare-an-incident: done
+  2-9-move-an-incident-through-its-lifecycle: done
+  2-10-post-an-incident-update: done
+  2-11-read-an-incident-timeline-in-order: done
+  2-12-schedule-a-maintenance-window: done
+  2-13-read-maintenance-windows: done
+  2-14-end-a-maintenance-window: done
+  2-15-transition-due-maintenance-automatically: done
+  2-16-resolve-effective-service-status: done
+  2-17-recompute-and-announce-service-status: done
+  2-18-serve-resolved-status-through-the-service-queries: done
+  2-19-seed-a-demonstrable-organization: done
+  epic-2-retrospective: done
+
+  epic-3: done
+  3-1-wireframe-the-page-the-payload-feeds: done
+  3-2-resolve-an-organization-from-its-public-slug: done
+  3-3-serve-the-public-status-payload: done
+  3-4-prove-the-public-page-end-to-end: done
+  epic-3-retrospective: done
+
+  epic-4: backlog
+  epic-4-retrospective: optional
+
+  epic-5: backlog
+  epic-5-retrospective: optional
+
+  epic-6: backlog
+  epic-6-retrospective: optional
+
+  epic-7: backlog
+  epic-7-retrospective: optional
+
+  epic-8: backlog
+  epic-8-retrospective: optional
+
+  epic-9: backlog
+  9-1-graphql-refuses-what-rest-refuses-services-and-groups: backlog
+  9-2-the-anonymous-graphql-limit-holds-whatever-cookie-arrives: backlog
+  9-3-graphql-refuses-what-rest-refuses-incidents: backlog
+  9-4-graphql-refuses-what-rest-refuses-maintenance: backlog
+  9-5-one-slug-rule-for-organizations-at-creation-and-lookup: backlog
+  9-6-read-service-groups: backlog
+  9-7-read-one-incident-with-its-affected-services: backlog
+  9-8-admin-service-lists-settle-ties-by-id: backlog
+  9-9-close-better-auth-s-pool-on-shutdown: backlog
+  9-10-worker-health-reports-completed-passes: backlog
+  9-11-every-graphql-mutation-runs-over-graphql: backlog
+  9-12-public-cors-headers-on-every-answer: backlog
+  9-13-sql-debug-logging-never-prints-parameter-values: backlog
+  9-14-the-runtime-role-cannot-hard-delete-a-service: backlog
+  epic-9-retrospective: optional
+
+# Action items committed during retrospectives. Copied on 2026-10-06 from the
+# Epic 2 and Epic 3 retrospectives, which stay as written; see
+# planning-artifacts/sprint-change-proposal-2026-10-06.md section 5.6.
+action_items:
+  - epic: 2
+    action: "D-1: a timeline sequence column, deferred until there is a bulk writer (revisit in Epic 5, where monitors write into drafts)"
+    owner: "dev loop"
+    status: open
+  - epic: 2
+    action: "D-2: doubled recomputes; settled for monitor traffic by DOMAIN's monitor.state_changed trigger (2026-10-06), still open for incident and maintenance events"
+    owner: "dev loop"
+    status: open
+  - epic: 2
+    action: "D-6: a seed that fails partway"
+    owner: "dev loop"
+    status: open
+  - epic: 2
+    action: "D-7: status=draft without includeDrafts"
+    owner: "dev loop"
+    status: open
+  - epic: 3
+    action: "Item 20: move createService, createGroup, declare and capturing into src/shared/testing/ (partly in story 9.11)"
+    owner: "dev loop"
+    status: open
+  - epic: 3
+    action: "Item 21: container smoke test in CI against the built image (Epic 8)"
+    owner: "dev loop"
+    status: open
+  - epic: 3
+    action: "Item 22: a GraphQL mutation test per command (story 9.11)"
+    owner: "dev loop"
+    status: open
+  - epic: 3
+    action: "Item 23: foreign-table allowlist test, with Epic 5's uptime story"
+    owner: "dev loop"
+    status: open
+  - epic: 3
+    action: "Item 24a: apply the slug rule at organization creation (story 9.5)"
+    owner: "dev loop"
+    status: open
+  - epic: 3
+    action: "Item 24b: README says RLS is the tenant boundary"
+    owner: "dev loop"
+    status: done

@@ -36,7 +36,7 @@ Notes:
 - The Better Auth schema is generated once, reviewed, committed as a DBMate migration, and then treated as the FK contract. Frozen as of `better-auth@1.7.3`: `"user"`, `"session"`, `"account"`, `"verification"`, `"organization"`, `"team"`, `"teamMember"`, `"member"`, `"invitation"`. See `ARCHITECTURE.md` section 7 for the full table.
 - Identifier quoting is load-bearing when WatchDog reads these tables. `user` is a reserved word in PostgreSQL and `"teamMember"` is camelCase, and every Better Auth column is camelCase. Raw SQL that joins a WatchDog table to a Better Auth table quotes the Better Auth side and leaves the snake_case WatchDog side bare.
 - `organization.id` is `text` and `organization.slug` is `text not null unique`, so `org_id` stays `text` and the `/status/:orgSlug` lookup needs no additional index.
-- The public page answers only for a slug inside WatchDog's slug rule, the one services and groups already follow: lowercase letters and digits in hyphen-separated runs (`^[a-z0-9]+(?:-[a-z0-9]+)*$`), at most 120 characters. Any other slug, malformed or merely unknown, gets the same answer as one no organization has: one 404 body, whatever was asked, so a miss reveals nothing about which organizations exist, and nothing reaches SQL that the rule already excludes. Better Auth itself accepts any non-empty slug at creation, so until creation applies the same rule (Epic 3 retrospective, open question on R-8), an organization created with a slug outside it has no reachable public page.
+- The public page answers only for a slug inside WatchDog's slug rule, the one services and groups already follow: lowercase letters and digits in hyphen-separated runs (`^[a-z0-9]+(?:-[a-z0-9]+)*$`), at most 120 characters. Any other slug, malformed or merely unknown, gets the same answer as one no organization has: one 404 body, whatever was asked, so a miss reveals nothing about which organizations exist, and nothing reaches SQL that the rule already excludes. Creating an organization, and changing its slug, apply the same rule: Better Auth's organization hooks refuse a slug outside it, so every organization created from then on has a reachable page (Epic 3 retrospective R-8; audit F-05; decided 2026-10-06). Organizations created before the hooks keep their slugs, and story 9.5 records how many exist and what they show. Renaming with slug history stays out of scope until the product can rename one.
 - Better Auth tables sit outside WatchDog tenant-scoped RLS.
 - WatchDog organization queries may read Better Auth tables for active-org resolution, switcher data, and public slug lookup, but WatchDog does not emit organization/team/membership domain events.
 
@@ -254,7 +254,7 @@ Synthetic check configuration.
 | `service_id` | `uuid` | FK -> `services.id` |
 | `type` | `text` | CHECK: `http`, `tcp`, `keyword`, `ssl_expiry` |
 | `name` | `text` | Required |
-| `target` | `text` | URL, host:port, hostname, etc. |
+| `target` | `text` | URL, host:port, hostname, etc. Validated at configuration against ARCHITECTURE section 6.5; the connect-time check there is the guard. |
 | `interval_seconds` | `integer` | Required |
 | `timeout_seconds` | `integer` | Required |
 | `enabled` | `boolean` | Required |
@@ -302,7 +302,7 @@ Tenant scoping: carries `org_id`.
 
 Persistence:
 
-- Append-only.
+- Append-only, and enforced: the migration revokes `UPDATE` and `DELETE` on `check_results` from `watchdog_app`. Expiring raw rows is dropping a partition through the owner's function (ARCHITECTURE section 6.1), never a row delete. Decided 2026-10-06 (DEC-MON M8).
 - Partitioned by `checked_at`.
 - Raw rows serve recent forensics and are retained for the configured raw retention window.
 
@@ -376,6 +376,43 @@ on subscribers (org_id, lower(email));
 ```
 
 The same email address may subscribe to different organizations. The functional index enforces tenant-scoped uniqueness; write-time normalization keeps stored data clean so raw casing does not drift into notification sends.
+
+---
+
+### NotificationDelivery
+
+One email owed to one subscriber about one public change. Decided 2026-10-06 (DEC-NTF, `docs/bmad/planning-artifacts/sprint-change-proposal-2026-10-06.md`). How deliveries are found, claimed and retried is owned by ARCHITECTURE section 5.6.
+
+| Field | Type | Constraints / Notes |
+|---|---:|---|
+| `id` | `uuid` | PK |
+| `org_id` | `text` | FK -> Better Auth `organization.id` |
+| `subscriber_id` | `uuid` | FK -> `subscribers.id`, tenant-aware (`(subscriber_id, org_id)`) |
+| `source_type` | `text` | CHECK: `incident_update`, `maintenance_scheduled`, `maintenance_started`, `maintenance_completed` |
+| `source_id` | `uuid` | The `incident_updates.id`, or the `maintenance.id` for a maintenance source |
+| `status` | `text` | CHECK: `pending`, `sent`, `failed`, `abandoned` |
+| `attempts` | `integer` | Not null, default `0` |
+| `next_attempt_at` | `timestamptz` | When a `pending` delivery may next be tried |
+| `last_error` | `text null` | Truncated SMTP or transport diagnostic. Never contains the address |
+| `created_at` | `timestamptz` | Required |
+| `sent_at` | `timestamptz null` | Set when the SMTP server accepts the message |
+
+Tenant scoping: carries `org_id`.
+
+```sql
+create unique index notification_deliveries_once_uk
+on notification_deliveries (subscriber_id, source_type, source_id);
+```
+
+The unique key is what makes delivery at-least-once without being careless: a pass that repeats work, or re-reads its cursor's overlap, inserts nothing new.
+
+**What notifies.**
+- Every public timeline entry: the declaration, each public lifecycle transition, each posted update, and the resolution.
+- A maintenance window being scheduled, starting, and completing. Editing a window and deleting one notify no one in v1.
+
+**Who is told.** A subscriber is owed a change when they were `confirmed` before it was recorded, and are still `confirmed` when the delivery is created. The Public status page rule applies at the moment a delivery is created: a draft-era entry is never sent, and neither is anything about an incident or window the page would leave off. An unsubscribe stops every `pending` delivery for that subscriber.
+
+**Retention.** Deliveries in a final status (`sent`, `failed`, `abandoned`) are pruned after `NOTIFICATION_RETENTION_DAYS`, default 90. An unsubscribed subscriber is deleted after the same period, along with their remaining deliveries.
 
 ---
 
@@ -533,6 +570,20 @@ erDiagram
     timestamptz updated_at
   }
 
+  NOTIFICATION_DELIVERY {
+    uuid id PK
+    text org_id FK
+    uuid subscriber_id FK
+    text source_type
+    uuid source_id
+    text status
+    integer attempts
+    timestamptz next_attempt_at
+    text last_error
+    timestamptz created_at
+    timestamptz sent_at
+  }
+
   AUTH_ORGANIZATION ||--o{ SERVICE_GROUP : owns
   SERVICE_GROUP ||--o{ SERVICE : groups
   AUTH_ORGANIZATION ||--o{ SERVICE : owns
@@ -556,6 +607,7 @@ erDiagram
   SERVICE ||--o{ UPTIME_ROLLUP : has_rollups
 
   AUTH_ORGANIZATION ||--o{ SUBSCRIBER : has
+  SUBSCRIBER ||--o{ NOTIFICATION_DELIVERY : owed
 ```
 
 Better Auth team and membership relationships are intentionally omitted from the WatchDog ERD because their table shapes are owned by the Better Auth organization plugin.
@@ -581,6 +633,7 @@ Tenant-scoped WatchDog tables:
 - `check_results`
 - `uptime_rollups`
 - `subscribers`
+- `notification_deliveries`
 
 Better-Auth-owned tables:
 
@@ -867,6 +920,8 @@ function statusFromMonitorState(state: MonitorDerivedState): ServiceStatus {
 }
 ```
 
+**How monitor state is derived.** Decided 2026-10-06 (DEC-MON M1, `docs/bmad/planning-artifacts/sprint-change-proposal-2026-10-06.md`). From stored rows only, never from an event, so the worker's reconciliation can recompute it after a lost one. Per monitor: `healthy` when `consecutive_failures` is 0, `degraded` when it is above 0 and below `failure_threshold`, and `failing` at or above it. A disabled monitor, or one never checked, contributes nothing. Per service, `monitorState` is the worst of its contributing monitors (`failing`, then `degraded`, then `healthy`). A service with none passes null, which the resolution function treats as no input.
+
 The `failing -> major_outage` monitor-derived mapping and the monitor-born draft default `impact: 'critical'` are both tunable product mappings. The draft is created only after N consecutive failures, never after a single failed check unless the monitor's threshold is configured to `1`.
 
 ### Status-resolution precedence function
@@ -878,7 +933,7 @@ type ResolveServiceStatusInput = {
   manualOverride: ServiceStatus | null;
   activeIncidentImpacts: IncidentImpact[];
   hasActiveMaintenance: boolean;
-  monitorState: MonitorDerivedState;
+  monitorState: MonitorDerivedState | null; // null: no monitor contributes
 };
 
 function resolveServiceStatus(input: ResolveServiceStatusInput): ServiceStatus {
@@ -892,12 +947,14 @@ function resolveServiceStatus(input: ResolveServiceStatusInput): ServiceStatus {
     ? ['maintenance']
     : [];
 
-  const monitorStatus = statusFromMonitorState(input.monitorState);
+  const monitorStatus: ServiceStatus[] = input.monitorState
+    ? [statusFromMonitorState(input.monitorState)]
+    : [];
 
   return worstOf([
     ...incidentStatuses,
     ...maintenanceStatus,
-    monitorStatus,
+    ...monitorStatus,
   ]);
 }
 
@@ -930,9 +987,11 @@ This is a derived value held for two reasons: it is the only way to diff, and it
 - `incident.created`, `incident.confirmed`, `incident.state_changed`, `incident.resolved`, `incident.dismissed`, `incident.updated`
 - `maintenance.started`, `maintenance.completed`, `maintenance.deleted`, `maintenance.updated`
 - `service.manual_override_set`, `service.manual_override_cleared`, `service.restored`
-- `monitor.check_succeeded`, `monitor.check_failed`, `monitor.recovered`, `monitor.threshold_breached`
+- `monitor.state_changed`
 
 `incident.updated` and `maintenance.updated` are on the list because an edit can rewrite an active incident's affected services and their impacts, or an in-progress window's affected services. `service.restored` is there because archived services are skipped, so a restored service returns holding whatever it held when it was archived. An earlier revision of this list omitted all three; Story 2.17 found each to be a way for status to move without an announcement.
+
+Monitoring triggers recomputation through `monitor.state_changed` only, which fires when a monitor's derived state moves. An earlier revision listed `monitor.check_succeeded` and `monitor.check_failed`, which would lock and recompute every live service in the organization on every check, though a check that leaves the derived state where it was cannot move a status. Decided 2026-10-06 (DEC-MON M3); it also settles Epic 2's D-2 for monitor traffic.
 
 **The inputs, precisely.** Active incident impact is the per-service impact (`incident_service_impacts.impact`, not the incident's headline impact) on incidents in `investigating`, `identified` or `monitoring`. A `draft` is excluded: it is unconfirmed and was never shown to customers. Active maintenance is membership of a window in `in_progress`.
 
@@ -972,7 +1031,7 @@ An affected-service reference that is not visible is never published, even as an
 
 Visibility is judged from current rows at read time. Making a service private, or archiving it, takes the incidents and windows that named only it off the page with it; nothing about them is stored.
 
-**An incident's timeline leaves out its draft era.** The page shows a listed incident's entries oldest first, except those recorded with status `draft`. A draft was never shown to customers, and neither were the notes taken while it was one. A posted update records the incident's current status, and nothing stops an update being posted to a draft (Epic 2's D-4 is the open question of whether anything should), so before this rule, confirming a draft published every triage note written on it (Epic 3 retrospective, R-4). A confirmed draft's timeline therefore opens at its confirmation, the `draft -> investigating` entry.
+**An incident's timeline leaves out its draft era.** The page shows a listed incident's entries oldest first, except those recorded with status `draft`. A draft was never shown to customers, and neither were the notes taken while it was one. A posted update records the incident's current status, and an update may be posted to a draft (decided 2026-09-23, closing Epic 2's D-4; see IncidentUpdate), so before this rule, confirming a draft published every triage note written on it (Epic 3 retrospective, R-4). A confirmed draft's timeline therefore opens at its confirmation, the `draft -> investigating` entry.
 
 **The banner.** `overallStatus` is `worstOf` over two lists:
 
@@ -1001,6 +1060,7 @@ Recommended v1 partitioning:
 - Raw `check_results` retention defaults to 30 days via `CHECK_RESULTS_RETENTION_DAYS=30`.
 - The worker's partition-maintenance job detaches and drops partitions older than the configured raw retention window. This is a metadata operation; it must not perform row-level deletes for raw rows.
 - `uptime_rollups` retention defaults to 400 days via `ROLLUP_RETENTION_DAYS=400`. Rollup rows older than the configured value are pruned.
+- **Partitions and RLS.** Decided 2026-10-06 (DEC-MON M4). Each partition is a table of its own carrying `org_id`, and a policy on the parent governs only rows reached through the parent. `watchdog_app` therefore holds no privilege on any partition: the function that creates one (ARCHITECTURE section 6.1) revokes the default grants, so the runtime role reads and writes only through `check_results`. It also enables and forces RLS on the partition with the parent's policy, so `tenant-rls-coverage.integration.test.ts` holds unchanged and a grant added by mistake would still be scoped.
 - The differing lifetimes are intentional: raw rows serve recent forensics; public 90-day bars read rollups only, and retaining at least 400 days keeps room for a trailing-year public view later without a data-gap migration.
 
 Illustrative DDL:
@@ -1144,63 +1204,60 @@ order by service_id, day;
 
 ### Consecutive-failure to draft-incident rule
 
+Decided 2026-10-06 (DEC-MON M2, `docs/bmad/planning-artifacts/sprint-change-proposal-2026-10-06.md`). An earlier revision had monitoring create the draft itself and append to an event table. The first is a write across a module boundary, and the second is an outbox that was never designed. Both are withdrawn.
+
 Monitor execution flow:
 
-1. Worker selects due enabled monitors by joining `monitors` to active services and filtering `services.archived_at IS NULL`.
-2. Worker executes the synthetic check.
-3. Worker appends a `check_results` row.
-4. Worker updates `monitors.consecutive_failures`:
-   - success -> reset to `0`
-   - failure -> increment by `1`
-5. If `consecutive_failures >= failure_threshold`, worker emits `monitor.threshold_breached`.
-6. Threshold breach creates a draft incident, not a published incident.
-7. Human confirms, edits, or dismisses the draft.
+1. The worker selects due enabled monitors by joining `monitors` to active services and filtering `services.archived_at IS NULL` (ARCHITECTURE section 6.0.1).
+2. It executes the synthetic check, subject to ARCHITECTURE section 6.5.
+3. In one tenant transaction it appends a `check_results` row, locks the monitor row (`for no key update`), and updates `consecutive_failures` (success resets it to `0`, failure adds `1`) and `last_checked_at`.
+4. After commit it emits `monitor.check_succeeded` or `monitor.check_failed`. If the monitor's derived state moved, it also emits `monitor.state_changed`. If the state became `failing` it emits `monitor.threshold_breached`, and if it went from `failing` to `healthy`, `monitor.recovered`.
+5. The `incident` module handles `monitor.threshold_breached` through `src/shared/events/` and creates the draft: `source: monitoring`, `origin_monitor_id` set, impact `critical`, the monitor's service affected at `critical`. It emits `incident.draft_created`. Monitoring never writes `incidents`.
+6. Events are one-shot, so the worker pass reconciles drafts as it reconciles status: a monitor at or above its threshold with no open draft, and no unresolved confirmed incident it originated, gets one through the same incident command. The partial unique index makes both paths idempotent, and a unique violation means "already exists".
+7. A human confirms, edits, or dismisses the draft.
 
-Pseudocode:
+Sketch:
 
 ```ts
-async function recordCheckResult(result: CheckResult): Promise<void> {
-  await tx(async repo => {
-    await repo.checkResults.append(result);
-
-    const monitor = await repo.monitors.getForUpdate(result.monitorId);
-
-    const nextConsecutiveFailures =
-      result.status === 'success'
-        ? 0
-        : monitor.consecutiveFailures + 1;
-
-    await repo.monitors.updateConsecutiveFailures(
-      monitor.id,
-      nextConsecutiveFailures,
-      result.checkedAt,
-    );
-
-    if (
-      result.status === 'failure' &&
-      nextConsecutiveFailures >= monitor.failureThreshold
-    ) {
-      await repo.incidents.createDraftFromMonitor({
-        orgId: monitor.orgId,
-        serviceId: monitor.serviceId,
-        originMonitorId: monitor.id,
-        title: `Monitor failure: ${monitor.name}`,
-        impact: 'critical',
-        source: 'monitoring',
-      });
-
-      await repo.events.append('monitor.threshold_breached', {
-        orgId: monitor.orgId,
-        monitorId: monitor.id,
-        serviceId: monitor.serviceId,
-        consecutiveFailures: nextConsecutiveFailures,
-      });
-    }
+// monitoring module, in the worker
+async function recordCheckResult(orgId: string, result: CheckResult): Promise<void> {
+  const { monitor, before, after } = await withTenantTransaction(orgId, async tx => {
+    await checkResults.append(tx, result);
+    const monitor = await monitors.getForUpdate(tx, result.monitorId);
+    const consecutiveFailures =
+      result.status === 'success' ? 0 : monitor.consecutiveFailures + 1;
+    await monitors.recordCheck(tx, monitor.id, consecutiveFailures, result.checkedAt);
+    return {
+      monitor,
+      before: monitorStateOf(monitor),
+      after: monitorStateOf({ ...monitor, consecutiveFailures }),
+    };
   });
+
+  // after commit
+  eventBus.emit(result.status === 'success' ? checkSucceeded(monitor) : checkFailed(monitor));
+  if (after !== before) eventBus.emit(monitorStateChanged(monitor, before, after));
+  if (after === 'failing' && before !== 'failing') eventBus.emit(thresholdBreached(monitor));
+  if (before === 'failing' && after === 'healthy') eventBus.emit(monitorRecovered(monitor));
+}
+
+// incident module, handling monitor.threshold_breached
+async function createDraftFromMonitor(event: ThresholdBreached): Promise<void> {
+  const created = await withTenantTransaction(event.orgId, tx =>
+    incidents.insertDraftIfAbsent(tx, {
+      // insert ... on conflict (org_id, origin_monitor_id) where status = 'draft' do nothing
+      originMonitorId: event.monitorId,
+      serviceId: event.serviceId,
+      title: `Monitor failure: ${event.monitorName}`,
+      impact: 'critical',
+      source: 'monitoring',
+    }),
+  );
+  if (created) eventBus.emit(incidentDraftCreated(created));
 }
 ```
 
-`findOpenMonitoringDraft` is optional as an app-level fast path. It is redundant for correctness because the partial unique index on `(org_id, origin_monitor_id) where status = 'draft'` is the authoritative duplicate-draft guard; command handlers should handle the unique-violation path idempotently.
+The partial unique index on `(org_id, origin_monitor_id) where status = 'draft'` is the authoritative duplicate-draft guard; an app-level look-up first is an optional fast path.
 
 ---
 
@@ -1263,6 +1320,7 @@ An `*.updated` event announces a change, not an attempt. `UpdateIncidentCommand`
 | `monitor.deleted` | Monitor is deleted | No | Admin-only |
 | `monitor.check_succeeded` | A check succeeds after execution | Optional | Admin-only |
 | `monitor.check_failed` | A check fails after execution | Optional | Admin-only |
+| `monitor.state_changed` | A monitor's derived state moves (Status model, How monitor state is derived) | Optional | Admin-only |
 | `monitor.recovered` | Monitor transitions from failing to healthy | Yes | Admin-only |
 | `monitor.threshold_breached` | Consecutive failure threshold is reached | Yes | Admin-only |
 | `monitor.ssl_expiry_warning` | SSL-expiry monitor reaches warning threshold | Yes | Admin-only |
@@ -1277,7 +1335,7 @@ An `*.updated` event announces a change, not an attempt. `UpdateIncidentCommand`
 | `subscriber.unsubscribed` | Subscriber unsubscribes | No | Admin-only |
 | `notification.email_queued` | Email notification is queued | No | Admin-only |
 | `notification.email_sent` | Email notification is sent | No | Admin-only |
-| `notification.email_failed` | Email notification fails | No | Admin-only |
+| `notification.email_failed` | A delivery is marked `failed` or `abandoned` | No | Admin-only |
 
 ### AI events
 

@@ -1,6 +1,6 @@
 ---
 stepsCompleted: [1, 2, 3]
-epicsWithStories: [1, 2, 3]
+epicsWithStories: [1, 2, 3, 9]
 inputDocuments:
   - docs/bmad/planning-artifacts/PRD.md
   - docs/bmad/planning-artifacts/Architecture.md
@@ -53,7 +53,7 @@ NFR28: Full test suite — Unit, integration, Cucumber/Gherkin E2E, and k6 load 
 NFR29: Docker Compose — One `docker-compose` runs migration, API, worker, Postgres, and Mailpit. (Phase 6)
   - **SATISFIED**: Done - postgres, mailpit, migrate, api and worker all report healthy from one image.
 NFR30: CI — GitHub Actions runs check, unit tests, migrations, integration tests, E2E tests, k6 smoke, and Docker build validation against a Postgres service container. (Phase 6)
-  - **PARTIAL**: Partial - check, database and docker jobs run. Cucumber E2E and k6 smoke are not wired yet.
+  - **PARTIAL**: check, database, E2E and docker jobs run; k6 smoke is not wired (ARCHITECTURE section 9) and the built image is never booted (Epic 3 retrospective item 21). Closed in Epic 8.
 NFR31: No deploy target — CI intentionally stops at verification and does not deploy. (Phase 6)
   - **SATISFIED**: Done - no deployment job exists.
 
@@ -124,8 +124,11 @@ NFR28: Epic 8 — full unit, integration, Cucumber and k6 suites
 NFR29: satisfied — one Compose stack runs migrate, api, worker, postgres and mailpit
 NFR30: Epic 8 — CI carries the full suite
 NFR31: satisfied — CI contains no deployment job
+Epic 9 — stabilization; adds no FR, and re-verifies FR4, FR6, FR27 and NFR29 against ROADMAP's sharpened verification lines
 
 ## Epic List
+
+**Delivery order: 1, 2, 3, 9, 5, 4, 6, 7, 8.** Epic numbers are names, not positions; ROADMAP section 2 owns the order (`sprint-change-proposal-2026-10-06.md`). v1 is API-only (ROADMAP, non-goals), so no browser-UI epic exists. Stories are written for one epic at a time, because the sprint tracker recommends the lowest-numbered backlog story.
 
 ### Epic 1: Tenanted access
 
@@ -160,18 +163,26 @@ A client or integrator fetches an organization's current status, active incident
 Public and admin surfaces update without a refresh: SSE for public pages, GraphQL subscriptions for admin, both fed across processes by the Postgres LISTEN/NOTIFY backplane.
 **FRs covered:** FR14, FR15, FR16
 
+- Built after Epic 5, so the worker's monitor events are the real cross-process case its Compose test proves.
+- Its public event gate applies DOMAIN's "Public status page" rule, not only the draft check.
+- `/status/:orgSlug/events` inherits ARCHITECTURE 5.4.1's four bounds, including its rule that a cookie is not a session.
+
 ### Epic 5: Automated monitoring and uptime history
 
 Outages are detected rather than noticed. Synthetic checks run on schedule, results are stored and rolled up into 90-day history, and repeated failures propose a draft incident that a human confirms.
 **FRs covered:** FR10, FR11, FR12, FR13, FR18
 
 - Carries the monitor half of FR4's archive semantics, moved from Story 2.4. The due-monitor query joins `services` and filters `services.archived_at IS NULL`, so archiving suspends a service's monitors without writing to them and restoring resumes the enabled ones. Story 2.4 cannot verify this because it writes nothing to monitors; the story that builds the query must.
-- Carries the monitor half of FR5's precedence rule, the fourth condition Story 2.18 could not construct. Monitor-derived state (`healthy`, `degraded`, `failing`) must reach `resolveServiceStatus` through the recomputation handler, which today passes `monitorState: null`, triggered by the `monitor.*` events DOMAIN.md's Status recomputation section already lists. Verified by a service listing the status its monitor state resolves to.
+- Carries the monitor half of FR5's precedence rule, the fourth condition Story 2.18 could not construct. Monitor-derived state (`healthy`, `degraded`, `failing`) must reach `resolveServiceStatus` through the recomputation handler, which today passes `monitorState: null`, triggered by `monitor.state_changed`, the monitor event DOMAIN.md's Status recomputation section lists. Verified by a service listing the status its monitor state resolves to.
+- **Delivered after Epic 9 and before Epic 4.** It needs no backplane (ROADMAP section 2). The rules its stories derive from were recorded on 2026-10-06: monitor-derived state, the draft path through the `incident` module, recomputation on `monitor.state_changed`, partitions and RLS, and append-only results (DOMAIN); check scheduling, partition maintenance and target safety (ARCHITECTURE sections 6.0.1, 6.1, 6.5).
+- The story that fills the uptime payload is the first new foreign-table read since Epic 3, so it carries Epic 3 retrospective item 23, the foreign-table allowlist test.
 
 ### Epic 6: Subscriber notifications
 
 People find out without watching the page: email to confirmed subscribers, RSS/Atom feeds, and a public subscribe flow. This is the first output a human consumes without needing a client.
 **FRs covered:** FR19, FR20, FR21
+
+- Built from the decisions recorded on 2026-10-06: delivery is derived from durable history into a ledger, at-least-once (ARCHITECTURE section 5.6; DOMAIN, NotificationDelivery). Confirm and unsubscribe links answer in plain text, since v1 is API-only. Story 9.13 must be merged before any story here begins.
 
 ### Epic 7: AI assistance
 
@@ -184,6 +195,13 @@ An operator drafts incident updates, postmortems and weekly digests with assista
 
 The API surfaces are contract-verified and the full test suite runs in CI. A closing epic, not a leading infrastructure one: it confirms what earlier epics built rather than starting from nothing.
 **FRs covered:** FR26, FR27, NFR28, NFR30
+
+- Also carries audit findings F-10 (API documentation), F-11 (CI security, boot and load evidence), F-14 (pagination policy) and the code half of F-18 (trusted proxy), and Epic 3 retrospective item 21 (container smoke test).
+
+### Epic 9: Stabilization
+
+The surfaces Epics 2 and 3 built hold under input and headers nobody tested: GraphQL refuses what REST refuses, the anonymous limit cannot be skipped, an admin client can reopen what it edits, and the worker's health says whether it is working. Delivered before Epics 4–8.
+**FRs covered:** none new; re-verifies FR4, FR6, FR27, NFR29
 
 
 ## Story Generation Constraints
@@ -1062,3 +1080,359 @@ So that FR17 is verified by the layer its verification line names.
 **Given** CI runs check, unit and integration but not E2E
 **When** this story lands
 **Then** the workflow runs the E2E suite too, which is what NFR30 already claims
+
+## Epic 9: Stabilization
+
+The surfaces Epics 2 and 3 built hold under input and headers nobody tested: GraphQL refuses what REST refuses, the anonymous limit cannot be skipped, an admin client can reopen what it edits, and the worker's health says whether it is working.
+
+**FRs covered:** none new. Re-verifies FR4, FR6, FR27 and NFR29 against ROADMAP's sharpened verification lines, and ARCHITECTURE 5.4.1.
+
+Added by `sprint-change-proposal-2026-10-06.md`, from the audit of 2026-10-05 (findings F-01 to F-17). **Delivered before Epics 4–8.** Stories 9.1 and 9.2 come first and may run in parallel. 9.11 follows 9.1, 9.3 and 9.4, because its refusal cases need theirs. The rest are independent. 9.1–9.11 must land for the epic to close; 9.12–9.14 should, and 9.13 must land before Epic 6.
+
+> Constraint 1 (one module per story) is why F-01 is three stories: 9.1 service, 9.3 incident, 9.4 maintenance. Story 9.11 is test-only and drives the app over HTTP, importing no module, the same exception `src/shared/api/input-validation.integration.test.ts` already makes.
+
+### Story 9.1: GraphQL refuses what REST refuses — services and groups
+
+As an operator using GraphQL,
+I want the same input rules REST applies,
+So that I cannot store a service the REST API would have refused.
+
+**Actor:** human
+**Satisfies:** FR27 verification — "GraphQL refuses each input the REST schema refuses"; ARCHITECTURE section 7.1, "Rules have one source and both surfaces apply it". Audit F-01, part 1 of 3.
+**Files:** `src/shared/validation/`, the `.handler.ts` of `create-service`, `update-service`, `create-service-group`, `update-service-group` and `set-status-override` under `src/modules/service/commands/`, a GraphQL refusal integration test
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** the audit's reproduction, `createService` over GraphQL with `name: ""`, `slug: "INVALID SLUG!"` and `displayOrder: -1`
+**When** it is sent
+**Then** it is refused with a client error the GraphQL formatter passes through, not "Internal Server Error"
+**And** no row is written and no `service.created` is emitted
+
+**Given** each rule in the service slice's TypeBox request schemas — name length, slug pattern and length, non-negative display order, UUID group id, the override ladder
+**When** a value breaking it reaches the matching mutation over GraphQL
+**Then** it is refused exactly where REST refuses it, one test per rule
+
+**Given** a valid input
+**When** it is sent over both surfaces
+**Then** both persist equivalent rows
+
+**Given** the rules
+**When** the story lands
+**Then** each is written once, and both surfaces apply that one definition rather than a hand-copied second version in the handler
+
+### Story 9.2: The anonymous GraphQL limit holds whatever cookie arrives
+
+As an operator running WatchDog,
+I want the anonymous GraphQL rate limit to hold for every request without a valid session,
+So that a junk `Cookie` header cannot remove the bound on my public surface.
+
+**Actor:** human — the operator who relies on the bound
+**Satisfies:** ARCHITECTURE section 5.4.1 — "The exemption is decided by resolving the session, never by the presence of a `Cookie` header". Audit F-02.
+**Files:** `src/server/index.ts`, `src/modules/status-page/public-surface-bounds.integration.test.ts`, `AGENTS.md` (the convention lands with the change, Epic 3 lesson P2)
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** the anonymous bucket is exhausted for one client address
+**When** the next `publicStatusPage` POST carries `Cookie: junk=cookie`
+**Then** it is answered 429 with `Retry-After`, and the resolver is not reached
+
+**Given** an expired or signed-out session's cookie
+**When** the bucket is exhausted
+**Then** the answer is the same 429
+
+**Given** a valid operator session
+**When** it makes more requests than the anonymous limit
+**Then** none is rationed
+
+**Given** every GraphQL transport the server accepts
+**When** anonymous traffic arrives over it
+**Then** it is bounded the same way, or the transport is refused, and a test pins which
+
+### Story 9.3: GraphQL refuses what REST refuses — incidents
+
+As an operator using GraphQL,
+I want incidents and their updates judged by the same rules REST applies,
+So that a GraphQL client cannot store an incident REST would have refused.
+
+**Actor:** human
+**Satisfies:** FR27 verification — "GraphQL refuses each input the REST schema refuses". Audit F-01, part 2 of 3.
+**Files:** the `.handler.ts` of `create-incident`, `update-incident`, `transition-incident` and `post-incident-update` under `src/modules/incident/commands/`, a GraphQL refusal integration test
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** each rule in the incident slice's TypeBox request schemas — title and message length, the impact and status ladders, UUID ids
+**When** a value breaking it reaches the matching mutation over GraphQL
+**Then** it is refused as REST refuses it
+**And** nothing is written and nothing is emitted
+
+**Given** the story's investigation
+**When** it lists each rule the GraphQL path did not apply
+**Then** the list is recorded in the spec, and where it is empty the story closes with one refusal test per rule as the evidence
+
+### Story 9.4: GraphQL refuses what REST refuses — maintenance
+
+As an operator using GraphQL,
+I want maintenance windows judged by the same rules REST applies,
+So that a GraphQL client cannot schedule a window REST would have refused.
+
+**Actor:** human
+**Satisfies:** FR27 verification — "GraphQL refuses each input the REST schema refuses". Audit F-01, part 3 of 3.
+**Files:** the `.handler.ts` of `schedule-maintenance`, `update-maintenance`, `complete-maintenance` and `delete-maintenance` under `src/modules/maintenance/commands/`, a GraphQL refusal integration test
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** each rule in the maintenance slice's TypeBox request schemas
+**When** a value breaking it reaches the matching mutation over GraphQL
+**Then** it is refused as REST refuses it
+**And** nothing is written and nothing is emitted
+
+**Given** the story's investigation
+**When** it lists each rule the GraphQL path did not apply
+**Then** the list is recorded in the spec, and where it is empty the story closes with one refusal test per rule as the evidence
+
+### Story 9.5: One slug rule for organizations, at creation and lookup
+
+As an operator,
+I want an organization's slug checked when it is created or changed,
+So that every organization I create has a public page that answers.
+
+**Actor:** human
+**Satisfies:** DOMAIN, Better-Auth-owned references — "Creating an organization, and changing its slug, apply the same rule". Audit F-05; Epic 3 retrospective item 24.
+**Files:** `src/server/auth/auth.ts`, `src/shared/domain/slug.ts`, `src/server/auth/auth.integration.test.ts`
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** organization creation through Better Auth with a slug outside the rule — uppercase, spaces, a leading or trailing hyphen, over 120 characters
+**When** it is attempted
+**Then** it is refused with a 4xx and no `"organization"` row exists
+
+**Given** slugs at each boundary — 1 character, 120 characters, hyphen-separated runs
+**When** they are created
+**Then** each succeeds and `/status/<slug>` answers 200
+
+**Given** an update that changes a slug to one outside the rule
+**When** it is attempted
+**Then** it is refused
+
+**Given** the rule
+**When** creation and lookup apply it
+**Then** both call the one function in `src/shared/domain/slug.ts`
+
+### Story 9.6: Read service groups
+
+As an operator's client,
+I want to list my organization's service groups and read one,
+So that I can show and edit groups after losing local state.
+
+**Actor:** human
+**Satisfies:** FR4; FR27 verification — "the reads a client needs to reopen everything it can edit". Audit F-03, part 1.
+**Files:** `src/modules/service/queries/list-service-groups/`, `src/modules/service/queries/get-service-group/` (route, resolver, schema, graphql-schema), `src/modules/service/dtos/`
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** an organization with groups created in reverse of their expected order
+**When** they are listed
+**Then** they come back ordered by `display_order`, then `name`, then `id`, over REST and GraphQL alike
+
+**Given** another organization's group id
+**When** it is read
+**Then** the answer is 404, not an empty result
+
+**Given** an organization with no groups
+**When** groups are listed
+**Then** an empty collection is returned
+
+**Given** the parity contract
+**When** it runs
+**Then** it compares this capability
+
+> The list is unbounded: an organization has tens of groups. The spec records that, and pagination is decided in Epic 8 before any list becomes an external contract (audit F-14).
+
+### Story 9.7: Read one incident with its affected services
+
+As an operator's client,
+I want to read an incident with its affected services and their per-service impact,
+So that I can edit it without silently dropping services `updateIncident` would replace.
+
+**Actor:** human
+**Satisfies:** FR6; FR27 verification — "the reads a client needs to reopen everything it can edit". Audit F-03, part 2.
+**Files:** `src/modules/incident/queries/get-incident/`, `src/modules/incident/dtos/` (an admin detail response)
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** an incident naming two services with different impacts
+**When** it is read
+**Then** its headline fields and `affectedServices`, each with `serviceId` and `impact`, are returned
+
+**Given** that response
+**When** it is fed back unchanged into `updateIncident`
+**Then** no `incident.updated` is emitted, because nothing changed
+
+**Given** a draft incident
+**When** an operator reads it
+**Then** it is returned
+
+**Given** another organization's incident
+**When** it is read
+**Then** the answer is 404
+
+**Given** the same incident read over REST and GraphQL
+**When** both answer
+**Then** the values are identical
+
+### Story 9.8: Admin service lists settle ties by id
+
+As the system,
+I want the admin service list to end its order on a unique column,
+So that two tied services never swap places between requests.
+
+**Actor:** system
+**Satisfies:** `AGENTS.md` — "A query whose order is part of a response ends at a unique column". Audit F-06.
+**Files:** `src/modules/service/database/service.repository.ts`, its integration test
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** two services tied on `display_order` and `name`, created in reverse of `id` order
+**When** services are listed repeatedly
+**Then** they always come back in `id` order
+
+**Given** the story's investigation
+**When** it finds another admin query without a unique final sort column
+**Then** each one found is recorded as its own story in its own module
+
+### Story 9.9: Close Better Auth's pool on shutdown
+
+As the system,
+I want Better Auth's database pool closed when the application closes,
+So that `api`, `worker` and the seed exit cleanly instead of being forced to.
+
+**Actor:** system
+**Satisfies:** ARCHITECTURE section 7 — "Better Auth's `pg` pool is closed by the application that opened it"; NFR29 verification — "shut down without forcing exit". Audit F-07.
+**Files:** `src/server/auth/auth.ts`, `src/server/plugins/auth.ts`, `db/seeds/seed.ts`
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** a built app that has served authenticated requests
+**When** `app.close()` resolves
+**Then** Better Auth's pool holds no connections
+**And** it closed after the event bus drained
+
+**Given** the seed
+**When** it finishes
+**Then** the process exits on its own, and the forced `process.exit` is removed
+
+### Story 9.10: Worker health reports completed passes
+
+As an operator,
+I want the worker's healthcheck to fail when passes stop completing,
+So that a stuck worker is restarted rather than reported healthy.
+
+**Actor:** human
+**Satisfies:** ARCHITECTURE section 8 — "the check fails once completion is overdue"; NFR29 verification — "Each healthcheck fails when its process stops doing its work". Audit F-08.
+**Files:** `src/worker.ts`, `src/healthcheck.ts`, `src/config/env.ts`
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** a pass that never settles, injected by the test
+**When** the overdue threshold passes
+**Then** the healthcheck exits non-zero, although the heartbeat timer still writes
+
+**Given** passes completing normally
+**When** the healthcheck runs
+**Then** it passes
+
+**Given** one pass slower than the interval but within the threshold
+**When** the healthcheck runs
+**Then** it still passes
+
+**Given** a worker that has just started
+**When** its first pass has not completed yet
+**Then** the check allows a grace period equal to the threshold
+
+### Story 9.11: Every GraphQL mutation runs over GraphQL
+
+As the system,
+I want every GraphQL mutation exercised over GraphQL, with a guard that notices a new one,
+So that parity is proven by behaviour rather than by matching field names.
+
+**Actor:** system
+**Satisfies:** FR27 verification — "every mutation is exercised over GraphQL"; Epic 2 VG-4; Epic 3 retrospective item 22. Audit F-09.
+**Files:** `src/shared/api/graphql-mutations.integration.test.ts` (new), shared helpers in `src/shared/testing/` (part of Epic 3 retrospective item 20)
+**Verification layer:** integration
+**Depends on:** 9.1, 9.3, 9.4
+
+**Acceptance Criteria:**
+
+**Given** the merged schema's `Mutation` fields
+**When** the suite runs
+**Then** each has at least one success case and one meaningful refusal over GraphQL: an unauthenticated refusal, and a validation refusal where the mutation takes input
+
+**Given** a new mutation added without a case
+**When** the suite runs
+**Then** it fails and names the field, because the suite compares its own registry with the schema
+
+### Story 9.12: Public CORS headers on every answer
+
+As a browser script on another origin,
+I want every answer from the public page to carry its CORS headers,
+So that I can read a 404 or 429 as well as a 200.
+
+**Actor:** human — a browser on another origin
+**Satisfies:** ARCHITECTURE section 5.4.1 — "CORS for any origin, without credentials". Audit F-12. *Should.*
+**Files:** `src/modules/status-page/queries/get-public-status-page/get-public-status-page.public.route.ts`, `src/modules/status-page/public-surface-bounds.integration.test.ts`
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** a cross-origin request
+**When** it is answered 200, 304, 404 or 429
+**Then** every answer carries the public CORS headers and exposes `ETag`
+
+### Story 9.13: SQL debug logging never prints parameter values
+
+As the system,
+I want database debug logging to omit parameter values,
+So that incident text today, and subscriber addresses from Epic 6, never reach a log.
+
+**Actor:** system
+**Satisfies:** AI.md section 4.4, PII and log handling; ARCHITECTURE section 5.6 — "Subscriber addresses never reach logs". Audit F-16. *Should; must land before Epic 6.*
+**Files:** `src/shared/db/postgres.ts`
+**Verification layer:** unit
+
+**Acceptance Criteria:**
+
+**Given** `LOG_LEVEL=debug`
+**When** a parameterized query runs
+**Then** the statement and the parameter count are logged through the application logger
+**And** no parameter value is logged
+
+### Story 9.14: The runtime role cannot hard-delete a service
+
+As the system,
+I want the database to refuse a service delete from the runtime role,
+So that "archived, never hard-deleted" is enforced rather than remembered.
+
+**Actor:** system
+**Satisfies:** DOMAIN, Archive semantics — "v1 has no hard service delete". Audit F-17. *Should.*
+**Files:** a new migration revoking `DELETE` on `services` from `watchdog_app` (never an edit to the applied grant migration), a privilege integration test
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** `watchdog_app`
+**When** it issues `delete from services`
+**Then** Postgres refuses with a permission error
+
+**Given** archive and restore
+**When** they run
+**Then** both still work
