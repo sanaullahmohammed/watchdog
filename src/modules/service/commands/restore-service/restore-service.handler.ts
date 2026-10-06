@@ -2,6 +2,7 @@ import { serviceActionCreator } from '@/modules/service';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { serviceRestoredEvent } from '@/shared/events/service.events';
 import { NotFoundException } from '@/shared/exceptions';
+import { assertUuid } from '@/shared/validation/typebox-guard';
 
 export type RestoreServiceCommandResult = Promise<boolean>;
 
@@ -20,6 +21,7 @@ export default function makeRestoreService({
       payload,
     }: ReturnType<typeof restoreServiceCommand>): RestoreServiceCommandResult {
       const { orgId, id } = payload;
+      assertUuid(id, 'id');
 
       const changed = await withTenantTransaction(orgId, async (tx) => {
         const moved = await serviceRepository.restore(tx, id);

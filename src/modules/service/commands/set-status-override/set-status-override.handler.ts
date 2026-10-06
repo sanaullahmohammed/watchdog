@@ -3,6 +3,11 @@ import type { ServiceStatus } from '@/modules/service/domain/service.types';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { serviceManualOverrideSetEvent } from '@/shared/events/service.events';
 import { NotFoundException } from '@/shared/exceptions';
+import {
+  assertMatchesSchema,
+  assertUuid,
+} from '@/shared/validation/typebox-guard';
+import { setStatusOverrideRequestDtoSchema } from './set-status-override.schema';
 
 export type SetStatusOverrideCommandResult = Promise<boolean>;
 
@@ -24,6 +29,8 @@ export default function makeSetStatusOverride({
       typeof setStatusOverrideCommand
     >): SetStatusOverrideCommandResult {
       const { orgId, id, status } = payload;
+      assertUuid(id, 'id');
+      assertMatchesSchema(setStatusOverrideRequestDtoSchema, { status });
 
       const changed = await withTenantTransaction(orgId, async (tx) => {
         const moved = await serviceRepository.setManualOverride(tx, id, status);

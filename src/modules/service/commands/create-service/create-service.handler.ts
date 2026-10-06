@@ -2,7 +2,8 @@ import { serviceActionCreator } from '@/modules/service';
 import type { CreateServiceProps } from '@/modules/service/domain/service.types';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { serviceCreatedEvent } from '@/shared/events/service.events';
-import { assertNoNullFields } from '@/shared/validation/input';
+import { assertMatchesSchema } from '@/shared/validation/typebox-guard';
+import { createServiceRequestDtoSchema } from './create-service.schema';
 
 export type CreateServiceCommandResult = Promise<string>;
 
@@ -30,11 +31,7 @@ export default function makeCreateService({
       payload,
     }: ReturnType<typeof createServiceCommand>): CreateServiceCommandResult {
       const { orgId, ...props } = payload;
-      // GraphQL cannot express "optional but never null", a format, or a
-      // minimum length, so these run here, where both surfaces arrive.
-      assertNoNullFields(payload, {
-        nullable: ['description', 'serviceGroupId'],
-      });
+      assertMatchesSchema(createServiceRequestDtoSchema, props);
       const service = serviceDomain.createService(orgId, props);
 
       await withTenantTransaction(orgId, async (tx) => {
