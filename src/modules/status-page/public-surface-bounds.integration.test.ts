@@ -156,6 +156,19 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
     assert.equal(admin.headers['access-control-allow-origin'], undefined);
   });
 
+  it('answers a junk cookie normally while under the limit', async () => {
+    // The shared app, never flooded: its bucket holds a handful of requests.
+    const send = (query: string) => gql(query, { cookie: 'junk=cookie' });
+    const open = await send(`{ ${page('a')} }`);
+    assert.equal(open.statusCode, 200, open.body);
+    assert.equal(JSON.parse(open.body).errors, undefined, open.body);
+    const admin = await send('{ services { id } }');
+    assert.equal(admin.statusCode, 200, admin.body);
+    const errors = JSON.parse(admin.body).errors;
+    assert.ok(Array.isArray(errors), admin.body);
+    assert.match(JSON.stringify(errors), /UNAUTHENTICATED/);
+  });
+
   it('rations anonymous callers by IP, on both surfaces', async () => {
     // Its own instance: the limiter counts per app, and a spent bucket would
     // otherwise answer 429 to every later test in this file.
@@ -202,6 +215,68 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
         JSON.parse(anonymous.response.body).errors[0].message,
         /Rate limit exceeded, retry in \d+ seconds/,
       );
+
+      // The bucket is spent, so every way of arriving without a valid session
+      // is refused: a junk cookie, a signed-out one, the GET and HEAD
+      // transports, and a doubled slash.
+      const query = encodeURIComponent('{ __typename }');
+      const refused = (response: Response, withBody = true) => {
+        assert.equal(response.statusCode, 429, response.body);
+        assert.ok(
+          response.headers['retry-after'],
+          'and says when to come back',
+        );
+        if (!withBody) return;
+        const body = JSON.parse(response.body);
+        assert.match(
+          body.errors?.[0]?.message ?? body.message,
+          /Rate limit exceeded, retry in \d+ seconds/,
+        );
+      };
+      const json = { 'content-type': 'application/json' };
+      const post = (url: string, headers: Record<string, string>) =>
+        limited.inject({
+          method: 'POST',
+          url,
+          headers: { ...json, ...headers },
+          payload: { query: '{ __typename }' },
+        });
+
+      refused(await post('/graphql', { cookie: 'junk=cookie' }));
+      refused(
+        await post('/graphql', {
+          cookie: 'better-auth.session_token=forged.not-a-signature',
+        }),
+      );
+
+      const signedOut = await signUpWithOrg(limited, `${tag}-out`);
+      try {
+        const live = await post('/graphql', { cookie: signedOut.cookie });
+        assert.notEqual(live.statusCode, 429, 'a live session is exempt');
+        const out = await limited.inject({
+          method: 'POST',
+          url: '/api/auth/sign-out',
+          headers: { cookie: signedOut.cookie, origin: TEST_ORIGIN, ...json },
+          payload: {},
+        });
+        assert.equal(out.statusCode, 200, out.body);
+        refused(await post('/graphql', { cookie: signedOut.cookie }));
+      } finally {
+        await sql`delete from "organization" where "id" = ${signedOut.orgId}`;
+        await sql`delete from "user" where "id" = ${signedOut.userId}`;
+      }
+
+      refused(
+        await limited.inject({ method: 'GET', url: `/graphql?query=${query}` }),
+      );
+      refused(
+        await limited.inject({
+          method: 'HEAD',
+          url: `/graphql?query=${query}`,
+        }),
+        false,
+      );
+      refused(await post('//graphql', {}));
 
       // An operator's request carries a session, and is not rationed with them,
       // although both buckets above are now spent.

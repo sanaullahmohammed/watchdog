@@ -8,6 +8,8 @@ import UnderPressure from '@fastify/under-pressure';
 import type { FastifyInstance } from 'fastify';
 import mercurius from 'mercurius';
 import env from '@/config/env';
+import { isRationedGraphqlRequest } from '@/server/anonymous-graphql';
+import { resolveActor } from '@/server/auth/organization-context';
 import { di } from '@/server/di';
 import { graphqlErrorFormatter } from '@/server/graphql-error-formatter';
 import { onePublicPagePerOperation } from '@/server/graphql-public-page-limit';
@@ -28,8 +30,8 @@ export default async function createServer(fastify: FastifyInstance) {
 
   // Anonymous traffic is bounded by client IP. `global: false`, so only the
   // surfaces below opt in: the public page through its route's config, and
-  // /graphql through the hook after it, for callers arriving with no session
-  // cookie. An operator's own requests are not rationed.
+  // /graphql through the hook after it, which decides who is anonymous in
+  // `isRationedGraphqlRequest`.
   await fastify.register(RateLimit, {
     global: false,
     max: env.publicSurface.rateLimit.max,
@@ -49,11 +51,7 @@ export default async function createServer(fastify: FastifyInstance) {
   });
 
   fastify.addHook('onRequest', async (request, reply) => {
-    const anonymous =
-      request.method === 'POST' &&
-      request.url.startsWith('/graphql') &&
-      !request.headers.cookie;
-    if (!anonymous) return;
+    if (!(await isRationedGraphqlRequest(request, resolveActor))) return;
 
     // `isAllowed` is true only for an allow-listed key; a request within the
     // limit comes back with `isExceeded: false`, which is the field to read.
