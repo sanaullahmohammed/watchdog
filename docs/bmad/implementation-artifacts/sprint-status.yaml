@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-06-2026 12:00
+last_updated: 10-06-2026 21:00
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -84,8 +84,8 @@ development_status:
   epic-8: backlog
   epic-8-retrospective: optional
 
-  epic-9: backlog
-  9-1-graphql-refuses-what-rest-refuses-services-and-groups: backlog
+  epic-9: in-progress
+  9-1-graphql-refuses-what-rest-refuses-services-and-groups: review
   9-2-the-anonymous-graphql-limit-holds-whatever-cookie-arrives: backlog
   9-3-graphql-refuses-what-rest-refuses-incidents: backlog
   9-4-graphql-refuses-what-rest-refuses-maintenance: backlog

@@ -2,6 +2,7 @@ import { serviceActionCreator } from '@/modules/service';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { serviceGroupDeletedEvent } from '@/shared/events/service.events';
 import { NotFoundException } from '@/shared/exceptions';
+import { assertUuid } from '@/shared/validation/typebox-guard';
 
 export type DeleteServiceGroupCommandResult = Promise<boolean>;
 
@@ -21,6 +22,7 @@ export default function makeDeleteServiceGroup({
     }: ReturnType<
       typeof deleteServiceGroupCommand
     >): DeleteServiceGroupCommandResult {
+      assertUuid(payload.id, 'id');
       // Services in this group are ungrouped by the foreign key, never deleted.
       const removed = await withTenantTransaction(payload.orgId, (tx) =>
         serviceGroupRepository.remove(tx, payload.id),

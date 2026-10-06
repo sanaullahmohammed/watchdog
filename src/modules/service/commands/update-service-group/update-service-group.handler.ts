@@ -3,7 +3,11 @@ import type { UpdateServiceGroupProps } from '@/modules/service/domain/service-g
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { serviceGroupUpdatedEvent } from '@/shared/events/service.events';
 import { NotFoundException } from '@/shared/exceptions';
-import { assertNoNullFields } from '@/shared/validation/input';
+import {
+  assertMatchesSchema,
+  assertUuid,
+} from '@/shared/validation/typebox-guard';
+import { updateServiceGroupRequestDtoSchema } from './update-service-group.schema';
 
 export type UpdateServiceGroupCommandResult = Promise<string>;
 
@@ -27,9 +31,8 @@ export default function makeUpdateServiceGroup({
       typeof updateServiceGroupCommand
     >): UpdateServiceGroupCommandResult {
       const { orgId, id, ...patch } = payload;
-      // GraphQL cannot express "optional but never null", a format, or a
-      // minimum length, so these run here, where both surfaces arrive.
-      assertNoNullFields(payload);
+      assertUuid(id, 'id');
+      assertMatchesSchema(updateServiceGroupRequestDtoSchema, patch);
 
       const updated = await withTenantTransaction(orgId, (tx) =>
         serviceGroupRepository.update(tx, id, patch),

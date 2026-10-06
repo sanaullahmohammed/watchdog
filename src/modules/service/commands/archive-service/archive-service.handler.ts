@@ -2,6 +2,7 @@ import { serviceActionCreator } from '@/modules/service';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { serviceArchivedEvent } from '@/shared/events/service.events';
 import { NotFoundException } from '@/shared/exceptions';
+import { assertUuid } from '@/shared/validation/typebox-guard';
 
 export type ArchiveServiceCommandResult = Promise<boolean>;
 
@@ -20,6 +21,7 @@ export default function makeArchiveService({
       payload,
     }: ReturnType<typeof archiveServiceCommand>): ArchiveServiceCommandResult {
       const { orgId, id } = payload;
+      assertUuid(id, 'id');
 
       const changed = await withTenantTransaction(orgId, async (tx) => {
         const moved = await serviceRepository.archive(tx, id);

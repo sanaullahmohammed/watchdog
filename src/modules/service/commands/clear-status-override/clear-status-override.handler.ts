@@ -2,6 +2,7 @@ import { serviceActionCreator } from '@/modules/service';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { serviceManualOverrideClearedEvent } from '@/shared/events/service.events';
 import { NotFoundException } from '@/shared/exceptions';
+import { assertUuid } from '@/shared/validation/typebox-guard';
 
 export type ClearStatusOverrideCommandResult = Promise<boolean>;
 
@@ -22,6 +23,7 @@ export default function makeClearStatusOverride({
       typeof clearStatusOverrideCommand
     >): ClearStatusOverrideCommandResult {
       const { orgId, id } = payload;
+      assertUuid(id, 'id');
 
       const changed = await withTenantTransaction(orgId, async (tx) => {
         const moved = await serviceRepository.clearManualOverride(tx, id);
