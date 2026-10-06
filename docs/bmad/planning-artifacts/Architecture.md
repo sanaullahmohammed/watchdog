@@ -50,6 +50,7 @@ What is built is tracked in `docs/bmad/implementation-artifacts/sprint-status.ya
 - Better Auth identifiers are always double-quoted; WatchDog tables stay snake_case.
 - Configuration is read only through `src/config/`; env-schema never writes to `process.env`.
 - Any new table carrying `org_id` needs RLS enabled, `FORCE`d, and a policy, or the structural test fails.
+- A `Cookie` header is not a session. Anything that treats a caller as authenticated resolves the session first.
 - Handlers never accept `orgId` from user input. It comes from request context.
 - A command handler applies its slice's request schema itself; REST validation is early feedback, not the only check.
 - `NOTIFY` payloads carry `{eventName, orgId, aggregateType, aggregateId, occurredAt, version}` and nothing more; subscribers re-query. It is a signal, not a durable bus.
