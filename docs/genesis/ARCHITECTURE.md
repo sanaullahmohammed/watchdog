@@ -385,7 +385,7 @@ The visibility rule is name-set intersection draft-gate. `aggregateType` never b
 Decided 2026-09-21 by the Epic 3 retrospective (R-5, R-15), after the first anonymous route arrived with no bound of any kind. Epic 4's `/status/:orgSlug/events` inherits all four, and an SSE connection is long-lived, so each matters more there.
 
 - **One page per GraphQL operation.** A mercurius validation rule (`src/server/graphql-public-page-limit.ts`) counts selections of `publicStatusPage`, aliases and fragments included, and refuses a second. One 6 KB request aliasing it a hundred times ran a hundred page compositions against a pool of ten connections. REST needs no equivalent: one request is one page.
-- **A rate limit by client IP.** `@fastify/rate-limit`, registered with `global: false`, so a surface opts in: the page through its route's `config.rateLimit`, and `/graphql` through an `onRequest` hook for requests arriving with no session cookie. An operator's own traffic is not rationed. The limiter throws a `TooManyRequestsException`, because the error handler masks anything that is not an `ExceptionBase` and would answer 500 instead of 429. `PUBLIC_RATE_LIMIT_MAX` and `PUBLIC_RATE_LIMIT_WINDOW_MS` tune it; both default.
+- **A rate limit by client IP.** `@fastify/rate-limit`, registered with `global: false`, so a surface opts in: the page through its route's `config.rateLimit`, and `/graphql` through an `onRequest` hook for every request that does not carry a valid session. The exemption is decided by resolving the session, never by the presence of a `Cookie` header: a junk, expired or forged cookie is anonymous and is rationed like none at all (audit 2026-10-05, F-02). Every GraphQL transport the server accepts is bounded the same way. An operator's own traffic is not rationed. The limiter keys on the socket address and `trustProxy` is off, so behind a reverse proxy every caller shares the proxy's bucket; a supported proxy topology is a deployment decision recorded here when one is defined (F-18). The limiter throws a `TooManyRequestsException`, because the error handler masks anything that is not an `ExceptionBase` and would answer 500 instead of 429. `PUBLIC_RATE_LIMIT_MAX` and `PUBLIC_RATE_LIMIT_WINDOW_MS` tune it; both default.
 - **Cache validators.** `Cache-Control: public, max-age=PUBLIC_PAGE_MAX_AGE_SECONDS`, and an `ETag` over the body with `generatedAt` removed, since that field changes on every response and a tag over it could never match. A matching `If-None-Match` answers 304 with no body and no `Content-Length`.
 - **CORS for any origin, without credentials.** Only on the public page, which sets the headers itself: the global registration stays `origin: false`, because a page anyone may fetch is not one any site may read with a session attached. Helmet's default `Cross-Origin-Resource-Policy: same-origin` is relaxed to `cross-origin` there, or a browser could not read the response at all, and `ETag` is exposed so a script can revalidate. `If-None-Match` is not CORS-safelisted, so the route answers the preflight too.
 
@@ -441,6 +441,18 @@ async function openStatusSseStream(
 
 GraphQL subscriptions are admin-only and subscribe to the same API-process realtime hub after Better Auth session and active-org membership checks.
 
+### 5.6 Notification delivery
+
+Decided 2026-10-06 (DEC-NTF, `docs/bmad/planning-artifacts/sprint-change-proposal-2026-10-06.md`). The data model and the rule for what notifies live in DOMAIN, Notification delivery. This section owns how delivery runs.
+
+- **Triggered by durable history, not by events.** Every public change a subscriber is told about is already recorded durably: an `incident_updates` entry, or a maintenance window's own timestamps. The worker's notification pass reads, per organization, what was recorded since its cursor and writes what each confirmed subscriber is owed to the delivery ledger. Events and `NOTIFY` may wake the pass early to cut latency. They never decide whether a notification exists, because the bus does not retry and `NOTIFY` is not resent (section 5.1). A process that dies mid-pass loses nothing: the next pass starts from the cursor, and the ledger's unique key absorbs any repeat.
+- **The cursor reads with an overlap.** A transaction can commit an entry stamped earlier than one the pass has already read, so each pass re-reads a configured margin behind its cursor. The ledger's unique key makes the overlap free.
+- **Delivery is at-least-once.** A delivery is marked `sent` after the SMTP server accepts it, so a crash between acceptance and that write sends it again on the next pass. Exactly-once is not achievable over SMTP, and a duplicate is preferred to a loss.
+- **Claiming and concurrency.** A pass claims due ledger rows with `for update skip locked`, never overlaps itself, and on shutdown waits for sends in flight, as every pass does (section 6.0). It runs as section 6.0's O(organizations) loop; no tenant-agnostic queue is introduced.
+- **Retries.** A transient failure (a network error, an SMTP 4xx) is retried with exponential backoff, from about a minute up to about an hour between attempts, until a configured maximum, then marked `abandoned`. A permanent failure (an SMTP 5xx) is marked `failed` at once. The delays and the cap live in `src/config`.
+- **The anonymous subscribe route** inherits section 5.4.1's four bounds, and adds a per-address throttle on confirmation emails so the form cannot be used to mail-bomb someone. Every email carries a `List-Unsubscribe` header. v1 serves no HTML (ROADMAP, non-goals), so confirm and unsubscribe links land on API endpoints that answer in plain text.
+- **Subscriber addresses never reach logs.** SQL debug logging prints no parameter values (story 9.13) before the notification module exists, and a delivery's `last_error` never contains the address.
+
 ---
 
 ## 6. Multi-tenancy enforcement
@@ -485,6 +497,15 @@ Three rules keep a pass from damaging the process that runs it, each from a defe
 
 This is the shape for every scheduled task: maintenance transitions, monitor execution, uptime rollups, partition maintenance and notification dispatch.
 
+### 6.0.1 Monitor check scheduling
+
+Decided 2026-10-06 (DEC-MON M7, `docs/bmad/planning-artifacts/sprint-change-proposal-2026-10-06.md`). Checks are network calls bounded only by each monitor's `timeout_seconds`, so they do not run inside the maintenance pass: one tenant's slow targets would delay every organization's maintenance transitions and reconciliation.
+
+- The worker runs checks in a loop of their own, under the same three rules as a pass: it never overlaps itself, a tenant-discovery failure costs one tick, and shutdown waits for checks in flight.
+- Each tick enumerates tenants as above. Per organization, a monitor is due when it is enabled, its service is not archived, and `last_checked_at + interval_seconds` has passed; a monitor never checked is due.
+- Checks run under a process-wide concurrency cap set in `src/config`, so one organization with many monitors cannot exhaust the connection pool or the network for everyone else.
+- A check that exceeds its timeout is recorded as a failure whose error code says so.
+
 ### 6.1 Role provisioning
 
 Role creation is environment-owned, not committed migration SQL with embedded passwords.
@@ -511,6 +532,8 @@ grant usage, select on sequences to watchdog_app;
 ```
 
 The owner/app URL split is mandatory under `FORCE ROW LEVEL SECURITY`: migrations run as `watchdog_owner`; application traffic runs as `watchdog_app`.
+
+**Partition maintenance without owner credentials.** Decided 2026-10-06 (DEC-MON M5). Creating `check_results` partitions and dropping expired ones is DDL, which only the table owner may run, and the worker is `watchdog_app`. The worker never receives owner credentials. Instead a migration creates two `SECURITY DEFINER` functions owned by `watchdog_owner`, each with a fixed `search_path` and no SQL beyond the partition names it computes itself: one creates the partitions for the coming months, and one detaches and drops partitions wholly older than a retention passed as an argument. `watchdog_app` is granted `EXECUTE` on those two functions and nothing more. The worker calls them each pass with `CHECK_RESULTS_RETENTION_DAYS`, and keeps at least two months of future partitions, so a worker outage across a month boundary does not refuse inserts. Each partition the function creates gets the treatment DOMAIN's partitioning section requires.
 
 `api` and `worker` enforce the split at boot. Before serving or doing any work, each reads `rolsuper` and `rolbypassrls` for its connection's role and refuses to start if either is set (`src/shared/db/runtime-role.ts`). RLS is the only tenant boundary, since no repository adds an `org_id` predicate, and a superuser or BYPASSRLS role is exempt from every policy. In Compose the owner is the Postgres superuser, one line from `DATABASE_URL` in `.env.example`. Before the guard, swapping the two URLs served every tenant's rows to anyone, `/status/:orgSlug` included (Epic 3 retrospective, R-14).
 
@@ -688,6 +711,15 @@ Every organization has a public status page from the moment it is created. There
 
 The slug lookup is the one pre-tenant read an anonymous caller drives, so it gives every miss the same answer (DOMAIN, Better-Auth-owned references). Two pieces of wiring hold that. The query refuses a slug outside the slug rule before any SQL, with the same exception as an unknown one, so both surfaces, and Epic 4's event stream, inherit it by calling the query. And the router never answers first: its `maxParamLength`, 100 by default, is raised to Node's `http.maxHeaderSize`, which no request line can exceed, so every single-segment `/status/...` path reaches the handler. Before that, a slug longer than 100 characters got the router's own 404, which echoes the path (Epic 3 retrospective, R-8). A route that must answer every miss itself cannot rely on its params schema either: a schema failure is a 400.
 
+### 6.5 Monitor target safety
+
+Decided 2026-10-06 (DEC-MON M6, `docs/bmad/planning-artifacts/sprint-change-proposal-2026-10-06.md`). A monitor fetches a target an organization typed, from inside the worker's network, where the database, Mailpit, the API and a cloud provider's metadata service may all be reachable. A check must not become a way for one tenant to probe them (server-side request forgery).
+
+- The worker resolves the target's host itself and refuses to connect to loopback, private (RFC 1918 and IPv6 unique-local), link-local (including `169.254.169.254`), unspecified and multicast addresses. The rule is applied to the address actually connected to, so a DNS answer that changes after validation is still refused.
+- Self-hosters who mean to monitor internal services list allowed CIDR ranges in `src/config`. The list is empty by default.
+- An HTTP check follows at most a small fixed number of redirects, applying the rule to each hop; a keyword check reads at most a capped number of bytes of the body.
+- A refused target is recorded as a failed check whose error code names the refusal, never as a success. Configuring a monitor also applies the rule, so an operator learns early, but that is a courtesy: DNS can change, and the connect-time check is the guard.
+
 ---
 
 ## 7. Auth integration
@@ -743,10 +775,11 @@ Frozen table names, all singular and all requiring double quotes in raw SQL:
 
 Every column is camelCase (`"userId"`, `"organizationId"`, `"createdAt"`) and must be quoted too. WatchDog's own tables stay snake_case, so any query joining the two conventions quotes one side and not the other.
 
-Two consequences worth stating plainly:
+Three consequences worth stating plainly:
 
 - `"member"."role"` is unconstrained text. The `owner`/`admin`/`member` ladder is a Better Auth convention, not a database guarantee, so the organization-context middleware validates the value rather than trusting it.
 - Better Auth reaches Postgres through Kysely over `pg`, which it brings as an optional peer. WatchDog's own data access stays on raw `postgres.js` and the two never share a connection. This does not breach the no-ORM non-goal, which governs WatchDog's data access, but the process does load two Postgres drivers.
+- Better Auth's `pg` pool is closed by the application that opened it: an `onClose` hook ends it after the event bus drains, so `app.close()` releases every connection the process holds, and no entrypoint or script forces exit to escape an open pool (audit F-07).
 
 `pnpm run auth:schema:check` regenerates against a migrated database and fails if anything is emitted, which is what pins the `better-auth` version to the committed contract. It runs in the `schema` CI job. Upgrades to `better-auth` are expected to fail this check; the fix is a new migration plus a refreshed artifact, never an edit to the applied migration.
 
@@ -758,6 +791,8 @@ RBAC v1 uses Better Auth's built-in organization roles: `owner`, `admin`, and `m
 The two surfaces have no shared source. REST validation is authored as TypeBox in `*.schema.ts` and drives Swagger; GraphQL is hand-written SDL in `*.graphql-schema.ts`, discovered by `loadFiles` and merged with `throwOnConflict: true`. A capability is therefore described twice, by hand.
 
 **Decision: neither surface generates the other.** They stay independently authored, and `src/shared/api/contract/api-surface-parity.spec.ts` is the contract between them. If generation is ever introduced it runs TypeBox to SDL, never the reverse, because TypeBox already carries the length, format and example constraints Swagger needs and SDL cannot express them.
+
+**Rules have one source and both surfaces apply it.** Field names agreeing is not inputs being judged alike: SDL types a slug as `String`, so a value REST's schema refuses reached the handler over GraphQL and was stored (audit 2026-10-05, F-01). Every length, format and range rule is written once, in the slice's TypeBox request schema, and the handler applies it, so both surfaces refuse the same value with the same `ArgumentInvalidException`. REST's route validation stays as early feedback, not as the only check. The parity contract below compares names; the behavioural tests per mutation required by ROADMAP's GraphQL row compare refusals. Decided 2026-10-06 (`docs/bmad/planning-artifacts/sprint-change-proposal-2026-10-06.md`). If dependency-cruiser forbids a handler importing its own slice's `.schema.ts`, the rule source moves to the slice's `domain/` and this paragraph names it.
 
 The contract makes two assertions, and runs with the unit suite because it needs no database:
 
@@ -789,7 +824,7 @@ One image is built for `migrate`, `api`, and `worker`; command decides runtime m
 - `api` and `worker` gate on `migrate: service_completed_successfully`, so neither starts against an unmigrated database.
 - The `api` healthcheck targets `http://127.0.0.1:3000/live`, not `localhost`. Inside the container `localhost` resolves to `::1` first while Fastify binds IPv4, so a `localhost` probe is refused and the container never turns healthy.
 - `/live` and `/ready` come from `@gquittet/graceful-server`. There is no `/health` endpoint.
-- `worker` serves no HTTP, so its healthcheck runs `node dist/healthcheck.js`, which asserts the heartbeat file is recent. A wedged loop fails the check rather than passing because the process still exists.
+- `worker` serves no HTTP, so its healthcheck runs `node dist/healthcheck.js`, which asserts that the last *completed* pass is recent. A heartbeat timer proves only that the event loop turns: a pass waiting on a promise that never settles leaves the timer firing and every later tick skipped (audit F-08). The worker records when each pass starts and completes, and the check fails once completion is overdue by more than the configured threshold. Every loop the worker runs, including monitor checks (section 6.0.1), is covered.
 - `WATCHDOG_APP_PASSWORD` reaches `postgres` so that `db/init/001-create-watchdog-app.sh` can create the runtime role on first volume initialisation, with no password in committed SQL.
 
 Guessed values are placeholders for local development only. Production-grade secret injection, TLS, backups, and deployment topology are outside this genesis architecture document.

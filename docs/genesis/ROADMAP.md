@@ -24,7 +24,7 @@ All Better Auth v1 organization roles, `owner`, `admin`, and `member`, can perfo
 | Public SSE | Public status pages receive live incident, maintenance, and service-status updates over SSE. | E2E tests assert SSE delivery after domain events. See `ARCHITECTURE.md`. |
 | Admin GraphQL subscriptions | Admin dashboards receive real-time updates through GraphQL subscriptions. | E2E tests assert subscription events for incident and service changes. |
 | LISTEN/NOTIFY backplane | Cross-process fanout works between `api` and `worker` using Postgres `LISTEN/NOTIFY`. | Compose-based integration test proves worker-originated events reach API clients. See `ARCHITECTURE.md`. |
-| Public status page | `/status/:orgSlug` renders the organization's services, active incidents, scheduled maintenance, and uptime history. | E2E tests cover public route rendering by org slug. |
+| Public status page | `/status/:orgSlug` returns one JSON document carrying the organization's services, active incidents, scheduled maintenance, and uptime history, for an integrator to render. v1 serves no HTML. | E2E tests cover the public route by org slug. |
 | 90-day uptime | Public pages show 90-day uptime bars backed by daily rollups. | Rollup tests and public-page tests verify 90-day output shape. |
 | Email notifications | Mailpit is included in compose; notification emails are generated for subscribed users. | Integration tests verify messages are delivered to Mailpit. |
 | RSS/Atom feed | Public status pages expose a feed for incident and maintenance lifecycle events. | Feed tests validate XML shape and event ordering for incident updates and maintenance created/started/completed events. |
@@ -34,9 +34,9 @@ All Better Auth v1 organization roles, `owner`, `admin`, and `member`, can perfo
 | AI weekly digest | AI can draft a weekly operational digest for human review. | Tests assert digest generation from scoped events/rollups and no autonomous publishing. See `AI.md`. |
 | AI provider port | AI use cases depend on a provider-agnostic port; Azure AI Foundry is only an adapter implementation. | Unit tests inject a fake provider; adapter tests cover Foundry request/response mapping. See `AI.md`. |
 | REST API | REST endpoints exist under `/api` with TypeBox schemas and Swagger coverage. | Contract tests validate schemas; Swagger is available at `/api-docs`. |
-| GraphQL API | GraphQL queries/mutations/subscriptions cover admin workflows. | GraphQL integration tests cover protocol parity with REST where applicable. |
+| GraphQL API | GraphQL queries/mutations/subscriptions cover admin workflows, including the reads a client needs to reopen everything it can edit. | GraphQL integration tests cover protocol parity with REST where applicable: every mutation is exercised over GraphQL, and GraphQL refuses each input the REST schema refuses. |
 | Full test suite | Unit, integration, Cucumber/Gherkin E2E, and k6 load tests exist for the v1 workflows. | `pnpm check`, unit, integration, E2E, and k6 scripts run successfully. |
-| Docker Compose | One `docker-compose` runs migration, API, worker, Postgres, and Mailpit. | Fresh clone can start the full stack with documented commands. |
+| Docker Compose | One `docker-compose` runs migration, API, worker, Postgres, and Mailpit. | Fresh clone can start the full stack with documented commands. Each healthcheck fails when its process stops doing its work, not only when it exits, and `api` and `worker` shut down without forcing exit. |
 | CI | GitHub Actions runs check, unit tests, migrations, integration tests, E2E tests, k6 smoke, and Docker build validation against a Postgres service container. | CI passes on pull requests and main branch pushes. |
 | No deploy target | CI intentionally stops at verification and does not deploy. | Workflow contains no deployment job. |
 
@@ -47,9 +47,12 @@ All Better Auth v1 organization roles, `owner`, `admin`, and `member`, can perfo
 | 1. Foundation: tenancy, auth, migrations, RLS | Better Auth plugin, committed Better Auth DBMate migration, active-org CQRS context, role lookup, RLS enforcement, base repository ports, owner/app database roles. | Tenant isolation and identity must exist before any domain data can be safely created. |
 | 2. Core status domain | Services, service groups, archive/restore, manual status override, incidents, incident updates, maintenance, state machines, status-resolution rule. | Public and admin status behavior depends on the core domain model and lifecycle rules. |
 | 3. API surfaces + public status page | REST, GraphQL, Swagger, public `/status/:orgSlug`, admin queries/mutations, 90-day uptime read model shape. | Once the domain is stable, expose protocol-agnostic handlers through both API surfaces. |
-| 4. Real-time backplane | In-process domain events, Postgres `LISTEN/NOTIFY` bridge, public SSE, admin GraphQL subscriptions. | Real-time delivery depends on stable domain events and must work across `api` and `worker` processes. |
-| 5. Monitoring worker + uptime rollups | Worker entrypoint, HTTP(S)/TCP/keyword/SSL checks, check-result partitions, partition retention, daily rollups, draft auto-incidents. | Monitoring depends on services and the event/backplane foundation; draft incidents depend on incident workflows. |
-| 6. Notifications, AI, hardening | Mailpit email, RSS/Atom, subscribe flow, Incident Copilot, NL Query, weekly digest, full E2E/k6 coverage, compose polish, CI. | These features compose existing domain events, status history, and public/admin workflows; hardening closes v1. |
+| Stabilization (after 3) | Input rules that hold on both API surfaces, anonymous-surface bounds that no header can skip, one organization slug rule, the admin reads a client needs to reopen what it can edit, deterministic admin ordering, clean shutdown, worker health that reflects completed work, GraphQL coverage of every mutation, and documentation that separates current from planned. | Phase 3 shipped two surfaces that accept different input and a bound a junk cookie skipped (audit 2026-10-05, F-01, F-02). Every later phase builds on those surfaces. |
+| 4. Real-time backplane | In-process domain events, Postgres `LISTEN/NOTIFY` bridge, public SSE, admin GraphQL subscriptions. | Real-time delivery depends on stable domain events and must work across `api` and `worker` processes. Built after phase 5, whose worker-originated events are the cross-process case the bridge exists for. |
+| 5. Monitoring worker + uptime rollups | Worker entrypoint, HTTP(S)/TCP/keyword/SSL checks, check-result partitions, partition retention, daily rollups, draft auto-incidents. | Monitoring depends on services and incident workflows. It does not depend on the backplane: checks, results, drafts and status recomputation all run inside the worker, whose in-process bus delivers, as maintenance transitions already do. Until phase 4, a monitor-driven change reaches admins and the public page on their next read. |
+| 6. Notifications, AI, hardening | Mailpit email, RSS/Atom, subscribe flow, Incident Copilot, NL Query, weekly digest, full E2E/k6 coverage, compose polish, CI. | These features compose existing domain events, status history, and public/admin workflows; hardening closes v1. Notification delivery durability is decided in `DOMAIN.md` and `ARCHITECTURE.md` before any delivery code. |
+
+Phase numbers are names. Delivery order is 1, 2, 3, stabilization, 5, 4, 6 (decided 2026-10-06, `docs/bmad/planning-artifacts/sprint-change-proposal-2026-10-06.md`).
 
 ## 3. Roadmap: Post-v1
 
@@ -88,5 +91,6 @@ All Better Auth v1 organization roles, `owner`, `admin`, and `member`, can perfo
 | Autonomous AI posting | AI can draft and suggest only; humans approve every customer-facing action. | `AI.md` |
 | AI remediation | Remediation agent is roadmap, not v1. | `AI.md` |
 | Public write API | v1 exposes first-party app APIs only; external public API is roadmap. | `README.md` |
+| Browser UI, public or admin | v1 is an API: `/status/:orgSlug` and GraphQL return JSON for an integrator to render, and operators use REST, GraphQL and Swagger. Decided 2026-10-06. | `ROADMAP.md` |
 | Managed deployment target | CI verifies the app but does not deploy it. | `README.md`, `ARCHITECTURE.md` |
 | Cursor, Claude Code, or spec-kit documentation | AI dev tooling is not part of genesis product docs. | `AI.md` |
