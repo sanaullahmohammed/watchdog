@@ -9,6 +9,7 @@ import type { FastifyInstance } from 'fastify';
 import mercurius from 'mercurius';
 import env from '@/config/env';
 import { isRationedGraphqlRequest } from '@/server/anonymous-graphql';
+import { resolveActor } from '@/server/auth/organization-context';
 import { di } from '@/server/di';
 import { graphqlErrorFormatter } from '@/server/graphql-error-formatter';
 import { onePublicPagePerOperation } from '@/server/graphql-public-page-limit';
@@ -50,7 +51,7 @@ export default async function createServer(fastify: FastifyInstance) {
   });
 
   fastify.addHook('onRequest', async (request, reply) => {
-    if (!(await isRationedGraphqlRequest(request))) return;
+    if (!(await isRationedGraphqlRequest(request, resolveActor))) return;
 
     // `isAllowed` is true only for an allow-listed key; a request within the
     // limit comes back with `isExceeded: false`, which is the field to read.

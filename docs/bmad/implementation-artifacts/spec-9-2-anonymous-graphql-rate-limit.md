@@ -99,6 +99,8 @@ Decided at planning (2026-10-06):
 
 ## Implementation Notes
 
+- **CI fix after commit `3278142` (2026-10-06).** CI's unit job failed: `anonymous-graphql.spec.ts` imported `anonymous-graphql.ts`, which imported `resolveActor` at runtime and so loaded the Better Auth instance, whose `auth-env.ts` requires `DATABASE_URL` and `BETTER_AUTH_SECRET` at import. Local runs passed only because `.env` supplied both. Fix: the module takes the lookup as a required parameter (a type-only import), and `src/server/index.ts` passes `resolveActor`. Reproduced and verified by running `pnpm run test` with `.env` moved aside: before 110/111, after 115/115.
+
 - Audit of other integration files: the nine files that touch `/graphql` send valid-cookie or a handful of anonymous requests per app instance, none near 120; `test:integration` passed twice.
 - The junk-cookie-under-the-limit case uses the file's shared, never-flooded `app` rather than a new `buildApp()`: a second app in the same process answered `publicStatusPage` with 'Command type ... is not registered' (the CQRS registration appears process-global), so a fresh instance cannot serve a page.
 

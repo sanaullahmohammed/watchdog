@@ -15,7 +15,9 @@ const make = (url: string, cookie?: string): Req =>
 describe('isRationedGraphqlRequest', () => {
   it('does not ration another route', async () => {
     assert.equal(
-      await isRationedGraphqlRequest(make('/status/:orgSlug')),
+      await isRationedGraphqlRequest(make('/status/:orgSlug'), async () => {
+        throw new Error('another route must not look up a session');
+      }),
       false,
     );
   });
