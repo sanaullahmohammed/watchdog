@@ -1,6 +1,8 @@
 ---
 title: WatchDog PRD
 stepsCompleted: []
+kind: genesis-adapter
+validated: 2026-10-06
 ---
 
 # WatchDog Product Requirements
@@ -14,9 +16,11 @@ Those genesis documents remain authoritative:
 - `docs/genesis/DOMAIN.md` owns entities, the ERD, RLS policies, state machines, status-resolution precedence, monitoring persistence and the canonical event catalog.
 - `docs/genesis/ARCHITECTURE.md` owns runtime wiring, the api/worker split, LISTEN/NOTIFY fanout, RLS enforcement mechanics, Compose and CI.
 - `docs/genesis/AI.md` owns the agentic-AI product spec.
-- `docs/genesis/README.md` owns the pitch, stack and scope.
+- `README.md` at the repository root owns the pitch and stack; `docs/genesis/ROADMAP.md` owns what v1 includes, excludes, and the order it is delivered in.
 
 This file exists because `bmad-create-epics-and-stories` requires a PRD with extractable requirements. It deliberately points at the genesis documents rather than restating them: a second copy of a decision is the drift these documents were written to avoid.
+
+This file records requirements, not progress. What is built is tracked in `docs/bmad/implementation-artifacts/sprint-status.yaml` and evidenced by tests.
 
 **When decomposing these into epics and stories, do not re-derive settled decisions.** If a requirement seems to need a technical choice, the choice has almost certainly already been made in DOMAIN or ARCHITECTURE. Look there first.
 
@@ -33,21 +37,18 @@ Shared database, `org_id` row-scoping, Postgres RLS with `FORCE`. Path-based pub
 - **Requirement:** Better Auth is mounted as a Fastify plugin; users can sign up, sign in, create organizations, switch active orgs, and belong to multiple orgs.
 - **Verification:** Integration tests cover signup, login, organization creation, active-org resolution, switching the active organization, and a user belonging to multiple organizations.
 - **Phase:** 1
-- **Current status:** Partial - Better Auth is mounted at `/api/auth/*`, and signup, signin, organization creation and active-org resolution are covered by integration tests through the same Fastify instance the api entrypoint builds, verified end to end against the Compose stack. Two clauses of this requirement are not yet covered: switching the active organization, and a user belonging to more than one organization. Both exercise the code path every later epic depends on - switching is the only route that writes `session.activeOrganizationId`, and multi-org membership is what makes the `firstMembershipOf` fallback non-trivial.
 
 ### FR2: Teams + membership
 
 - **Requirement:** Teams and memberships are provided by the Better Auth organization plugin; WatchDog consumes them for active-org context and authorization.
 - **Verification:** Unit and integration tests validate role lookup including different roles held by the same user in different organizations, membership-based org resolution, and access checks through Better Auth-owned tables.
 - **Phase:** 1
-- **Current status:** Done - `src/server/auth/organization-context.ts` resolves session to active organization to role, falling back to membership when the session carries no active org, and rejects a role outside the owner/admin/member ladder. Covered by integration tests.
 
 ### FR3: Tenant isolation
 
 - **Requirement:** All WatchDog tenant-scoped tables carry `org_id`; repository transactions set `app.current_org_id`; Postgres RLS prevents cross-org reads/writes.
 - **Verification:** RLS integration tests prove one org cannot read or mutate another org's rows. See `DOMAIN.md` for the canonical data/RLS contract.
 - **Phase:** 1
-- **Current status:** Done - service_groups carries RLS enabled and FORCEd; 12 integration tests prove isolation, and a structural test covers every future org_id table.
 
 ### FR4: Services + service groups
 
@@ -206,35 +207,22 @@ Shared database, `org_id` row-scoping, Postgres RLS with `FORCE`. Path-based pub
 - **Requirement:** One `docker-compose` runs migration, API, worker, Postgres, and Mailpit.
 - **Verification:** Fresh clone can start the full stack with documented commands.
 - **Phase:** 6
-- **Current status:** Done - postgres, mailpit, migrate, api and worker all report healthy from one image.
 
 ### NFR30: CI
 
 - **Requirement:** GitHub Actions runs check, unit tests, migrations, integration tests, E2E tests, k6 smoke, and Docker build validation against a Postgres service container.
 - **Verification:** CI passes on pull requests and main branch pushes.
 - **Phase:** 6
-- **Current status:** Partial - check, database and docker jobs run. Cucumber E2E and k6 smoke are not wired yet.
 
 ### NFR31: No deploy target
 
 - **Requirement:** CI intentionally stops at verification and does not deploy.
 - **Verification:** Workflow contains no deployment job.
 - **Phase:** 6
-- **Current status:** Done - no deployment job exists.
 
 ## Epic seeds
 
-Epics follow ROADMAP's six phases verbatim. The ordering is load-bearing: tenant isolation precedes any tenant data, the domain precedes the API surfaces that expose it, real-time precedes the worker that feeds it, and monitoring precedes the draft incidents it generates.
-
-| Phase | Scope | Rationale |
-|---|---|---|
-| 1. Foundation: tenancy, auth, migrations, RLS | Better Auth plugin, committed Better Auth DBMate migration, active-org CQRS context, role lookup, RLS enforcement, base repository ports, owner/app database roles. | Tenant isolation and identity must exist before any domain data can be safely created. |
-| 2. Core status domain | Services, service groups, archive/restore, manual status override, incidents, incident updates, maintenance, state machines, status-resolution rule. | Public and admin status behavior depends on the core domain model and lifecycle rules. |
-| 3. API surfaces + public status page | REST, GraphQL, Swagger, public `/status/:orgSlug`, admin queries/mutations, 90-day uptime read model shape. | Once the domain is stable, expose protocol-agnostic handlers through both API surfaces. |
-| 4. Real-time backplane | In-process domain events, Postgres `LISTEN/NOTIFY` bridge, public SSE, admin GraphQL subscriptions. | Real-time delivery depends on stable domain events and must work across `api` and `worker` processes. |
-| 5. Monitoring worker + uptime rollups | Worker entrypoint, HTTP(S)/TCP/keyword/SSL checks, check-result partitions, partition retention, daily rollups, draft auto-incidents. | Monitoring depends on services and the event/backplane foundation; draft incidents depend on incident workflows. |
-| 6. Notifications, AI, hardening | Mailpit email, RSS/Atom, subscribe flow, Incident Copilot, NL Query, weekly digest, full E2E/k6 coverage, compose polish, CI. | These features compose existing domain events, status history, and public/admin workflows; hardening closes v1. |
-
+Epics derive from ROADMAP's phases: phase 6 is split into Epics 6–8, and Epic 9 is the stabilization milestone. Delivery order is ROADMAP section 2's, not the epic numbers'. Tenant isolation precedes tenant data, the domain precedes the surfaces that expose it, stabilization precedes new features, and monitoring precedes both the draft incidents it creates and the real-time bridge that carries its events. The phase table itself lives in `docs/genesis/ROADMAP.md` section 2 and is not copied here.
 
 ## Out of scope for v1
 

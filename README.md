@@ -2,37 +2,45 @@
 
 WatchDog is a self-hosted, multi-tenant status page platform for teams that want Statuspage-style service visibility without handing core operations to a managed SaaS. Organizations manage services, incidents, scheduled maintenance, endpoint monitoring, public status pages, notifications, and human-gated AI assistance from one backend-first application that runs locally through Docker Compose.
 
-## Features
+## Current status
 
-### Tenancy/Auth
+WatchDog is being built in phases (see [ROADMAP.md](./docs/genesis/ROADMAP.md)). v1 is an API: it serves JSON and GraphQL for an integrator to render, and ships no browser UI. As of 2026-10-06:
+
+- **Runs today:** sign-up, organizations and active-organization switching (Better Auth); services, groups, archive/restore and manual status overrides; incidents with an append-only timeline; scheduled maintenance that starts and completes on time; one effective status per service; the public status payload as JSON at `/status/:orgSlug` and as GraphQL `publicStatusPage`; the admin REST and GraphQL API, with Swagger at `/api-docs`; a demo seed.
+- **Planned for v1, not built yet:** synthetic monitoring and draft auto-incidents; 90-day uptime data (the field exists and is empty); live updates over SSE and GraphQL subscriptions; email notifications, RSS/Atom and the subscribe flow; AI assistance.
+- **Progress:** [`sprint-status.yaml`](./docs/bmad/implementation-artifacts/sprint-status.yaml).
+
+## v1 scope
+
+### Tenancy/Auth (built)
 
 Multi-tenant organizations, teams, memberships, active-org context, and Better Auth-based authentication; see [ARCHITECTURE.md](./docs/genesis/ARCHITECTURE.md) and [DOMAIN.md](./docs/genesis/DOMAIN.md).
 
-### Services & Status
+### Services & Status (built)
 
 Service/component management, grouping, archive/restore, and manual status overrides; see [DOMAIN.md](./docs/genesis/DOMAIN.md).
 
-### Incidents & Maintenance
+### Incidents & Maintenance (built)
 
 Incident lifecycle, append-only updates, affected services, scheduled maintenance windows, and status transitions; see [DOMAIN.md](./docs/genesis/DOMAIN.md).
 
-### Monitoring
+### Monitoring (planned)
 
 Synthetic HTTP(S), TCP, keyword-match, and SSL-expiry checks run by the worker, with draft auto-incidents after repeated failures; see [DOMAIN.md](./docs/genesis/DOMAIN.md) and [ARCHITECTURE.md](./docs/genesis/ARCHITECTURE.md).
 
-### Real-time
+### Real-time (planned)
 
 Public SSE and admin GraphQL subscriptions receive domain-event fanout through the shared real-time backplane; see [ARCHITECTURE.md](./docs/genesis/ARCHITECTURE.md).
 
-### Public Page
+### Public Page (built as JSON; live updates and uptime data planned)
 
-Per-organization public status pages at `/status/:orgSlug` with live updates and 90-day uptime history; see [DOMAIN.md](./docs/genesis/DOMAIN.md).
+Per-organization public status payload at `/status/:orgSlug`, with live updates and 90-day uptime history to come; see [DOMAIN.md](./docs/genesis/DOMAIN.md).
 
-### Notifications
+### Notifications (planned)
 
 Local demoable email through Mailpit, RSS/Atom feeds, and public email subscription flow; see [DOMAIN.md](./docs/genesis/DOMAIN.md) and [ROADMAP.md](./docs/genesis/ROADMAP.md).
 
-### Agentic-AI
+### Agentic-AI (planned)
 
 Human-in-the-loop incident copilot, natural-language status-history query, and weekly digest generation behind a provider port; see [AI.md](./docs/genesis/AI.md).
 
@@ -52,7 +60,7 @@ Human-in-the-loop incident copilot, natural-language status-history query, and w
 
 ## Architecture at a glance
 
-WatchDog follows the backend boilerplate's Clean Architecture, DDD, CQRS, functional-programming, and vertical-slice conventions. Feature code lives under `src/modules/<feature>/`, and modules do not import each other directly; cross-module request/response work goes through command/query buses, while fire-and-forget work goes through events. The runtime uses two entrypoints from one image: `api` serves REST, GraphQL, auth, and real-time clients, while `worker` runs background monitoring, maintenance transitions, rollups, retention, and notification work. The in-process event bus remains useful inside a single process, but `api` and `worker` do not share memory, so cross-process and client fanout uses Postgres `LISTEN/NOTIFY` as the backplane. Tenant isolation is shared-database, row-scoped by `org_id`, with Postgres RLS as defense in depth.
+WatchDog follows the backend boilerplate's Clean Architecture, DDD, CQRS, functional-programming, and vertical-slice conventions. Feature code lives under `src/modules/<feature>/`, and modules do not import each other directly; cross-module request/response work goes through command/query buses, while fire-and-forget work goes through events. The runtime uses two entrypoints from one image: `api` serves REST, GraphQL, auth, and real-time clients, while `worker` runs maintenance transitions and status reconciliation today, and takes on monitoring, rollups, retention and notification work as those phases land. The in-process event bus remains useful inside a single process, but `api` and `worker` do not share memory, so cross-process and client fanout uses Postgres `LISTEN/NOTIFY` as the backplane. Tenant isolation is shared-database, row-scoped by `org_id`, and Postgres RLS is the tenant boundary: no repository adds its own `org_id` predicate, so `api` and `worker` refuse to start as a role RLS does not bind.
 
 For the full architecture, see [ARCHITECTURE.md](./docs/genesis/ARCHITECTURE.md).
 
@@ -138,14 +146,13 @@ watchdog/
 ├── README.md
 ├── src/
 │   ├── modules/
-│   │   ├── organization/
 │   │   ├── service/
 │   │   ├── incident/
 │   │   ├── maintenance/
-│   │   ├── monitoring/
-│   │   ├── notification/
-│   │   ├── ai/
-│   │   └── status-page/
+│   │   └── status-page/       # planned: monitoring/, notification/, ai/
+│   ├── server/
+│   │   └── auth/              # Better Auth instance, active-org and role resolution
+│   ├── shared/                # tenant transactions, cross-module event contracts
 │   └── ...
 ├── tests/
 │   ├── load/          # k6 smoke + load profiles
@@ -159,9 +166,9 @@ Confirmed after scaffolding. `pnpm-workspace.yaml` carries pnpm >= 12 settings o
 
 ## Scope & non-goals
 
-- v1 is a single-compose, backend-first portfolio implementation covering tenancy, services, incidents, maintenance, monitoring, public status pages, notifications, real-time, AI assistance, tests, and CI.
+- v1 targets a single-compose, backend-first portfolio implementation covering tenancy, services, incidents, maintenance, monitoring, public status pages, notifications, real-time, AI assistance, tests, and CI. See [Current status](#current-status) for what exists today.
 - WatchDog does not use an ORM, a second migration runner, serverless hosting, or managed auth SaaS.
-- v1 does not include editor/viewer RBAC, Slack/SMS/webhooks, subdomain or custom-domain routing, multi-region checks, public API, status badges, hard service deletion, or autonomous AI posting.
+- v1 does not include a browser UI (public or admin), editor/viewer RBAC, Slack/SMS/webhooks, subdomain or custom-domain routing, multi-region checks, public API, status badges, hard service deletion, or autonomous AI posting.
 - AI features are human-in-the-loop; WatchDog does not autonomously publish customer-facing incident content.
 
 For phased delivery and non-goals, see [ROADMAP.md](./docs/genesis/ROADMAP.md).
