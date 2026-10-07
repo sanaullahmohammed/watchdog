@@ -1,7 +1,22 @@
 import { betterAuth } from 'better-auth';
+import { APIError } from 'better-auth/api';
 import { organization } from 'better-auth/plugins';
 import { Pool } from 'pg';
 import authEnv from '../../config/auth-env';
+import { isSlug, SLUG_MAX_LENGTH } from '../../shared/domain/slug';
+
+/**
+ * Refuses a slug the public lookup could never answer (DOMAIN.md's slug rule).
+ * Never returns `data`: on create it would be merged over the whole body.
+ */
+function assertSlugInRule(slug: unknown): void {
+  if (typeof slug === 'string' && !isSlug(slug)) {
+    throw new APIError('BAD_REQUEST', {
+      code: 'INVALID_ORGANIZATION_SLUG',
+      message: `Organization slug must be lowercase letters and digits in hyphen-separated runs, at most ${SLUG_MAX_LENGTH} characters`,
+    });
+  }
+}
 
 /**
  * Better Auth owns identity, organizations, teams, memberships and invitations.
@@ -40,6 +55,14 @@ export const auth = betterAuth({
     organization({
       teams: {
         enabled: true,
+      },
+      organizationHooks: {
+        beforeCreateOrganization: async ({ organization }) => {
+          assertSlugInRule(organization.slug);
+        },
+        beforeUpdateOrganization: async ({ organization }) => {
+          assertSlugInRule(organization.slug);
+        },
       },
     }),
   ],

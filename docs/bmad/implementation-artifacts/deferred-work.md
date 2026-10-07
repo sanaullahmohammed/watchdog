@@ -78,3 +78,9 @@
 - source_spec: `spec-9-4-graphql-maintenance-validation.md`
   summary: `urn:uuid:<uuid>` passes `assertUuid` on the new maintenance id checks too, so it still reaches Postgres as a masked 500. Settle with the 9.1 `urn:uuid:` entry.
   evidence: Story 9.4 Review Triage Log #16.
+
+## From Story 9.5 (2026-10-07)
+
+- source_spec: `spec-9-5-organization-slug-rule.md`
+  summary: Better Auth's `POST /api/auth/organization/check-slug` still answers "available" for an untaken slug outside the rule, which create then refuses with `INVALID_ORGANIZATION_SLUG`. Apply the rule there too (a `hooks.before` on that path) or disable the endpoint, before any client relies on it.
+  evidence: Story 9.5 Review Triage Log #3; `crud-org.mjs:151-159` checks only existence. No WatchDog code calls it today.
