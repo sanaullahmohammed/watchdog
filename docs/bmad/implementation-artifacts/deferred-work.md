@@ -99,3 +99,9 @@
 - source_spec: `spec-9-6-read-service-groups.md`
   summary: REST route schemas declare only their success response, so the generated API description shows no 400, 401 or 404. Settle with API documentation (audit F-10, Epic 8).
   evidence: Story 9.6 Review Triage Log #8; pre-existing across every route.
+
+## From Story 9.7 (2026-10-07)
+
+- source_spec: `spec-9-7-read-one-incident.md`
+  summary: Two clients editing one incident from separate reads still silently drop each other's affected services, because `PATCH`/`updateIncident` replaces the whole list with no precondition and the detail read carries no `updatedAt` or version. Decide on optimistic concurrency (a version or `updatedAt` precondition) before more than one operator edits at once.
+  evidence: Story 9.7 Review Triage Log #6; `update-incident.handler.ts` replaces the list unconditionally. Pre-existing in the edit; the new read makes the single-client round trip safe, not the two-client one.

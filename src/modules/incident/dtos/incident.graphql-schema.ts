@@ -21,6 +21,22 @@ const incidentSchema = `
     startedAt: String!
     resolvedAt: String
   }
+
+  type AffectedService {
+    serviceId: ID!
+    impact: IncidentImpact!
+  }
+
+  type IncidentDetail {
+    id: ID!
+    title: String!
+    status: IncidentStatus!
+    impact: IncidentImpact!
+    source: IncidentSource!
+    startedAt: String!
+    resolvedAt: String
+    affectedServices: [AffectedService!]!
+  }
 `;
 
 export default incidentSchema;

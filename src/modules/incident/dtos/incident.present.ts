@@ -1,5 +1,6 @@
 import type { IncidentEntity } from '@/modules/incident/domain/incident.domain';
 import type {
+  IncidentDetailResponseDto,
   IncidentResponseDto,
   IncidentUpdateResponseDto,
 } from '@/modules/incident/dtos/incident.response.dto';
@@ -22,6 +23,18 @@ export function toIncidentResponse(
     source: incident.source,
     startedAt: incident.startedAt.toISOString(),
     resolvedAt: incident.resolvedAt?.toISOString() ?? null,
+  };
+}
+
+export function toIncidentDetailResponse(
+  incident: IncidentEntity,
+): IncidentDetailResponseDto {
+  return {
+    ...toIncidentResponse(incident),
+    affectedServices: incident.affectedServices.map((s) => ({
+      serviceId: s.serviceId,
+      impact: s.impact,
+    })),
   };
 }
 
