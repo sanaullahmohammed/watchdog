@@ -165,7 +165,8 @@ export async function startWorker() {
 
     await app.close();
     await closeDbConnection();
-    process.exit(0);
+    // No process.exit: both intervals are cleared and every pool is closed, so
+    // the process ends once its last handle has.
   };
 
   process.on('SIGTERM', () => void shutdown('SIGTERM'));

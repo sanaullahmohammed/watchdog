@@ -41,8 +41,41 @@ function assertSlugInRule(slug: unknown): void {
  * Better Auth speaks to Postgres through Kysely over `pg`. WatchDog's own data
  * access stays on raw `postgres.js`; the two never share a connection.
  */
+export const authPool = new Pool({ connectionString: authEnv.databaseUrl });
+
+/**
+ * The pool is a process-wide singleton, so it cannot belong to one app. Each
+ * built app holds it and releases it from its onClose hook; the last release
+ * ends it, so `app.close()` leaves no connection open and no entrypoint has to
+ * force exit. A pool cannot reopen once ended, hence the refusal to hold it.
+ */
+let holders = 0;
+let ending: Promise<void> | undefined;
+
+export function holdAuthPool(): void {
+  if (ending) {
+    throw new Error(
+      'The Better Auth pool has ended (or is ending), so no app can be built in this process. Build apps while at least one is still open, or build only one.',
+    );
+  }
+  holders += 1;
+}
+
+/** Ends the pool once. A second call awaits the first rather than re-ending. */
+export function endAuthPool(): Promise<void> {
+  ending ??= authPool.end();
+  return ending;
+}
+
+export async function releaseAuthPool(): Promise<void> {
+  holders = Math.max(0, holders - 1);
+  if (holders === 0) {
+    await endAuthPool();
+  }
+}
+
 export const auth = betterAuth({
-  database: new Pool({ connectionString: authEnv.databaseUrl }),
+  database: authPool,
   secret: authEnv.secret,
   baseURL: authEnv.baseUrl,
   emailAndPassword: {

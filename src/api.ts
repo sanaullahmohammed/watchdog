@@ -16,11 +16,23 @@ export async function startApi() {
   }
 
   const gracefulServer = GracefulServer(fastify.server, {
-    // graceful-server closes the HTTP server itself and then awaits these. It
-    // does not close Fastify, so closing it here is what runs the onClose
-    // hooks - draining event handlers whose work is still in flight - and it
-    // has to happen before the connection pool goes.
-    closePromises: [() => fastify.close(), closeDbConnection],
+    // graceful-server waits its timeout, awaits these steps in order (because
+    // of syncClose; otherwise they run in parallel), then closes sockets and
+    // the server, then exits the process itself. Closing Fastify runs the
+    // onClose hooks - draining event handlers and ending the auth pool - and
+    // must finish before the connection pool goes. With syncClose a rejection
+    // would skip the later steps and the exit, so it is logged, not thrown.
+    syncClose: true,
+    closePromises: [
+      async () => {
+        try {
+          await fastify.close();
+        } catch (error) {
+          fastify.log.error(error);
+        }
+      },
+      closeDbConnection,
+    ],
   });
 
   gracefulServer.on(GracefulServer.READY, () => {
