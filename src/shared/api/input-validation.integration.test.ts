@@ -177,9 +177,8 @@ describe('Input refused as a client mistake, not a crash (retrospective R-9)', (
       },
     );
 
-    // Invalid Date used to pass the window check, because every comparison
-    // with NaN is false, and failed at the insert.
-    assertRefused(result, /scheduledStartAt must be an ISO date-time/i);
+    // The handler's schema check refuses it before any date is parsed.
+    assertRefused(result, /^Invalid input\..*scheduledStartAt/i);
   });
 
   it('refuses an explicit GraphQL null where a field cannot be null', async () => {
@@ -190,7 +189,7 @@ describe('Input refused as a client mistake, not a crash (retrospective R-9)', (
       { id: windowId, input: { affectedServiceIds: null } },
     );
 
-    assertRefused(result, /affectedServiceIds cannot be null/i);
+    assertRefused(result, /^Invalid input\..*affectedServiceIds/i);
   });
 
   it('still lets null clear a field that is genuinely nullable', async () => {

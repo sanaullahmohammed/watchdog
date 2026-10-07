@@ -1,6 +1,5 @@
 import { ErrorWithProps } from 'mercurius';
 import { resolveOrganizationContext } from '@/server/auth/organization-context';
-import { parseDate } from '@/shared/validation/input';
 import {
   type ScheduleMaintenanceCommandResult,
   scheduleMaintenanceCommand,
@@ -24,14 +23,6 @@ export default async function scheduleMaintenanceResolver(
         return fastify.commandBus.execute<ScheduleMaintenanceCommandResult>(
           scheduleMaintenanceCommand({
             ...args.input,
-            scheduledStartAt: parseDate(
-              args.input.scheduledStartAt,
-              'scheduledStartAt',
-            ),
-            scheduledEndAt: parseDate(
-              args.input.scheduledEndAt,
-              'scheduledEndAt',
-            ),
             orgId: context.orgId,
             userId: context.userId,
           }),

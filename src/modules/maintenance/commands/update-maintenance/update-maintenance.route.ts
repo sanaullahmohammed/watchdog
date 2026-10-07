@@ -28,12 +28,6 @@ export default async function updateMaintenance(fastify: FastifyRouteInstance) {
         await fastify.commandBus.execute<UpdateMaintenanceCommandResult>(
           updateMaintenanceCommand({
             ...req.body,
-            scheduledStartAt: req.body.scheduledStartAt
-              ? new Date(req.body.scheduledStartAt)
-              : undefined,
-            scheduledEndAt: req.body.scheduledEndAt
-              ? new Date(req.body.scheduledEndAt)
-              : undefined,
             id: req.params.id,
             orgId: context.orgId,
           }),
