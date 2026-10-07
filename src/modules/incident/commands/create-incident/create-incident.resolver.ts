@@ -1,6 +1,5 @@
 import { ErrorWithProps } from 'mercurius';
 import { resolveOrganizationContext } from '@/server/auth/organization-context';
-import { parseOptionalDate } from '@/shared/validation/input';
 import {
   type CreateIncidentCommandResult,
   createIncidentCommand,
@@ -24,7 +23,6 @@ export default async function createIncidentResolver(
         return fastify.commandBus.execute<CreateIncidentCommandResult>(
           createIncidentCommand({
             ...args.input,
-            startedAt: parseOptionalDate(args.input.startedAt, 'startedAt'),
             orgId: context.orgId,
             userId: context.userId,
           }),

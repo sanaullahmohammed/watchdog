@@ -5,10 +5,12 @@ import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentUpdatedEvent } from '@/shared/events/incident.events';
 import { NotFoundException } from '@/shared/exceptions';
 import { anyChanged, sameSet } from '@/shared/utils/changes';
+import { assertNoDuplicates } from '@/shared/validation/input';
 import {
-  assertNoDuplicates,
-  assertNoNullFields,
-} from '@/shared/validation/input';
+  assertMatchesSchema,
+  assertUuid,
+} from '@/shared/validation/typebox-guard';
+import { updateIncidentRequestDtoSchema } from './update-incident.schema';
 
 export type UpdateIncidentCommandResult = Promise<string>;
 
@@ -31,9 +33,11 @@ export default function makeUpdateIncident({
       payload,
     }: ReturnType<typeof updateIncidentCommand>): UpdateIncidentCommandResult {
       const { orgId, id, affectedServices, ...patch } = payload;
-      // GraphQL cannot express "optional but never null", a format, or a
-      // minimum length, so these run here, where both surfaces arrive.
-      assertNoNullFields(payload);
+      assertUuid(id, 'id');
+      assertMatchesSchema(updateIncidentRequestDtoSchema, {
+        ...patch,
+        affectedServices,
+      });
       assertNoDuplicates(
         (affectedServices ?? []).map((affected) => affected.serviceId),
         'affectedServices',

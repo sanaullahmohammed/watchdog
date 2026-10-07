@@ -108,6 +108,52 @@ describe('assertMatchesSchema, engine options', () => {
   });
 });
 
+describe('assertMatchesSchema, long refusals', () => {
+  it('names at most ten fields, then counts the rest', () => {
+    const list = Type.Object({
+      items: Type.Array(Type.Object({ id: Type.String({ format: 'uuid' }) })),
+    });
+    const items = Array.from({ length: 12 }, () => ({ id: 'nope' }));
+    assert.throws(
+      () => assertMatchesSchema(list, { items }),
+      (error) => {
+        assert.ok(error instanceof ArgumentInvalidException);
+        assert.equal(error.message.split('items/').length - 1, 10);
+        assert.match(error.message, /; and 2 more$/);
+        return true;
+      },
+    );
+  });
+});
+
+describe('assertMatchesSchema, the cap boundary', () => {
+  const list = Type.Object({
+    items: Type.Array(Type.Object({ id: Type.String({ format: 'uuid' }) })),
+  });
+  const bad = (n: number) => ({
+    items: Array.from({ length: n }, () => ({ id: 'nope' })),
+  });
+
+  it('names exactly ten without a count', () => {
+    assert.throws(
+      () => assertMatchesSchema(list, bad(10)),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.message.split('items/').length - 1, 10);
+        assert.doesNotMatch(error.message, /more$/);
+        return true;
+      },
+    );
+  });
+
+  it('counts one beyond ten', () => {
+    assert.throws(
+      () => assertMatchesSchema(list, bad(11)),
+      (error) => error instanceof Error && /; and 1 more$/.test(error.message),
+    );
+  });
+});
+
 describe('assertUuid', () => {
   it('accepts a uuid', () => {
     assertUuid('2f1c1c5e-5a0e-4b1e-9d3a-0c9f6f1d2a11', 'id');

@@ -35,3 +35,24 @@
 - source_spec: spec-9-2-anonymous-graphql-rate-limit.md
   summary: The AGENTS.md "anonymous surface is bounded" bullet now carries a `/graphql`-specific parenthetical inside a list of bounds every new public route inherits. Move it into its own sentence after the list, so it does not read as a rule for every route.
   evidence: Story 9.2 Review Triage Log #15; routed defer because the fix edits an agent-context file.
+
+## From Story 9.3 (2026-10-07)
+
+- source_spec: spec-9-3-graphql-incident-validation.md
+  summary: `startedAt: "0000-01-01T00:00:00Z"` passes ajv's `date-time` on both surfaces and Postgres rejects it with "date/time field value out of range", a masked 500. Decide a sane range for incident start times.
+  evidence: Spec review probe; ajv-formats accepts year 0000 and `new Date` parses it. Pre-existing on REST and GraphQL; fixing it edits the TypeBox schema, which Story 9.3 may not.
+- source_spec: `spec-9-3-graphql-incident-validation.md`
+  summary: A whitespace-only `message` is stored on create and transition over both surfaces, because those schemas have `minLength: 1` without post-update's `pattern: '\S'`.
+  evidence: Story 9.3 Review Triage Log #14; fixing it edits the TypeBox schemas, which Story 9.3 may not.
+- source_spec: `spec-9-3-graphql-incident-validation.md`
+  summary: `affectedServices` has no `maxItems`, so a very long list is validated in full before refusal; the message is capped at ten fields but the work is not.
+  evidence: Story 9.3 Review Triage Log #15; bounded by the body limit, pre-existing on both surfaces.
+- source_spec: `spec-9-3-graphql-incident-validation.md`
+  summary: A `startedAt` whose offset moves it outside years 1..9999, such as `9999-12-31T23:59:59-23:59`, passes the format and becomes a masked 500 when Postgres rejects it. Settle with the year-0000 entry above.
+  evidence: Story 9.3 Review Triage Log #16; `new Date(...).toISOString()` gives `+010000-01-01T23:58:59.000Z`.
+- source_spec: `spec-9-3-graphql-incident-validation.md`
+  summary: `query { incidentTimeline(id: "not-a-uuid") }` reaches Postgres and is masked, as the service query in the 9.1 entry is, because query handlers do not call `assertUuid`.
+  evidence: Story 9.3 Review Triage Log #17; `get-incident-timeline.handler.ts` calls `findById` without a check, while the REST route requires a uuid param.
+- source_spec: `spec-9-3-graphql-incident-validation.md`
+  summary: Timeline order (`created_at` from `clock_timestamp()`, then `id`) assumes the database clock never steps back. On the owner's Docker Desktop on WSL2 it steps back by up to 1.4 s several times a minute, so incident timeline tests fail intermittently (about 1 full run in 10) with a later entry sorted before the declaration. Decide whether to record it as an AGENTS.md pitfall, make the tests tolerate it, or order entries by something monotonic.
+  evidence: Story 9.3 verification. A tight `clock_timestamp()` loop in the postgres container saw 4 backward steps in 120 s, worst 1.411 s, and `journalctl` logs "Time jumped backwards" every ~27 s. Failures seen: `incident-concurrency` "makes a posted update wait…" and "never reopens a resolved incident…", `incident-lifecycle` "appends a timeline entry with each transition…". All three show a later status sorted before `investigating`; no timeline write or ordering code changed in this story.

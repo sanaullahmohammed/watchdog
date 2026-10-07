@@ -22,6 +22,9 @@ import { ArgumentInvalidException } from '@/shared/exceptions';
  */
 const ajv = addFormats(new Ajv({ keywords: ['example'], allErrors: true }));
 
+/** The most fields one refusal names; the rest are counted. */
+const MAX_NAMED_FIELDS = 10;
+
 const validators = new WeakMap<object, ValidateFunction>();
 
 function validatorFor(schema: TSchema): ValidateFunction {
@@ -52,9 +55,13 @@ export function assertMatchesSchema(schema: TSchema, value: unknown): void {
       problems.set(field, error.message ?? 'is invalid');
     }
   }
-  const text = [...problems]
-    .map(([field, message]) => (field ? `${field}: ${message}` : message))
-    .join('; ');
+  // A long list of bad items would otherwise echo one entry per item.
+  const shown = [...problems]
+    .slice(0, MAX_NAMED_FIELDS)
+    .map(([field, message]) => (field ? `${field}: ${message}` : message));
+  const more = problems.size - shown.length;
+  const text =
+    more > 0 ? `${shown.join('; ')}; and ${more} more` : shown.join('; ');
   throw new ArgumentInvalidException(`Invalid input. ${text}`);
 }
 

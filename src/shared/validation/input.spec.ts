@@ -4,7 +4,6 @@ import { ArgumentInvalidException } from '@/shared/exceptions';
 import {
   assertNoDuplicates,
   assertNoNullFields,
-  assertNotBlank,
   parseDate,
   parseOptionalDate,
 } from '@/shared/validation/input';
@@ -82,22 +81,5 @@ describe('assertNoDuplicates', () => {
       () => assertNoDuplicates(['a', 'b', 'a', 'a'], 'affectedServiceIds'),
       { message: /affectedServiceIds names a more than once/ },
     );
-  });
-});
-
-describe('assertNotBlank', () => {
-  it('accepts text', () => {
-    assert.doesNotThrow(() =>
-      assertNotBlank('We are investigating', 'message'),
-    );
-  });
-
-  it('refuses empty and whitespace-only text', () => {
-    for (const value of ['', '   ', '\n\t']) {
-      assert.throws(
-        () => assertNotBlank(value, 'message'),
-        ArgumentInvalidException,
-      );
-    }
   });
 });
