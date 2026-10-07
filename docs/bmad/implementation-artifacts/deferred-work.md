@@ -105,3 +105,12 @@
 - source_spec: `spec-9-7-read-one-incident.md`
   summary: Two clients editing one incident from separate reads still silently drop each other's affected services, because `PATCH`/`updateIncident` replaces the whole list with no precondition and the detail read carries no `updatedAt` or version. Decide on optimistic concurrency (a version or `updatedAt` precondition) before more than one operator edits at once.
   evidence: Story 9.7 Review Triage Log #6; `update-incident.handler.ts` replaces the list unconditionally. Pre-existing in the edit; the new read makes the single-client round trip safe, not the two-client one.
+
+## From Story 9.9 (2026-10-07)
+
+- source_spec: `spec-9-9-close-auth-pool.md`
+  summary: ARCHITECTURE section 7 says "no entrypoint or script forces exit", but graceful-server ends the api with its own `process.exit`; and neither ARCHITECTURE nor AGENTS.md records that Better Auth's pool is process-wide and ends at the last `app.close()`, after which `buildApp()` in that process throws. Update ARCHITECTURE first, then add an AGENTS.md pitfall for test authors (build apps while one is open, or one per process).
+  evidence: Story 9.9 Review Triage Log #6; `docs/genesis/ARCHITECTURE.md:782`; `holdAuthPool()` in `src/server/auth/auth.ts`. Routed defer because the fix edits genesis and agent-context files.
+- source_spec: `spec-9-9-close-auth-pool.md`
+  summary: No test proves the api's shutdown finishes `fastify.close()` (drain, auth pool) before `closeDbConnection()`; removing `syncClose: true` would pass every suite.
+  evidence: Story 9.9 Review Triage Log #7. A meaningful test spawns the api, starts a slow event handler, sends SIGTERM and checks the handler's database work completed.

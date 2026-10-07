@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
-import { auth } from '@/server/auth/auth';
+import { auth, holdAuthPool, releaseAuthPool } from '@/server/auth/auth';
 
 /**
  * Mounts Better Auth's request handler under /api/auth.
@@ -65,6 +65,14 @@ async function sendWebResponse(reply: FastifyReply, response: Response) {
 
 async function authPlugin(fastify: FastifyInstance) {
   fastify.decorate('auth', auth);
+
+  holdAuthPool();
+  // Drains the bus itself rather than trusting the order onClose hooks run in:
+  // a handler still running must find the pool open.
+  fastify.addHook('onClose', async () => {
+    await fastify.eventBus.drain();
+    await releaseAuthPool();
+  });
 
   fastify.route({
     method: ['GET', 'POST'],

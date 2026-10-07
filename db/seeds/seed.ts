@@ -23,7 +23,7 @@ import {
   type ListServicesQueryResult,
   listServicesQuery,
 } from '@/modules/service/queries/list-services/list-services.handler';
-import { auth } from '@/server/auth/auth';
+import { auth, endAuthPool } from '@/server/auth/auth';
 import { buildApp } from '@/server/build-app';
 import type { Action } from '@/shared/cqrs/bus.types';
 import sql, { closeDbConnection } from '@/shared/db/postgres';
@@ -272,8 +272,17 @@ seed()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await closeDbConnection();
-    // Better Auth holds its own pg pool open; exit rather than wait out its
-    // idle timeout.
-    process.exit();
+    // A first run that fails after auth.api opened connections, and before an
+    // app closes, would otherwise leave Better Auth's pool open. One failing
+    // must not skip the other.
+    const results = await Promise.allSettled([
+      closeDbConnection(),
+      endAuthPool(),
+    ]);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        console.error(result.reason);
+        process.exitCode = 1;
+      }
+    }
   });

@@ -1,15 +1,34 @@
 import {
   After,
+  AfterAll,
   Before,
+  BeforeAll,
   type ITestCaseHookParameter,
   setDefaultTimeout,
 } from '@cucumber/cucumber';
+import type { FastifyInstance } from 'fastify';
 import postgres from 'postgres';
 import { env } from '@/config';
 import type { ICustomWorld } from './custom-world';
 import { buildApp } from './server';
 
 setDefaultTimeout(process.env.PWDEBUG ? -1 : 60 * 1000);
+
+// One app per process: Better Auth's pool is shared and ends when the last app
+// closes, so a second build after a close would be refused.
+let sharedApp: FastifyInstance | undefined;
+let sharedBaseUrl: string;
+
+BeforeAll(async () => {
+  sharedApp = await buildApp();
+  // A real socket on a free port: an end-to-end scenario should reach the
+  // application the way a consumer does, not through `inject`.
+  sharedBaseUrl = await sharedApp.listen({ port: 0, host: '127.0.0.1' });
+});
+
+AfterAll(async () => {
+  await sharedApp?.close();
+});
 
 Before({ tags: '@pending' }, () => 'skipped' as any);
 
@@ -23,10 +42,8 @@ Before(async function (this: ICustomWorld, { pickle }: ITestCaseHookParameter) {
   this.feature = pickle;
   this.context = {};
   this.db = postgres(env.db.url);
-  this.server = await buildApp();
-  // A real socket on a free port: an end-to-end scenario should reach the
-  // application the way a consumer does, not through `inject`.
-  this.baseUrl = await this.server.listen({ port: 0, host: '127.0.0.1' });
+  this.server = sharedApp as FastifyInstance;
+  this.baseUrl = sharedBaseUrl;
 });
 
 After(async function (this: ICustomWorld, { result }: ITestCaseHookParameter) {
@@ -44,6 +61,5 @@ After(async function (this: ICustomWorld, { result }: ITestCaseHookParameter) {
   if (this.context.userId) {
     await this.db`delete from "user" where "id" = ${this.context.userId}`;
   }
-  await this.server.close();
   await this.db.end();
 });
