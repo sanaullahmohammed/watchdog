@@ -2,6 +2,7 @@ import { maintenanceActionCreator } from '@/modules/maintenance';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { maintenanceDeletedEvent } from '@/shared/events/maintenance.events';
 import { NotFoundException } from '@/shared/exceptions';
+import { assertUuid } from '@/shared/validation/typebox-guard';
 
 export type DeleteMaintenanceCommandResult = Promise<boolean>;
 
@@ -22,6 +23,7 @@ export default function makeDeleteMaintenance({
     }: ReturnType<
       typeof deleteMaintenanceCommand
     >): DeleteMaintenanceCommandResult {
+      assertUuid(payload.id, 'id');
       // Deletion is for work that never happened. Work that did happen is
       // completed instead, so the record of it survives. The window is read
       // first so the refusal can name the status it found; the repository

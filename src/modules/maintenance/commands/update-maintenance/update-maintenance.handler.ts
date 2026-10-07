@@ -4,14 +4,23 @@ import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { maintenanceUpdatedEvent } from '@/shared/events/maintenance.events';
 import { NotFoundException } from '@/shared/exceptions';
 import { anyChanged, sameSet } from '@/shared/utils/changes';
+import { assertNoDuplicates, parseDate } from '@/shared/validation/input';
 import {
-  assertNoDuplicates,
-  assertNoNullFields,
-} from '@/shared/validation/input';
+  assertMatchesSchema,
+  assertUuid,
+} from '@/shared/validation/typebox-guard';
+import { updateMaintenanceRequestDtoSchema } from './update-maintenance.schema';
 
 export type UpdateMaintenanceCommandResult = Promise<string>;
 
-export type UpdateMaintenanceCommandPayload = UpdateMaintenanceProps & {
+// The dates arrive as the request's strings, and null is allowed in the type
+// so the schema check sees it and refuses it.
+export type UpdateMaintenanceCommandPayload = Omit<
+  UpdateMaintenanceProps,
+  'scheduledStartAt' | 'scheduledEndAt'
+> & {
+  scheduledStartAt?: string | null;
+  scheduledEndAt?: string | null;
   orgId: string;
   id: string;
   affectedServiceIds?: string[];
@@ -32,11 +41,29 @@ export default function makeUpdateMaintenance({
     }: ReturnType<
       typeof updateMaintenanceCommand
     >): UpdateMaintenanceCommandResult {
-      const { orgId, id, affectedServiceIds, ...patch } = payload;
+      const { orgId, id, affectedServiceIds, ...request } = payload;
       // GraphQL cannot express "optional but never null", a format, or a
       // minimum length, so these run here, where both surfaces arrive.
-      assertNoNullFields(payload, { nullable: ['description'] });
+      assertUuid(id, 'id');
+      assertMatchesSchema(updateMaintenanceRequestDtoSchema, {
+        ...request,
+        affectedServiceIds,
+      });
       assertNoDuplicates(affectedServiceIds ?? [], 'affectedServiceIds');
+
+      // The check refused null, so a date is a string or absent. A key left
+      // out of the patch is left alone, so none is added for an absent date.
+      const { scheduledStartAt, scheduledEndAt, ...rest } = request;
+      const patch: UpdateMaintenanceProps = { ...rest };
+      if (scheduledStartAt != null) {
+        patch.scheduledStartAt = parseDate(
+          scheduledStartAt,
+          'scheduledStartAt',
+        );
+      }
+      if (scheduledEndAt != null) {
+        patch.scheduledEndAt = parseDate(scheduledEndAt, 'scheduledEndAt');
+      }
 
       const updated = await withTenantTransaction(orgId, async (tx) => {
         const current = await maintenanceRepository.findById(tx, id);

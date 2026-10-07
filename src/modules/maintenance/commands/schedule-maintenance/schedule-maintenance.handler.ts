@@ -2,14 +2,20 @@ import { maintenanceActionCreator } from '@/modules/maintenance';
 import type { ScheduleMaintenanceProps } from '@/modules/maintenance/domain/maintenance.types';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { maintenanceCreatedEvent } from '@/shared/events/maintenance.events';
-import {
-  assertNoDuplicates,
-  assertNoNullFields,
-} from '@/shared/validation/input';
+import { assertNoDuplicates, parseDate } from '@/shared/validation/input';
+import { assertMatchesSchema } from '@/shared/validation/typebox-guard';
+import { scheduleMaintenanceRequestDtoSchema } from './schedule-maintenance.schema';
 
 export type ScheduleMaintenanceCommandResult = Promise<string>;
 
-export type ScheduleMaintenanceCommandPayload = ScheduleMaintenanceProps & {
+// The dates arrive as the request's strings: the handler checks their format
+// against the slice schema before it converts them.
+export type ScheduleMaintenanceCommandPayload = Omit<
+  ScheduleMaintenanceProps,
+  'scheduledStartAt' | 'scheduledEndAt'
+> & {
+  scheduledStartAt: string;
+  scheduledEndAt: string;
   orgId: string;
   userId: string | null;
 };
@@ -29,16 +35,22 @@ export default function makeScheduleMaintenance({
     }: ReturnType<
       typeof scheduleMaintenanceCommand
     >): ScheduleMaintenanceCommandResult {
-      const { orgId, userId, ...props } = payload;
+      const { orgId, userId, ...request } = payload;
       // GraphQL cannot express "optional but never null", a format, or a
       // minimum length, so these run here, where both surfaces arrive.
-      assertNoNullFields(payload, { nullable: ['description', 'userId'] });
-      assertNoDuplicates(props.affectedServiceIds ?? [], 'affectedServiceIds');
-      const window = maintenanceDomain.scheduleMaintenance(
-        orgId,
-        userId,
-        props,
+      assertMatchesSchema(scheduleMaintenanceRequestDtoSchema, request);
+      assertNoDuplicates(
+        request.affectedServiceIds ?? [],
+        'affectedServiceIds',
       );
+      const window = maintenanceDomain.scheduleMaintenance(orgId, userId, {
+        ...request,
+        scheduledStartAt: parseDate(
+          request.scheduledStartAt,
+          'scheduledStartAt',
+        ),
+        scheduledEndAt: parseDate(request.scheduledEndAt, 'scheduledEndAt'),
+      });
 
       await withTenantTransaction(orgId, (tx) =>
         maintenanceRepository.insert(tx, window),

@@ -226,8 +226,10 @@ async function seed(): Promise<void> {
         title: 'Primary database version upgrade',
         description:
           'A minor-version upgrade with a brief failover. Writes may pause for up to a minute.',
-        scheduledStartAt: windowStart,
-        scheduledEndAt: new Date(windowStart.getTime() + 2 * HOUR),
+        scheduledStartAt: windowStart.toISOString(),
+        scheduledEndAt: new Date(
+          windowStart.getTime() + 2 * HOUR,
+        ).toISOString(),
         affectedServiceIds: [
           serviceId('primary-database'),
           serviceId('public-api'),

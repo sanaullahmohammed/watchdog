@@ -3,6 +3,7 @@ import { assertTransition } from '@/modules/maintenance/domain/maintenance.state
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { maintenanceCompletedEvent } from '@/shared/events/maintenance.events';
 import { NotFoundException } from '@/shared/exceptions';
+import { assertUuid } from '@/shared/validation/typebox-guard';
 
 export type CompleteMaintenanceCommandResult = Promise<boolean>;
 
@@ -23,6 +24,7 @@ export default function makeCompleteMaintenance({
       typeof completeMaintenanceCommand
     >): CompleteMaintenanceCommandResult {
       const { orgId, id } = payload;
+      assertUuid(id, 'id');
 
       const completed = await withTenantTransaction(orgId, async (tx) => {
         const current = await maintenanceRepository.findById(tx, id);

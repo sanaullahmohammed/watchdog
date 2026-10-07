@@ -28,8 +28,6 @@ export default async function scheduleMaintenance(
         await fastify.commandBus.execute<ScheduleMaintenanceCommandResult>(
           scheduleMaintenanceCommand({
             ...req.body,
-            scheduledStartAt: new Date(req.body.scheduledStartAt),
-            scheduledEndAt: new Date(req.body.scheduledEndAt),
             orgId: context.orgId,
             userId: context.userId,
           }),

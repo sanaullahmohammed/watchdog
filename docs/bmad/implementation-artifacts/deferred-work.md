@@ -56,3 +56,25 @@
 - source_spec: `spec-9-3-graphql-incident-validation.md`
   summary: Timeline order (`created_at` from `clock_timestamp()`, then `id`) assumes the database clock never steps back. On the owner's Docker Desktop on WSL2 it steps back by up to 1.4 s several times a minute, so incident timeline tests fail intermittently (about 1 full run in 10) with a later entry sorted before the declaration. Decide whether to record it as an AGENTS.md pitfall, make the tests tolerate it, or order entries by something monotonic.
   evidence: Story 9.3 verification. A tight `clock_timestamp()` loop in the postgres container saw 4 backward steps in 120 s, worst 1.411 s, and `journalctl` logs "Time jumped backwards" every ~27 s. Failures seen: `incident-concurrency` "makes a posted update wait…" and "never reopens a resolved incident…", `incident-lifecycle` "appends a timeline entry with each transition…". All three show a later status sorted before `investigating`; no timeline write or ordering code changed in this story.
+
+## From Story 9.4 (2026-10-07)
+
+- source_spec: `spec-9-4-graphql-maintenance-validation.md`
+  summary: Over REST, `description: null` on maintenance schedule and update is stored as `""`, not NULL, because Fastify's `coerceTypes` turns null into `""` in the union's string branch; GraphQL stores NULL. Settle with the 9.1 entry on REST null coercion.
+  evidence: Spec review probe: real Fastify with `updateMaintenanceRequestDtoSchema`, `PATCH {"description":null}` answered 200 with `{"description":""}`. Pre-existing; the fix touches REST coercion, outside this story.
+
+- source_spec: `spec-9-4-graphql-maintenance-validation.md`
+  summary: Story 9.4 deleted `parseOptionalDate` and `assertNoNullFields` from `src/shared/validation/input.ts`, since the slice schemas now decide nulls and formats. The 9.1 AGENTS.md entry about those helpers now concerns only `parseDate` and `assertNoDuplicates`.
+  evidence: No production caller of either remained after the maintenance handlers moved to `assertMatchesSchema`; their `input.spec.ts` cases went with them.
+- source_spec: `spec-9-4-graphql-maintenance-validation.md`
+  summary: The AGENTS.md bullet "Older handlers that still use `src/shared/validation/input.ts` move to this as they are touched" is now stale: no handler uses `assertNoNullFields`, which is deleted. Reword it to say `input.ts` keeps `parseDate` and `assertNoDuplicates`, which a schema cannot express.
+  evidence: Story 9.4 Review Triage Log #4; routed defer because the fix edits an agent-context file.
+- source_spec: `spec-9-4-graphql-maintenance-validation.md`
+  summary: Maintenance `scheduledStartAt`/`scheduledEndAt` outside years 1..9999 (year 0000, or an offset across the boundary) pass the format and become a masked 500 when Postgres rejects them. Settle with the incident `startedAt` entries above.
+  evidence: Story 9.4 Review Triage Log #14; pre-existing on both surfaces.
+- source_spec: `spec-9-4-graphql-maintenance-validation.md`
+  summary: The same service UUID written in two letter cases passes `assertNoDuplicates` (an exact string compare) and hits the `maintenance_services` primary key, an unmapped 23505 that answers a masked 500. Incident `affectedServices` is likely the same; compare ids case-insensitively or map 23505.
+  evidence: Story 9.4 Review Triage Log #15; `maintenance.repository.ts` maps only 23503. Pre-existing on both surfaces.
+- source_spec: `spec-9-4-graphql-maintenance-validation.md`
+  summary: `urn:uuid:<uuid>` passes `assertUuid` on the new maintenance id checks too, so it still reaches Postgres as a masked 500. Settle with the 9.1 `urn:uuid:` entry.
+  evidence: Story 9.4 Review Triage Log #16.
