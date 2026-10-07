@@ -45,12 +45,25 @@ const schema = Type.Object({
     // Fail at boot naming the variable rather than clamp it silently.
     minimum: 1_000,
   }),
+  // How long a worker loop may go without completing a pass before the
+  // healthcheck fails. Four maintenance intervals by default.
+  WORKER_PASS_OVERDUE_MS: Type.Number({ default: 120_000, minimum: 1_000 }),
 });
 
 const env = envSchema<Static<typeof schema>>({
   dotenv: true,
   schema,
 });
+
+// env-schema cannot express a cross-field rule. Time since the last completion
+// reaches about one interval plus the pass's duration, so a pass may take up to
+// the threshold minus the interval before the check fails it; at or below the
+// interval that allowance is nothing.
+if (env.WORKER_PASS_OVERDUE_MS <= env.WORKER_MAINTENANCE_INTERVAL_MS) {
+  throw new Error(
+    `WORKER_PASS_OVERDUE_MS (${env.WORKER_PASS_OVERDUE_MS}) must be greater than WORKER_MAINTENANCE_INTERVAL_MS (${env.WORKER_MAINTENANCE_INTERVAL_MS})`,
+  );
+}
 
 export default {
   nodeEnv: env.NODE_ENV,
@@ -82,5 +95,6 @@ export default {
     heartbeatPath: env.WORKER_HEARTBEAT_PATH,
     heartbeatMaxAgeMs: env.WORKER_HEARTBEAT_MAX_AGE_MS,
     maintenanceIntervalMs: env.WORKER_MAINTENANCE_INTERVAL_MS,
+    passOverdueMs: env.WORKER_PASS_OVERDUE_MS,
   },
 };

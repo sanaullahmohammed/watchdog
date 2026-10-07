@@ -1,4 +1,3 @@
-import { writeFileSync } from 'node:fs';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { env } from '@/config';
 import { transitionDueMaintenanceCommand } from '@/modules/maintenance/commands/transition-due-maintenance/transition-due-maintenance.handler';
@@ -11,8 +10,10 @@ import sql, { closeDbConnection } from '@/shared/db/postgres';
 import { assertTenantBoundRole } from '@/shared/db/runtime-role';
 import { listOrganizationIds } from '@/shared/db/tenants';
 import { singleFlight } from '@/shared/utils/single-flight';
+import { createWorkerHealth, type WorkerHealth } from '@/worker-health';
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
+const MAINTENANCE_LOOP = 'maintenance';
 
 /**
  * Background entrypoint. ROADMAP phase 5 fills this in with the monitor
@@ -90,6 +91,60 @@ export async function runWorkerPass(
   }
 }
 
+/**
+ * One recurring loop. A pass that outlasts its interval must not overlap the
+ * next one: two passes contend on the same rows, fan out duplicate
+ * recomputations, and pile up on the connection pool. The gate also gives
+ * shutdown something to await. A pass counts as completed only when its
+ * promise fulfils; one that rejects does not.
+ */
+export function startLoop(options: {
+  name: string;
+  pass: () => Promise<void>;
+  intervalMs: number;
+  health: WorkerHealth;
+  logger: FastifyBaseLogger;
+}) {
+  const { name, pass, intervalMs, health, logger } = options;
+  // An unregistered loop would be absent from the record, so the healthcheck
+  // could never see it stop.
+  if (!health.has(name)) {
+    throw new Error(
+      `worker loop ${name} is not registered with the health record`,
+    );
+  }
+  const gate = singleFlight(async () => {
+    health.started(name);
+    await pass();
+    health.completed(name);
+  });
+  const tick = () => {
+    if (gate.inFlight) {
+      logger.warn(`${name} pass still running; skipping this tick`);
+      return;
+    }
+    // A rejected pass is logged here, not left unhandled, which would end the
+    // process.
+    gate.run().catch((error) => {
+      logger.error({ error }, `${name} pass failed`);
+    });
+  };
+  const timer = setInterval(tick, intervalMs);
+
+  // Run once at startup rather than waiting a whole interval, so a restart
+  // does not leave a window sitting past its time.
+  tick();
+
+  return {
+    stop() {
+      clearInterval(timer);
+    },
+    get inFlight(): Promise<void> | null {
+      return gate.inFlight;
+    },
+  };
+}
+
 export async function startWorker() {
   // The worker builds the same instance the api does, without listening. That
   // is what registers the command handlers in the DI container; the dependency
@@ -111,37 +166,24 @@ export async function startWorker() {
     process.exit(1);
   }
 
-  const writeHeartbeat = () => {
-    try {
-      writeFileSync(env.worker.heartbeatPath, new Date().toISOString());
-    } catch (error) {
-      logger.error({ error }, 'Failed to write worker heartbeat');
-    }
-  };
-
-  writeHeartbeat();
+  const health = createWorkerHealth({
+    path: env.worker.heartbeatPath,
+    loops: [MAINTENANCE_LOOP],
+    logger,
+  });
+  health.write();
   // Deliberately not unref'd: this timer is what holds the event loop open
-  // until a signal arrives. A pending promise is not a ref'd handle.
-  const heartbeat = setInterval(writeHeartbeat, HEARTBEAT_INTERVAL_MS);
+  // until a signal arrives. A pending promise is not a ref'd handle. One timer
+  // per process writes the record; a future loop adds no second writer.
+  const heartbeat = setInterval(() => health.write(), HEARTBEAT_INTERVAL_MS);
 
-  // A pass that outlasts its interval must not overlap the next one: two
-  // passes contend on the same rows, fan out duplicate recomputations, and
-  // pile up on the connection pool. The gate also gives shutdown something to
-  // await.
-  const pass = singleFlight(() => runWorkerPass(app, logger));
-  const tick = () => {
-    if (pass.inFlight) {
-      logger.warn('maintenance pass still running; skipping this tick');
-      return;
-    }
-    void pass.run();
-  };
-
-  const maintenance = setInterval(tick, env.worker.maintenanceIntervalMs);
-
-  // Run once at startup rather than waiting a whole interval, so a restart
-  // does not leave a window sitting past its time.
-  tick();
+  const maintenance = startLoop({
+    name: MAINTENANCE_LOOP,
+    pass: () => runWorkerPass(app, logger),
+    intervalMs: env.worker.maintenanceIntervalMs,
+    health,
+    logger,
+  });
 
   logger.info('Worker is ready');
 
@@ -152,16 +194,16 @@ export async function startWorker() {
     }
     shuttingDown = true;
     logger.info({ signal }, 'Worker is shutting down');
-    clearInterval(heartbeat);
-    clearInterval(maintenance);
+    maintenance.stop();
 
     // Finish the pass in flight, then close. app.close() drains the event bus,
     // so the recomputations a just-committed transition triggered are not cut
     // off by the pool closing underneath them.
-    if (pass.inFlight) {
+    if (maintenance.inFlight) {
       logger.info('waiting for the maintenance pass in flight');
-      await pass.inFlight.catch(() => undefined);
+      await maintenance.inFlight.catch(() => undefined);
     }
+    clearInterval(heartbeat);
 
     await app.close();
     await closeDbConnection();

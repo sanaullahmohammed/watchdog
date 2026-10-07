@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-07-2026 17:34
+last_updated: 10-07-2026 17:54
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -93,8 +93,8 @@ development_status:
   9-6-read-service-groups: done
   9-7-read-one-incident-with-its-affected-services: done
   9-8-admin-service-lists-settle-ties-by-id: done
-  9-9-close-better-auth-s-pool-on-shutdown: review
-  9-10-worker-health-reports-completed-passes: backlog
+  9-9-close-better-auth-s-pool-on-shutdown: done
+  9-10-worker-health-reports-completed-passes: review
   9-11-every-graphql-mutation-runs-over-graphql: backlog
   9-12-public-cors-headers-on-every-answer: backlog
   9-13-sql-debug-logging-never-prints-parameter-values: backlog
