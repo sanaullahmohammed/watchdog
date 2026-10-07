@@ -84,3 +84,18 @@
 - source_spec: `spec-9-5-organization-slug-rule.md`
   summary: Better Auth's `POST /api/auth/organization/check-slug` still answers "available" for an untaken slug outside the rule, which create then refuses with `INVALID_ORGANIZATION_SLUG`. Apply the rule there too (a `hooks.before` on that path) or disable the endpoint, before any client relies on it.
   evidence: Story 9.5 Review Triage Log #3; `crud-org.mjs:151-159` checks only existence. No WatchDog code calls it today.
+
+## From Story 9.6 (2026-10-07)
+
+- source_spec: `spec-9-6-read-service-groups.md`
+  summary: `commandBus.register` and `queryBus.register` are a `Map.set`, so a second handler registered under an existing action type silently replaces the first, with no error at boot. A copied slice that reuses a type breaks another read or command depending on load order. Make `register` throw on a duplicate type (checking first how a second `buildApp()` in one process re-registers, per the 9.2 entry).
+  evidence: Story 9.6 spec review; `src/shared/cqrs/command-bus.ts:13-24`. The service reads use `'get'` and `'list'`; 9.6 names its types `'group.get'` and `'group.list'` to avoid the collision.
+- source_spec: `spec-9-6-read-service-groups.md`
+  summary: `GET /api/v1/service-groups/urn:uuid:<uuid>` and `serviceGroup(id: "urn:uuid:<uuid>")` pass the uuid checks and reach Postgres as a masked 500. Settle with the 9.1 `urn:uuid:` entry.
+  evidence: Story 9.6 Review Triage Log #6; `ajv-formats` uuid regex allows the `urn:uuid:` prefix and Postgres's uuid input refuses it.
+- source_spec: `spec-9-6-read-service-groups.md`
+  summary: The admin GraphQL `Service` type exposes `serviceGroupId` but no `group: ServiceGroup` field, so a client joins services to groups itself. Decide whether to add the field.
+  evidence: Story 9.6 Review Triage Log #7; changing `Service` was outside Story 9.6.
+- source_spec: `spec-9-6-read-service-groups.md`
+  summary: REST route schemas declare only their success response, so the generated API description shows no 400, 401 or 404. Settle with API documentation (audit F-10, Epic 8).
+  evidence: Story 9.6 Review Triage Log #8; pre-existing across every route.
