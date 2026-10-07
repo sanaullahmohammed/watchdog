@@ -38,7 +38,8 @@ export default function serviceRepository({
         where true
           ${showArchived ? tx.sql`` : tx.sql`and archived_at is null`}
           ${filter.publicOnly ? tx.sql`and is_public = true` : tx.sql``}
-        order by display_order asc, name asc
+        -- id last: names are not unique, so ties must not reorder between reads
+        order by display_order asc, name asc, id asc
       `;
       return rows.map(serviceMapper.toDomain);
     },
