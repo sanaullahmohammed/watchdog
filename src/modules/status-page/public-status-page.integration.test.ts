@@ -39,7 +39,8 @@ const edge = {
   atLimit: { slug: ofLength(SLUG_MAX_LENGTH), id: '' },
   // One character over, every character valid.
   overLimit: { slug: ofLength(SLUG_MAX_LENGTH + 1), id: '' },
-  // Better Auth accepts it; WatchDog's rule does not.
+  // Better Auth now refuses it, so it is inserted directly to stand for an
+  // organization created before the hooks.
   offRule: { slug: `${tag.toUpperCase()}_OFF`, id: '' },
 };
 
@@ -79,16 +80,28 @@ describe('Story 3.2: resolve an organization from its public slug', () => {
     } = await signUpWithOrg(app, slugA));
     ({ userId: userBId, orgId: orgBId } = await signUpWithOrg(app, slugB));
 
-    // Owned by A: an operator may create several organizations.
-    for (const org of Object.values(edge)) {
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/auth/organization/create',
-        headers: { cookie: cookieA, origin: TEST_ORIGIN },
-        payload: { name: org.slug, slug: org.slug },
-      });
-      assert.equal(response.statusCode, 200, response.body);
-      org.id = JSON.parse(response.body).id;
+    // Owned by A: an operator may create several organizations. Inside the
+    // rule, so Better Auth creates it.
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/auth/organization/create',
+      headers: { cookie: cookieA, origin: TEST_ORIGIN },
+      payload: { name: edge.atLimit.slug, slug: edge.atLimit.slug },
+    });
+    assert.equal(created.statusCode, 200, created.body);
+    edge.atLimit.id = JSON.parse(created.body).id;
+
+    // Inserted directly: only these two stand for organizations created
+    // before the Better Auth hooks, which now refuse their slugs.
+    for (const org of [edge.overLimit, edge.offRule]) {
+      org.id = randomBytes(24)
+        .toString('base64url')
+        .replace(/[_-]/g, 'a')
+        .slice(0, 32);
+      await sql`
+        insert into "organization" ("id", "name", "slug", "createdAt")
+        values (${org.id}, ${org.slug}, ${org.slug}, now())
+      `;
     }
   });
 

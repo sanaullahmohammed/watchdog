@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { SLUG_MAX_LENGTH } from '@/shared/domain/slug';
 import { captureCookie } from '@/shared/testing/tenant';
 import {
   findOrgRole,
@@ -429,6 +430,172 @@ describe('Belonging to more than one organization', () => {
         `${orgId} must not see the other organization's group`,
       );
     }
+  });
+});
+
+/**
+ * Story 9.5 — One slug rule for organizations, at creation and lookup.
+ *
+ * Better Auth accepts any non-empty slug; its organization hooks refuse one
+ * the public lookup could never answer. Asserted by code, because Better Auth
+ * also answers 400 for a taken slug and a schema failure.
+ */
+describe('The organization slug rule', () => {
+  const tag = randomBytes(4).toString('hex');
+  const ownerEmail = `slug-${tag}@example.test`;
+
+  let ownerCookie = '';
+  let ownerUserId = '';
+  const createdOrgIds: string[] = [];
+
+  function create(slug: string) {
+    return app.inject({
+      method: 'POST',
+      url: '/api/auth/organization/create',
+      headers: { cookie: ownerCookie, origin: ORIGIN },
+      payload: { name: `Slug ${tag}`, slug },
+    });
+  }
+
+  function update(organizationId: string, data: object) {
+    return app.inject({
+      method: 'POST',
+      url: '/api/auth/organization/update',
+      headers: { cookie: ownerCookie, origin: ORIGIN },
+      payload: { organizationId, data },
+    });
+  }
+
+  async function createAccepted(slug: string): Promise<string> {
+    const response = await create(slug);
+    assert.equal(response.statusCode, 200, response.body);
+    const id = JSON.parse(response.body).id as string;
+    createdOrgIds.push(id);
+    return id;
+  }
+
+  async function slugRows(slug: string): Promise<number> {
+    const rows =
+      await sql`select "id" from "organization" where "slug" = ${slug}`;
+    return rows.length;
+  }
+
+  async function slugOf(id: string): Promise<string> {
+    const [row] = await sql<{ slug: string }[]>`
+      select "slug" from "organization" where "id" = ${id}
+    `;
+    return row.slug;
+  }
+
+  function page(slug: string) {
+    return app.inject({ method: 'GET', url: `/status/${slug}` });
+  }
+
+  function assertRefused(response: { statusCode: number; body: string }) {
+    assert.equal(response.statusCode, 400, response.body);
+    assert.equal(JSON.parse(response.body).code, 'INVALID_ORGANIZATION_SLUG');
+  }
+
+  before(async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-up/email',
+      payload: { email: ownerEmail, password, name: ownerEmail },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    ownerCookie = captureCookie(response.headers as Record<string, unknown>);
+    const [row] = await sql<{ id: string }[]>`
+      select "id" from "user" where "email" = ${ownerEmail}
+    `;
+    ownerUserId = row.id;
+  });
+
+  after(async () => {
+    if (createdOrgIds.length > 0) {
+      await sql`delete from "organization" where "id" in ${sql(createdOrgIds)}`;
+    }
+    await sql`delete from "user" where "id" = ${ownerUserId}`;
+  });
+
+  const refused: [string, string][] = [
+    ['uppercase', `Acme-${tag}`],
+    ['a space', `acme ${tag}`],
+    ['an underscore', `acme_${tag}`],
+    ['a leading hyphen', `-${tag}`],
+    ['a trailing hyphen', `${tag}-`],
+    ['a doubled hyphen', `a--${tag}`],
+    [
+      'too many characters',
+      `${tag}${'x'.repeat(SLUG_MAX_LENGTH + 1 - tag.length)}`,
+    ],
+  ];
+
+  for (const [label, slug] of refused) {
+    it(`refuses a slug with ${label} at creation`, async () => {
+      assertRefused(await create(slug));
+      assert.equal(await slugRows(slug), 0);
+    });
+  }
+
+  it('accepts a slug of exactly the maximum length', async () => {
+    const slug = `${tag}${'x'.repeat(SLUG_MAX_LENGTH - tag.length)}`;
+    assert.equal(slug.length, SLUG_MAX_LENGTH);
+    await createAccepted(slug);
+    assert.equal((await page(slug)).statusCode, 200);
+  });
+
+  it('accepts hyphen-separated runs', async () => {
+    const slug = `a-b-${tag}`;
+    await createAccepted(slug);
+    assert.equal((await page(slug)).statusCode, 200);
+  });
+
+  it('accepts a one-character slug', async () => {
+    const candidates = [...'abcdefghijklmnopqrstuvwxyz0123456789'];
+    for (const slug of candidates) {
+      const response = await create(slug);
+      if (response.statusCode === 200) {
+        createdOrgIds.push(JSON.parse(response.body).id);
+        assert.equal((await page(slug)).statusCode, 200);
+        return;
+      }
+      assert.equal(
+        JSON.parse(response.body).code,
+        'ORGANIZATION_ALREADY_EXISTS',
+        response.body,
+      );
+    }
+    assert.fail('all 36 one-character slugs are already taken');
+  });
+
+  it('refuses a rename outside the rule and leaves the slug alone', async () => {
+    const slug = `ren-${tag}`;
+    const id = await createAccepted(slug);
+
+    assertRefused(await update(id, { slug: `Bad ${tag}` }));
+    assert.equal(await slugOf(id), slug);
+    assert.equal(await slugRows(`Bad ${tag}`), 0);
+  });
+
+  it('accepts a rename inside the rule', async () => {
+    const id = await createAccepted(`from-${tag}`);
+    const next = `to-${tag}`;
+
+    const response = await update(id, { slug: next });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(await slugOf(id), next);
+    assert.equal((await page(next)).statusCode, 200);
+  });
+
+  it('does not check an update that sends no slug', async () => {
+    const slug = `keep-${tag}`;
+    const id = await createAccepted(slug);
+
+    const response = await update(id, { name: `Renamed ${tag}` });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(await slugOf(id), slug);
   });
 });
 
