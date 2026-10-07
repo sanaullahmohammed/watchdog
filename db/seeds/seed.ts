@@ -190,7 +190,7 @@ async function seed(): Promise<void> {
         userId,
         title: 'Elevated error rates on the Public API',
         impact: 'major',
-        startedAt: new Date(Date.now() - 40 * MINUTE),
+        startedAt: new Date(Date.now() - 40 * MINUTE).toISOString(),
         affectedServices: [
           { serviceId: serviceId('public-api'), impact: 'major' },
           { serviceId: serviceId('webhooks'), impact: 'minor' },

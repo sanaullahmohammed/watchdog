@@ -89,10 +89,3 @@ export function assertNoDuplicates(
     );
   }
 }
-
-/** Refuses text that is empty once trimmed: it says nothing while looking like it does. */
-export function assertNotBlank(value: string, field: string): void {
-  if (value.trim().length === 0) {
-    throw new ArgumentInvalidException(`${field} must not be blank.`);
-  }
-}

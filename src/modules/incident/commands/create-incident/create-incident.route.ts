@@ -25,9 +25,6 @@ export default async function createIncident(fastify: FastifyRouteInstance) {
       const id = await fastify.commandBus.execute<CreateIncidentCommandResult>(
         createIncidentCommand({
           ...req.body,
-          startedAt: req.body.startedAt
-            ? new Date(req.body.startedAt)
-            : undefined,
           orgId: context.orgId,
           userId: context.userId,
         }),

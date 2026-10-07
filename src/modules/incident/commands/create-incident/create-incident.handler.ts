@@ -3,16 +3,20 @@ import type { CreateIncidentProps } from '@/modules/incident/domain/incident.dom
 import { timelineEntryMessage } from '@/modules/incident/domain/incident-timeline';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentCreatedEvent } from '@/shared/events/incident.events';
-import {
-  assertNoDuplicates,
-  assertNoNullFields,
-} from '@/shared/validation/input';
+import { assertNoDuplicates, parseDate } from '@/shared/validation/input';
+import { assertMatchesSchema } from '@/shared/validation/typebox-guard';
+import { createIncidentRequestDtoSchema } from './create-incident.schema';
 
 export type CreateIncidentCommandResult = Promise<string>;
 
-export type CreateIncidentCommandPayload = CreateIncidentProps & {
+export type CreateIncidentCommandPayload = Omit<
+  CreateIncidentProps,
+  'startedAt'
+> & {
   orgId: string;
   userId: string | null;
+  /** The request's ISO date-time, converted after the check. */
+  startedAt?: string | null;
   /** The opening timeline entry. A default is written when absent. */
   message?: string | null;
 };
@@ -30,17 +34,24 @@ export default function makeCreateIncident({
     async handler({
       payload,
     }: ReturnType<typeof createIncidentCommand>): CreateIncidentCommandResult {
-      const { orgId, userId, message, ...props } = payload;
-      // GraphQL cannot express "optional but never null", a format, or a
-      // minimum length, so these run here, where both surfaces arrive.
-      assertNoNullFields(payload, {
-        nullable: ['userId', 'message', 'startedAt'],
+      const { orgId, userId, message, startedAt, ...props } = payload;
+      assertMatchesSchema(createIncidentRequestDtoSchema, {
+        ...props,
+        message,
+        startedAt,
       });
       assertNoDuplicates(
         (props.affectedServices ?? []).map((affected) => affected.serviceId),
         'affectedServices',
       );
-      const incident = incidentDomain.declareIncident(orgId, userId, props);
+      // The format check admits a leap second that `Date` cannot read.
+      const incident = incidentDomain.declareIncident(orgId, userId, {
+        ...props,
+        startedAt:
+          startedAt === undefined || startedAt === null
+            ? undefined
+            : parseDate(startedAt, 'startedAt'),
+      });
 
       // Declaring is the first transition, [none] -> investigating, and
       // DOMAIN.md requires every transition to append a timeline entry in the
