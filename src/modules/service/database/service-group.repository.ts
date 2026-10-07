@@ -12,7 +12,26 @@ const UNIQUE_VIOLATION = '23505';
 export default function serviceGroupRepository({
   serviceGroupMapper,
 }: Dependencies): ServiceGroupRepository {
+  async function findById(tx: TenantTransaction, id: string) {
+    const rows = await tx.sql<ServiceGroupModel[]>`
+      select * from service_groups where id = ${id} limit 1
+    `;
+    return rows[0] ? serviceGroupMapper.toDomain(rows[0]) : undefined;
+  }
+
   return {
+    findById,
+
+    async list(tx: TenantTransaction) {
+      // Ends at id, a unique column, so rows equal on the other keys keep one
+      // order between requests.
+      const rows = await tx.sql<ServiceGroupModel[]>`
+        select * from service_groups
+        order by display_order asc, name asc, id asc
+      `;
+      return rows.map(serviceGroupMapper.toDomain);
+    },
+
     async insert(tx: TenantTransaction, group: ServiceGroupEntity) {
       try {
         await tx.sql`
@@ -47,10 +66,7 @@ export default function serviceGroupRepository({
       }
 
       if (Object.keys(columns).length === 0) {
-        const rows = await tx.sql<ServiceGroupModel[]>`
-          select * from service_groups where id = ${id} limit 1
-        `;
-        return rows[0] ? serviceGroupMapper.toDomain(rows[0]) : undefined;
+        return findById(tx, id);
       }
 
       columns.updated_at = new Date();
