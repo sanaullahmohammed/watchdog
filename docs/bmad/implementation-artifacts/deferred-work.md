@@ -114,3 +114,12 @@
 - source_spec: `spec-9-9-close-auth-pool.md`
   summary: No test proves the api's shutdown finishes `fastify.close()` (drain, auth pool) before `closeDbConnection()`; removing `syncClose: true` would pass every suite.
   evidence: Story 9.9 Review Triage Log #7. A meaningful test spawns the api, starts a slow event handler, sends SIGTERM and checks the handler's database work completed.
+
+## From Story 9.10 (2026-10-07)
+
+- source_spec: `spec-9-10-worker-health.md`
+  summary: `startWorker`'s health wiring (record path, loop names, heartbeat timer) is checked only by hand; no test starts the real worker and runs its healthcheck. Add a seam (an injected pass or `orgIds`) so a test can start it without an unscoped pass.
+  evidence: Story 9.10 Review Triage Log #11; AGENTS.md forbids unscoped worker passes in integration tests.
+- source_spec: `spec-9-10-worker-health.md`
+  summary: During a database outage `runWorkerPass` logs and resolves, so the worker records completed passes and reports healthy while doing no work. Decide whether a pass whose discovery fails, or whose every organization fails, should count as completed.
+  evidence: Story 9.10 Review Triage Log #12; `runWorkerPass` catches discovery and per-organization failures (`src/worker.ts`).
