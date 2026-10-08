@@ -153,3 +153,15 @@
 - source_spec: `spec-9-13-sql-log-redaction.md`
   summary: Besides `message` and `detail`, Postgres errors carry `where`, `hint` and `internal_query`, which can echo values. The Epic 6 prerequisite on values in Postgres errors should cover every field postgres.js copies onto the error.
   evidence: Story 9.13 Review Triage Log #7.
+
+## From Story 9.14 (2026-10-08)
+
+- source_spec: `spec-9-14-revoke-service-delete.md`
+  summary: DOMAIN's "v1 has no hard service delete" could note that a migration enforces it, as its `check_results` entry does. Changes DOMAIN first.
+  evidence: Story 9.14 Tasks.
+- source_spec: `spec-9-14-revoke-service-delete.md`
+  summary: Because the runtime role can insert and delete rows in dbmate's `schema_migrations`, a migration can be recorded as applied when it never ran (or hidden), so a revoke like this story's could appear applied while absent; a bare `dbmate up` or `down` as that role does exactly this. The fix is a migration revoking `watchdog_app`'s privileges on `schema_migrations`.
+  evidence: Story 9.14 Code Map.
+- source_spec: `spec-9-14-revoke-service-delete.md`
+  summary: AGENTS.md says "Services are archived, never hard-deleted." as a convention. Note beside it that a migration revokes `DELETE` on `services` from `watchdog_app`, and that `service-delete-privilege.integration.test.ts` guards the grant, as the append-only bullet does for `incident_updates`.
+  evidence: Story 9.14 Review Triage Log #8; routed defer because the fix edits an agent-context file.
