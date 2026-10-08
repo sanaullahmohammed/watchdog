@@ -14,6 +14,10 @@ import { signUpWithOrg } from '@/shared/testing/tenant';
  * Each refusal asserts the field it names, that no row was written, and that
  * no service event was emitted. Where a REST route can carry the same input, a
  * control shows it is still a 400 there.
+ *
+ * The suite also holds the Epic 9 retro item 1a tests: the service(id)
+ * malformed-id refusal, the REST-versus-GraphQL row comparison, and the
+ * override-ladder refusal.
  */
 
 const ORIGIN = 'http://localhost:3000';
@@ -28,9 +32,9 @@ let groupId = '';
 const emitted: string[] = [];
 
 function api(
-  method: 'POST' | 'PATCH',
+  method: 'POST' | 'PATCH' | 'PUT' | 'GET',
   url: string,
-  payload: Record<string, unknown>,
+  payload?: Record<string, unknown>,
 ) {
   return app.inject({
     method,
@@ -59,21 +63,16 @@ async function gql(query: string, variables?: object) {
 /** Refused as a client mistake, with the offending field named. */
 function assertRefused(
   result: Awaited<ReturnType<typeof gql>>,
-  source: 'handler' | 'graphql-type',
+  source: 'handler' | RegExp,
   ...fields: string[]
 ) {
   assert.ok(result.statusCode < 500, `answered ${result.statusCode}`);
   const messages = (result.body.errors ?? []).map((e) => e.message).join(' | ');
   assert.notEqual(messages, '', 'expected an error');
   assert.doesNotMatch(messages, /Internal Server Error/);
-  // Default: the handler refused. Only a fraction opts into GraphQL's own Int
-  // type, which refuses before any handler runs.
-  assert.match(
-    messages,
-    source === 'handler'
-      ? /^Invalid input\./
-      : /^Variable "\$input" got invalid value 1\.5/,
-  );
+  // Default: the handler refused. A RegExp opts into GraphQL's own type
+  // check, which refuses before any handler runs, and names what it expects.
+  assert.match(messages, source === 'handler' ? /^Invalid input\./ : source);
   for (const field of fields) {
     assert.match(messages, new RegExp(`\\b${field}\\b`));
   }
@@ -94,7 +93,7 @@ async function rows() {
   return withTenantTransaction(orgId, async ({ sql: tx }) => {
     const service = await tx`
       select name, slug, display_order, is_public, description,
-             service_group_id, updated_at from services where id = ${serviceId}`;
+             service_group_id, manual_status_override, updated_at from services where id = ${serviceId}`;
     const group = await tx`
       select name, slug, display_order, updated_at
       from service_groups where id = ${groupId}`;
@@ -108,7 +107,7 @@ async function refused(run: () => ReturnType<typeof gql>, ...fields: string[]) {
 }
 
 async function refusedFrom(
-  source: 'handler' | 'graphql-type',
+  source: 'handler' | RegExp,
   run: () => ReturnType<typeof gql>,
   ...fields: string[]
 ) {
@@ -237,7 +236,10 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
 
   it('refuses a negative or fractional displayOrder', async () => {
     for (const displayOrder of [-1, 1.5]) {
-      const source = displayOrder === 1.5 ? 'graphql-type' : 'handler';
+      const source =
+        displayOrder === 1.5
+          ? /^Variable "\$input" got invalid value 1\.5/
+          : 'handler';
       const refused = (run: () => ReturnType<typeof gql>, field: string) =>
         refusedFrom(source, run, field);
       await refused(
@@ -416,6 +418,123 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
     assert.equal(result.body.errors, undefined, JSON.stringify(result.body));
     await app.eventBus.drain();
     assert.ok(emitted.includes(events.serviceCreatedEvent.type));
+  });
+
+  it('refuses a malformed id on a service query over GraphQL as REST does', async () => {
+    const result = await gql('query ($id: ID!) { service(id: $id) { id } }', {
+      id: 'not-a-uuid',
+    });
+    assert.equal(result.statusCode, 400, JSON.stringify(result.body));
+    assert.equal(result.body.data, null);
+    assert.equal(result.body.errors?.length, 1);
+    assert.equal(
+      result.body.errors?.[0]?.message,
+      'Invalid input. id: must match format "uuid"',
+    );
+    assert.equal((await api('GET', '/services/not-a-uuid')).statusCode, 400);
+    const unknown = await gql('query ($id: ID!) { service(id: $id) { id } }', {
+      id: randomUUID(),
+    });
+    assert.equal(unknown.statusCode, 404, JSON.stringify(unknown.body));
+  });
+
+  it('stores the same columns over REST and GraphQL', async () => {
+    const columns = (id: string) =>
+      withTenantTransaction(orgId, async ({ sql: tx }) => {
+        const [row] = await tx`
+          select name, description, is_public, display_order, service_group_id
+          from services where id = ${id}`;
+        return row;
+      });
+    const inputs = [
+      {
+        name: `${tag} both`,
+        description: 'd',
+        isPublic: false,
+        displayOrder: 3,
+        serviceGroupId: groupId,
+      },
+      { name: `${tag} min` },
+    ];
+    for (const [i, input] of inputs.entries()) {
+      const rest = await api('POST', '/services', {
+        ...input,
+        slug: `${tag}-rest${i}`,
+      });
+      assert.equal(rest.statusCode, 201, rest.body);
+      const viaGql = await createService({ ...input, slug: `${tag}-gql${i}` });
+      assert.equal(viaGql.body.errors, undefined, JSON.stringify(viaGql.body));
+      const restRow = await columns(JSON.parse(rest.body).id);
+      const gqlRow = await columns(
+        (viaGql.body.data as { createService: string }).createService,
+      );
+      assert.deepEqual(gqlRow, restRow);
+      if (i === 0) {
+        assert.deepEqual(restRow, {
+          name: `${tag} both`,
+          description: 'd',
+          is_public: false,
+          display_order: 3,
+          service_group_id: groupId,
+        });
+      } else {
+        // Defaults, when only the required fields are sent.
+        assert.deepEqual(restRow, {
+          name: `${tag} min`,
+          description: null,
+          is_public: true,
+          display_order: 0,
+          service_group_id: null,
+        });
+      }
+    }
+  });
+
+  it('refuses a status that is not on the ladder, over both surfaces', async () => {
+    // A real override to lose: a bogus status that cleared it would show.
+    const set = await api('PUT', `/services/${serviceId}/status-override`, {
+      status: 'degraded',
+    });
+    assert.equal(set.statusCode, 200, set.body);
+    await app.eventBus.drain();
+    emitted.length = 0;
+
+    await refusedFrom(
+      /does not exist in "ServiceStatus"/,
+      () =>
+        gql(
+          `mutation ($id: ID!, $input: SetStatusOverridePayload!) {
+             setServiceStatusOverride(id: $id, input: $input)
+           }`,
+          { id: serviceId, input: { status: 'bogus' } },
+        ),
+      'status',
+    );
+    await app.eventBus.drain();
+    const countsBefore = await counts();
+    const rowsBefore = await rows();
+    emitted.length = 0;
+    const rest = await api('PUT', `/services/${serviceId}/status-override`, {
+      status: 'bogus',
+    });
+    await app.eventBus.drain();
+    assert.equal(rest.statusCode, 400, rest.body);
+    // The field the validator named, not the body: every error body carries a
+    // `statusCode` key, which any match on the text would find.
+    assert.deepEqual(
+      JSON.parse(rest.body).subErrors.map((e: { path: string }) => e.path),
+      ['/status'],
+    );
+    assert.equal(await counts(), countsBefore, 'a row was written');
+    assert.equal(await rows(), rowsBefore, 'a row was changed');
+    assert.deepEqual(emitted, [], 'an event was emitted');
+
+    const cleared = await gql(
+      `mutation ($id: ID!) { clearServiceStatusOverride(id: $id) }`,
+      { id: serviceId },
+    );
+    assert.equal(cleared.body.errors, undefined, JSON.stringify(cleared.body));
+    await app.eventBus.drain();
   });
 
   it('refuses a malformed id on every service mutation, and a well-formed unknown id is not found', async () => {

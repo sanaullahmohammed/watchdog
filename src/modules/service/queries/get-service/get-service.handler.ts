@@ -2,6 +2,7 @@ import { serviceActionCreator } from '@/modules/service';
 import type { ServiceEntity } from '@/modules/service/domain/service.types';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { NotFoundException } from '@/shared/exceptions';
+import { assertUuid } from '@/shared/validation/typebox-guard';
 
 export type GetServiceQueryResult = Promise<ServiceEntity>;
 
@@ -18,6 +19,7 @@ export default function makeGetService({
     async handler({
       payload,
     }: ReturnType<typeof getServiceQuery>): GetServiceQueryResult {
+      assertUuid(payload.id, 'id');
       const service = await withTenantTransaction(payload.orgId, (tx) =>
         serviceRepository.findById(tx, payload.id),
       );

@@ -4,7 +4,7 @@ import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
-import { signUpWithOrg, TEST_ORIGIN } from '@/shared/testing/tenant';
+import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /**
  * Epic 3 retrospective, action item 7 (R-6): GraphQL tells a caller what REST
@@ -17,7 +17,6 @@ const tag = `gqlerr-${randomBytes(4).toString('hex')}`;
 const INTERNAL = 'connect ECONNREFUSED 10.20.30.40:5432 (db.internal)';
 
 let app: FastifyInstance;
-let cookie = '';
 let userId = '';
 let orgId = '';
 const logLines: string[] = [];
@@ -60,7 +59,16 @@ describe('GraphQL errors, masked the way REST masks them (retrospective R-6)', (
       },
     });
     await app.ready();
-    ({ cookie, userId, orgId } = await signUpWithOrg(app, tag));
+    app.graphql.extendSchema('extend type Query { dbErrorProbe: String! }');
+    app.graphql.defineResolvers({
+      Query: {
+        dbErrorProbe: async () => {
+          const [row] = await sql`select 'x'::uuid as value`;
+          return String(row.value);
+        },
+      },
+    });
+    ({ userId, orgId } = await signUpWithOrg(app, tag));
   });
 
   after(async () => {
@@ -160,24 +168,28 @@ describe('GraphQL errors, masked the way REST masks them (retrospective R-6)', (
     );
   });
 
-  it('masks a database error a real resolver lets through, not only an injected one', async () => {
-    // A malformed id reaches Postgres over GraphQL, where REST refuses it
-    // with a 400 first. Its message once came back verbatim. Masked, it is a
-    // 500, which misfiles a client mistake: the right answer is REST's 400,
-    // and that is a separate fix. What this pins is that the text is gone.
-    const result = await gql(
-      'query { service(id: "not-a-uuid") { id } }',
-      {},
-      {
-        cookie,
-        origin: TEST_ORIGIN,
-      },
-    );
+  it('masks a genuine database error and logs the original under the id it returns', async () => {
+    // A test-only field, defined on this app instance alone, runs SQL that
+    // Postgres refuses. The driver's own PostgresError reaches the real
+    // GraphQL error path, with no dependence on a product bug. It is
+    // non-null, because mercurius answers 500 only when `data` is null.
+    const result = await gql('query { dbErrorProbe }');
 
+    assert.equal(result.statusCode, 500, result.body);
     assert.ok(!result.body.includes('invalid input syntax'), result.body);
-    assert.equal(
-      JSON.parse(result.body).errors[0].message,
-      'Internal Server Error',
-    );
+    const body = JSON.parse(result.body);
+    assert.equal(body.data, null);
+    assert.equal(body.errors.length, 1);
+    assert.equal(body.errors[0].message, 'Internal Server Error');
+    const correlationId = body.errors[0].extensions?.correlationId;
+    assert.match(correlationId, /^[0-9a-f-]{36}$/);
+
+    const logged = logLines
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.correlationId === correlationId);
+    assert.ok(logged, 'the original is logged under the correlation id');
+    assert.equal(logged.level, 50);
+    assert.match(logged.err.message, /invalid input syntax for type uuid/);
+    assert.ok(logged.err.stack, 'with its stack, since the server broke');
   });
 });
