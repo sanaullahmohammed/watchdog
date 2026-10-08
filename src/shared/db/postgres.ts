@@ -1,24 +1,12 @@
+import pino from 'pino';
 import postgres from 'postgres';
 import { env } from '@/config';
-import { LogLevel } from '@/config/env';
+import { LOG_REDACT_PATHS, sqlDebugOption } from '@/shared/db/sql-debug';
 
 const sql = postgres(env.db.url, {
-  debug: (
-    conn: number,
-    query: string,
-    params: unknown[],
-    paramTypes: unknown[],
-  ) => {
-    if (env.log.level === LogLevel.debug) {
-      console.debug(`
-    SQL::
-      Executing query: "${query.trim()}"
-      Params: ${JSON.stringify(params)}
-      Param Types: ${JSON.stringify(paramTypes)}
-      Connection: ${conn}
-    `);
-    }
-  },
+  ...sqlDebugOption(env.log.level, () =>
+    pino({ level: env.log.level, redact: LOG_REDACT_PATHS }),
+  ),
 });
 
 export async function closeDbConnection() {
