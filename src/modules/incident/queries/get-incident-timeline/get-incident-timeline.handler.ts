@@ -2,6 +2,7 @@ import { incidentActionCreator } from '@/modules/incident';
 import type { IncidentStatus } from '@/modules/incident/domain/incident.types';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { NotFoundException } from '@/shared/exceptions';
+import { assertUuid } from '@/shared/validation/typebox-guard';
 
 export type IncidentTimelineEntry = {
   id: string;
@@ -27,6 +28,7 @@ export default function makeGetIncidentTimeline({
     }: ReturnType<
       typeof getIncidentTimelineQuery
     >): GetIncidentTimelineQueryResult {
+      assertUuid(payload.incidentId, 'id');
       const { orgId, incidentId } = payload;
 
       return withTenantTransaction(orgId, async (tx) => {

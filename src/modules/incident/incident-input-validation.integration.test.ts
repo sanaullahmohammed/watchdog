@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
@@ -13,6 +13,10 @@ import { signUpWithOrg } from '@/shared/testing/tenant';
  *
  * Each refusal asserts the field it names, that no row or timeline entry was
  * written or changed, and that no incident event was emitted.
+ *
+ * Epic 9 retro item 1c: the incidentTimeline(id) query refuses a malformed id
+ * with a 400, as REST does. It is a read, so it writes nothing and does not go
+ * through `refused()`.
  */
 
 const ORIGIN = 'http://localhost:3000';
@@ -27,12 +31,12 @@ let serviceId = '';
 let incidentId = '';
 const emitted: string[] = [];
 
-function api(method: 'POST' | 'PATCH', url: string, payload: object) {
+function api(method: 'GET' | 'POST' | 'PATCH', url: string, payload?: object) {
   return app.inject({
     method,
     url: `/api/v1${url}`,
     headers: { cookie, origin: ORIGIN },
-    payload: payload as Record<string, unknown>,
+    payload: payload as Record<string, unknown> | undefined,
   });
 }
 
@@ -294,6 +298,31 @@ describe('Story 9.3: GraphQL refuses what REST refuses, incidents', () => {
       'handler',
       'id',
     );
+  });
+
+  it('refuses a malformed id on the incidentTimeline query over GraphQL as REST does', async () => {
+    const query = 'query ($id: ID!) { incidentTimeline(id: $id) { id } }';
+    const result = await gql(query, { id: NOT_A_UUID });
+    assert.equal(result.statusCode, 400, JSON.stringify(result.body));
+    assert.equal(result.body.data, null);
+    assert.equal(result.body.errors?.length, 1);
+    assert.equal(
+      result.body.errors?.[0]?.message,
+      'Invalid input. id: must match format "uuid"',
+    );
+    const rest = await api('GET', `/incidents/${NOT_A_UUID}/updates`);
+    assert.equal(rest.statusCode, 400, rest.body);
+    assert.deepEqual(
+      JSON.parse(rest.body).subErrors.map((e: { path: string }) => e.path),
+      ['/id'],
+    );
+    const unknown = await gql(query, { id: randomUUID() });
+    assert.equal(unknown.statusCode, 404, JSON.stringify(unknown.body));
+    const found = await gql(query, { id: incidentId });
+    assert.equal(found.statusCode, 200, JSON.stringify(found.body));
+    const timeline = (found.body.data as { incidentTimeline: unknown[] })
+      .incidentTimeline;
+    assert.ok(Array.isArray(timeline) && timeline.length > 0);
   });
 
   it('refuses an explicit null for an optional field, and REST agrees', async () => {

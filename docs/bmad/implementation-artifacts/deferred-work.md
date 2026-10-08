@@ -48,9 +48,6 @@
   summary: A `startedAt` whose offset moves it outside years 1..9999, such as `9999-12-31T23:59:59-23:59`, passes the format and becomes a masked 500 when Postgres rejects it. Settle with the year-0000 entry above.
   evidence: Story 9.3 Review Triage Log #16; `new Date(...).toISOString()` gives `+010000-01-01T23:58:59.000Z`.
 - source_spec: `spec-9-3-graphql-incident-validation.md`
-  summary: `query { incidentTimeline(id: "not-a-uuid") }` reaches Postgres and is still masked, because its query handler does not call `assertUuid` (`service(id)` and `maintenanceWindow(id)` were fixed by retro items 1a and 1b).
-  evidence: Story 9.3 Review Triage Log #17; `get-incident-timeline.handler.ts` calls `findById` without a check, while the REST route requires a uuid param.
-- source_spec: `spec-9-3-graphql-incident-validation.md`
   summary: Timeline order (`created_at` from `clock_timestamp()`, then `id`) assumes the database clock never steps back. On the owner's Docker Desktop on WSL2 it steps back by up to 1.4 s several times a minute, so incident timeline tests fail intermittently (about 1 full run in 10) with a later entry sorted before the declaration. Decide whether to record it as an AGENTS.md pitfall, make the tests tolerate it, or order entries by something monotonic.
   evidence: Story 9.3 verification. A tight `clock_timestamp()` loop in the postgres container saw 4 backward steps in 120 s, worst 1.411 s, and `journalctl` logs "Time jumped backwards" every ~27 s. Failures seen: `incident-concurrency` "makes a posted update wait…" and "never reopens a resolved incident…", `incident-lifecycle` "appends a timeline entry with each transition…". All three show a later status sorted before `investigating`; no timeline write or ordering code changed in this story.
 
@@ -169,5 +166,8 @@
   summary: The REST-versus-GraphQL row comparison covers service create only; service update and service-group create and update are not compared, though REST's null coercion can store different values there.
   evidence: Review Triage Log #8; `service-input-validation.integration.test.ts` "stores the same columns over REST and GraphQL" creates only.
 - source_spec: `spec-epic-9-retro-1a-service-read-ids.md`
-  summary: `service(id: "urn:uuid:<uuid>")` passes `assertUuid` and still answers a masked 500, as the other `urn:uuid:` entries describe for mutations, maintenance and groups.
-  evidence: Review Triage Log #13; `typebox-guard.ts:78` checks `format: 'uuid'` only, which ajv-formats lets carry the `urn:uuid:` prefix.
+  summary: `service(id)`, `incident(id)` and `incidentTimeline(id)` pass `assertUuid` with a `urn:uuid:<uuid>` id and still answer a masked 500 (the incident reads over REST too), as the other `urn:uuid:` entries describe for mutations, maintenance and groups.
+  evidence: Review Triage Log #13; `typebox-guard.ts:78` checks `format: 'uuid'` only, which ajv-formats lets carry the `urn:uuid:` prefix; the retro 1c review reproduced it for `incident(id)` and `incidentTimeline(id)` over both surfaces.
+- source_spec: `spec-epic-9-retro-1c-incident-timeline-read-ids.md`
+  summary: Nothing fails when a new id-taking GraphQL `Query` field ships without a malformed-id case, so its handler can skip `assertUuid` and answer a masked 500 again. The retro's DR-1 Prevention proposes 9.11's registry pattern applied to `Query` fields.
+  evidence: Review Triage Log #2; every id-taking read has a hand-written malformed-id test today, but no test enumerates `Query` fields the way 9.11's registry enumerates mutations.
