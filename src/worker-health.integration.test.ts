@@ -3,10 +3,12 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { after, describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import type { FastifyBaseLogger } from 'fastify';
+import { buildApp } from '@/server/build-app';
+import sql, { closeDbConnection } from '@/shared/db/postgres';
 import { createWorkerHealth } from '@/worker-health';
-import { startLoop } from './worker';
+import { closeWorker, runWorkerPass, startLoop } from './worker';
 
 /**
  * Story 9.10: the healthcheck reports completed passes, not a turning timer.
@@ -15,6 +17,10 @@ import { startLoop } from './worker';
  * allow (an interval of at least 1 s), so every wait is a few seconds, and
  * each is at least 2 s clear of its threshold because this machine's clock
  * steps back by up to 1.4 s.
+ *
+ * Epic 9 retro item 2: the real runWorkerPass is driven too, scoped to the
+ * test's own organizations, so a pass that did no work is shown to fail the
+ * healthcheck, and closeWorker is shown to end the pool when app.close() fails.
  */
 
 const REPO_ROOT = join(__dirname, '..');
@@ -28,8 +34,22 @@ const quietLogger = {
   info() {},
 } as unknown as FastifyBaseLogger;
 
+const capturedErrors: string[] = [];
+const capturingLogger = {
+  warn() {},
+  info() {},
+  error(_obj: unknown, msg?: string) {
+    capturedErrors.push(String(msg));
+  },
+} as unknown as FastifyBaseLogger;
+
 const directory = mkdtempSync(join(tmpdir(), 'watchdog-health-'));
-after(() => rmSync(directory, { recursive: true, force: true }));
+after(async () => {
+  rmSync(directory, { recursive: true, force: true });
+  // Also when the shutdown describe is filtered out. Both closes are idempotent.
+  await (await appPromise).close().catch(() => undefined);
+  await closeDbConnection();
+});
 
 function runHealthcheck(path: string, overrides: Record<string, string> = {}) {
   return new Promise<{ code: number | null; output: string }>(
@@ -77,6 +97,14 @@ function setup(name: string) {
   health.write();
   return { path, health };
 }
+
+const appPromise = buildApp({ logger: false }).then(async (built) => {
+  // Handlers register on ready, as the worker does before its first pass.
+  await built.ready();
+  return built;
+});
+const BAD_ORG_ID = 'not a valid id!';
+const MISSING_ORG_ID = 'a'.repeat(32);
 
 describe(
   'Worker health reports completed passes',
@@ -195,6 +223,73 @@ describe(
       }
     });
 
+    it('fails when every organization fails', async () => {
+      const app = await appPromise;
+      const { path, health } = setup('every-org-fails');
+      const loop = startLoop({
+        name: 'maintenance',
+        pass: () => runWorkerPass(app, quietLogger, { orgIds: [BAD_ORG_ID] }),
+        intervalMs: 1_000,
+        health,
+        logger: quietLogger,
+      });
+      try {
+        await sleep(OVERDUE_MS + 2_200);
+        const result = await runHealthcheck(path);
+        assert.equal(result.code, 1, result.output);
+        assert.match(
+          result.output,
+          /loop maintenance has not completed a pass/,
+        );
+      } finally {
+        loop.stop();
+        await loop.inFlight?.catch(() => undefined);
+      }
+    });
+
+    it('passes when some organizations fail and others succeed', async () => {
+      const app = await appPromise;
+      const { path, health } = setup('some-orgs-fail');
+      const loop = startLoop({
+        name: 'maintenance',
+        pass: () =>
+          runWorkerPass(app, quietLogger, {
+            orgIds: [BAD_ORG_ID, MISSING_ORG_ID],
+          }),
+        intervalMs: 1_000,
+        health,
+        logger: quietLogger,
+      });
+      try {
+        await sleep(OVERDUE_MS + 2_200);
+        const result = await runHealthcheck(path);
+        assert.equal(result.code, 0, result.output);
+      } finally {
+        loop.stop();
+        await loop.inFlight?.catch(() => undefined);
+      }
+    });
+
+    it('passes when there are no organizations', async () => {
+      const app = await appPromise;
+      const { path, health } = setup('no-orgs');
+      const loop = startLoop({
+        name: 'maintenance',
+        pass: () => runWorkerPass(app, quietLogger, { orgIds: [] }),
+        intervalMs: 1_000,
+        health,
+        logger: quietLogger,
+      });
+      try {
+        await sleep(OVERDUE_MS + 2_200);
+        const result = await runHealthcheck(path);
+        assert.equal(result.code, 0, result.output);
+      } finally {
+        loop.stop();
+        await loop.inFlight?.catch(() => undefined);
+      }
+    });
+
     it('refuses a threshold not greater than the interval', async () => {
       const { path } = setup('misconfigured');
       const result = await runHealthcheck(path, {
@@ -232,3 +327,64 @@ describe(
     });
   },
 );
+
+describe('Worker shutdown and a dead database', () => {
+  before(async () => {
+    const app = await appPromise;
+    await app.close();
+  });
+  after(async () => {
+    await closeDbConnection();
+  });
+
+  it('closeWorker logs a failed app.close() and still ends the pool', async () => {
+    const failure = new Error('close failed');
+    const logged: unknown[] = [];
+    const logger = {
+      warn() {},
+      info() {},
+      error(obj: unknown) {
+        logged.push(obj);
+      },
+    } as unknown as FastifyBaseLogger;
+    await closeWorker(
+      {
+        close: () => Promise.reject(failure),
+      } as unknown as Parameters<typeof closeWorker>[0],
+      logger,
+    );
+    assert.equal((logged[0] as { err: unknown }).err, failure);
+    await assert.rejects(sql`select 1`);
+  });
+
+  it('fails the healthcheck when tenant discovery fails', async () => {
+    await closeDbConnection();
+    await assert.rejects(sql`select 1`);
+    const stubApp = {
+      get commandBus(): never {
+        throw new Error('discovery failure must not reach the command bus');
+      },
+    } as unknown as Parameters<typeof runWorkerPass>[0];
+    const { path, health } = setup('discovery-fails');
+    const loop = startLoop({
+      name: 'maintenance',
+      pass: () => runWorkerPass(stubApp, capturingLogger),
+      intervalMs: 1_000,
+      health,
+      logger: quietLogger,
+    });
+    try {
+      await sleep(OVERDUE_MS + 2_200);
+      const result = await runHealthcheck(path);
+      assert.equal(result.code, 1, result.output);
+      assert.match(result.output, /loop maintenance has not completed a pass/);
+      assert.ok(
+        capturedErrors.includes('tenant discovery failed; skipping this pass'),
+        capturedErrors.join(' | '),
+      );
+    } finally {
+      loop.stop();
+      await loop.inFlight?.catch(() => undefined);
+    }
+  });
+});
