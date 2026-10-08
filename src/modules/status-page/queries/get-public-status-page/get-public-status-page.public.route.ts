@@ -48,7 +48,11 @@ export default async function getPublicStatusPage(
     // A 304 carries no payload, so nothing may describe one either: serializing
     // the null below would otherwise announce a four-byte body that never
     // arrives, and a client can wait for bytes that do not come.
+    // The public headers are set here, not in the handler, so the 404 (thrown
+    // by the slug lookup) and the 429 (answered by the limiter before the
+    // handler runs) carry them too. A browser cannot read an answer without them.
     onSend: async (_req, res, payload) => {
+      publicHeaders(res);
       if (res.statusCode !== 304) return payload;
       res.removeHeader('content-length');
       return null;
@@ -62,7 +66,6 @@ export default async function getPublicStatusPage(
       const page = toPublicStatusPage(view);
       const etag = publicPageETag(page);
 
-      publicHeaders(res);
       res.header(
         'cache-control',
         `public, max-age=${env.publicSurface.maxAgeSeconds}`,
@@ -107,6 +110,9 @@ export default async function getPublicStatusPage(
  * would block a cross-origin read even with CORS, so it is relaxed here only
  * (Epic 3 retrospective, R-15). `ETag` has to be exposed, or a script cannot
  * read the tag it needs for a conditional request.
+ *
+ * The GET route applies it in `onSend`, which runs for every answer the route
+ * gives, errors included; a handler only runs when nothing refused first.
  */
 function publicHeaders(res: {
   header: (name: string, value: string) => unknown;
