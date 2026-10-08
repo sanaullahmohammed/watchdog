@@ -23,6 +23,21 @@ let orgId = '';
 const fetchPage = (headers: Record<string, string> = {}) =>
   app.inject({ method: 'GET', url: `/status/${tag}`, headers });
 
+const ORIGIN = 'https://example.test';
+
+/** The three public headers, and never credentials. */
+const assertPublicHeaders = (headers: Record<string, unknown>) => {
+  assert.equal(headers['access-control-allow-origin'], '*');
+  assert.equal(headers['access-control-expose-headers'], 'ETag');
+  // Helmet's default would keep a cross-origin reader out even with CORS.
+  assert.equal(headers['cross-origin-resource-policy'], 'cross-origin');
+  assert.equal(
+    headers['access-control-allow-credentials'],
+    undefined,
+    'no credentials: a public page is not read with someone else s session',
+  );
+};
+
 const gql = (query: string, headers: Record<string, string> = {}) =>
   app.inject({
     method: 'POST',
@@ -112,16 +127,28 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
   });
 
   it('lets a browser on any origin read the page, and revalidate it', async () => {
-    const read = await fetchPage({ origin: 'https://example.test' });
-    assert.equal(read.headers['access-control-allow-origin'], '*');
-    assert.equal(read.headers['access-control-expose-headers'], 'ETag');
-    // Helmet's default would keep a cross-origin reader out even with CORS.
-    assert.equal(read.headers['cross-origin-resource-policy'], 'cross-origin');
-    assert.equal(
-      read.headers['access-control-allow-credentials'],
-      undefined,
-      'no credentials: a public page is not read with someone else s session',
-    );
+    const read = await fetchPage({ origin: ORIGIN });
+    assert.equal(read.statusCode, 200);
+    assertPublicHeaders(read.headers);
+
+    const notModified = await fetchPage({
+      origin: ORIGIN,
+      'if-none-match': read.headers.etag as string,
+    });
+    assert.equal(notModified.statusCode, 304);
+    assertPublicHeaders(notModified.headers);
+
+    // A miss is read by the same script, so it needs the headers too: an
+    // unknown slug, and one outside the slug rule.
+    for (const slug of [`${tag}-missing`, 'Not_A_Slug']) {
+      const miss = await app.inject({
+        method: 'GET',
+        url: `/status/${slug}`,
+        headers: { origin: ORIGIN },
+      });
+      assert.equal(miss.statusCode, 404, miss.body);
+      assertPublicHeaders(miss.headers);
+    }
 
     // `If-None-Match` is not CORS-safelisted, so revalidating is preflighted.
     const preflight = await app.inject({
@@ -190,10 +217,15 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
       // Each surface has its own bucket: the page's comes from its route's
       // config, and anonymous GraphQL's from the hook.
       const page = await flood(() =>
-        limited.inject({ method: 'GET', url: `/status/${tag}` }),
+        limited.inject({
+          method: 'GET',
+          url: `/status/${tag}`,
+          headers: { origin: ORIGIN },
+        }),
       );
       assert.ok(page.response, `the page was not rationed within ${max + 2}`);
       assert.equal(page.sent, max + 1, 'refused the request after the limit');
+      assertPublicHeaders(page.response.headers);
       assert.equal(JSON.parse(page.response.body).error, 'Too Many Requests');
       assert.ok(
         page.response.headers['retry-after'],

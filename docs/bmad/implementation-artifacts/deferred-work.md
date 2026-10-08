@@ -123,3 +123,18 @@
 - source_spec: `spec-9-10-worker-health.md`
   summary: During a database outage `runWorkerPass` logs and resolves, so the worker records completed passes and reports healthy while doing no work. Decide whether a pass whose discovery fails, or whose every organization fails, should count as completed.
   evidence: Story 9.10 Review Triage Log #12; `runWorkerPass` catches discovery and per-organization failures (`src/worker.ts`).
+
+## From Story 9.12 (2026-10-08)
+
+- source_spec: `spec-9-12-public-cors.md`
+  summary: A request the router answers itself never reaches the public route, so its 404 carries no CORS headers. Examples are `/status/x/` (trailing slash) and `/status/a/b`. A browser script on another origin sees an opaque network error for these.
+  evidence: Story 9.12 Boundaries (out of scope); route-level `onSend` runs only for requests the router matched. A fix would be a not-found handler scoped to `/status/`.
+- source_spec: `spec-9-12-public-cors.md`
+  summary: `HEAD /status/:orgSlug` with a matching `If-None-Match` answers 500 instead of 304. The route's `onSend` returns `null` for a 304, and Fastify's automatic HEAD route then runs its own `onSend` on that `null` and throws.
+  evidence: Story 9.12 Review Triage Log #1; reproduced (GET 200 with an ETag, then HEAD with that tag gave 500). Predates Story 9.12. Fix by returning `undefined` for a HEAD 304, or by declaring the HEAD route explicitly, with a test.
+- source_spec: `spec-9-12-public-cors.md`
+  summary: A malformed percent-encoding such as `/status/%E0` is answered by the router as a 400 with no CORS headers. A not-found handler would not cover it; it needs Fastify's `frameworkErrors`.
+  evidence: Story 9.12 Review Triage Log #2; reproduced, 400 with no `access-control-allow-origin`. Settle with the router-404 entry above.
+- source_spec: `spec-9-12-public-cors.md`
+  summary: A cross-origin script can read the public page's 429 but not its `Retry-After`, because only `ETag` is exposed. Exposing `Retry-After` changes ARCHITECTURE 5.4.1 first; the same edit could say the headers go on every answer.
+  evidence: Story 9.12 Review Triage Log #3 and #4.

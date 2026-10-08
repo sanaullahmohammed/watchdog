@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-08-2026 03:35
+last_updated: 10-08-2026 03:58
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -95,8 +95,8 @@ development_status:
   9-8-admin-service-lists-settle-ties-by-id: done
   9-9-close-better-auth-s-pool-on-shutdown: done
   9-10-worker-health-reports-completed-passes: done
-  9-11-every-graphql-mutation-runs-over-graphql: review
-  9-12-public-cors-headers-on-every-answer: backlog
+  9-11-every-graphql-mutation-runs-over-graphql: done
+  9-12-public-cors-headers-on-every-answer: review
   9-13-sql-debug-logging-never-prints-parameter-values: backlog
   9-14-the-runtime-role-cannot-hard-delete-a-service: backlog
   epic-9-retrospective: optional
