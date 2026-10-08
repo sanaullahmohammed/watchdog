@@ -114,9 +114,6 @@
 - source_spec: `spec-9-10-worker-health.md`
   summary: `startWorker`'s health wiring (record path, loop names, heartbeat timer) is checked only by hand; no test starts the real worker and runs its healthcheck. Add a seam (an injected pass or `orgIds`) so a test can start it without an unscoped pass.
   evidence: Story 9.10 Review Triage Log #11; AGENTS.md forbids unscoped worker passes in integration tests.
-- source_spec: `spec-9-10-worker-health.md`
-  summary: During a database outage `runWorkerPass` logs and resolves, so the worker records completed passes and reports healthy while doing no work. Decide whether a pass whose discovery fails, or whose every organization fails, should count as completed.
-  evidence: Story 9.10 Review Triage Log #12; `runWorkerPass` catches discovery and per-organization failures (`src/worker.ts`).
 
 ## From Story 9.12 (2026-10-08)
 
@@ -171,3 +168,15 @@
 - source_spec: `spec-epic-9-retro-1c-incident-timeline-read-ids.md`
   summary: Nothing fails when a new id-taking GraphQL `Query` field ships without a malformed-id case, so its handler can skip `assertUuid` and answer a masked 500 again. The retro's DR-1 Prevention proposes 9.11's registry pattern applied to `Query` fields.
   evidence: Review Triage Log #2; every id-taking read has a hand-written malformed-id test today, but no test enumerates `Query` fields the way 9.11's registry enumerates mutations.
+
+## From Epic 9 retro item 2 (2026-10-08)
+
+- source_spec: `spec-epic-9-retro-2-worker-health-idle-passes.md`
+  summary: No test runs the real worker's `shutdown`, so the DR-4 fix could be unwired (`shutdown` calling `app.close()` and `closeDbConnection()` directly again) and nothing would fail; `closeWorker` is tested only as a helper. Close it together with the 9.10 entry above, which needs the same seam to start the real worker.
+  evidence: Review Triage Log #5; `closeWorker` is referenced only by `src/worker-health.integration.test.ts`, and the only test that starts the worker (`runtime-role.integration.test.ts:122-133`) exits before `shutdown` is registered.
+- source_spec: `spec-epic-9-retro-2-worker-health-idle-passes.md`
+  summary: The api lists `closeDbConnection` unguarded in graceful-server's `closePromises` with `syncClose: true`, so a rejection there skips the remaining steps and the exit, the gap the worker's `closeWorker` now closes.
+  evidence: Review Triage Log #12; `src/api.ts:34`, and the comment above it at `:19-23` describes the skip. Pre-existing.
+- source_spec: `spec-epic-9-retro-2-worker-health-idle-passes.md`
+  summary: `src/worker-health.ts:149` logs a failed heartbeat write as `{ error }`, which pino prints as `{}`, so the reason is lost. Use `{ err: error }`, as `src/worker.ts` now does.
+  evidence: Review Triage Log #6; `fastify({ logger: true }).log.error({ error: new Error('boom') }, 'x')` prints `"error":{}`. Pre-existing, and the spec ruled `worker-health.ts` out of this change.

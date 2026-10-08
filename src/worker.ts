@@ -32,6 +32,13 @@ const MAINTENANCE_LOOP = 'maintenance';
  * One tenant's failure is logged and the pass continues. Abandoning the rest
  * because a single organization errored would let one bad row stop the clock
  * for everyone.
+ *
+ * A pass that did no work rejects, so the loop does not count it as completed
+ * and the healthcheck can see a worker cut off from its database. No work means
+ * discovery failed, or at least one organization was visited and every one
+ * failed. A pass over no organizations, or where some succeed, resolves. The
+ * rejection carries no cause: a nested database error would escape log
+ * redaction.
  */
 export async function runWorkerPass(
   app: FastifyInstance,
@@ -45,13 +52,14 @@ export async function runWorkerPass(
   try {
     orgIds = options.orgIds ?? (await listOrganizationIds());
   } catch (error) {
-    // Discovery is the one query outside the per-tenant loop, so its failure
-    // used to reject out of a pass nobody awaited: an unhandled rejection,
-    // which ends the process. A database blip should cost this pass only.
-    logger.error({ error }, 'tenant discovery failed; skipping this pass');
-    return;
+    // Discovery is the one query outside the per-tenant loop. Log it where it
+    // happens, then reject: startLoop catches the rejection, so it costs this
+    // pass only and the pass is not counted as completed.
+    logger.error({ err: error }, 'tenant discovery failed; skipping this pass');
+    throw new Error('tenant discovery failed');
   }
 
+  let failed = 0;
   for (const orgId of orgIds) {
     try {
       const moved = await app.commandBus.execute<
@@ -86,8 +94,36 @@ export async function runWorkerPass(
         );
       }
     } catch (error) {
-      logger.error({ orgId, error }, 'worker pass failed for organization');
+      failed += 1;
+      logger.error(
+        { orgId, err: error },
+        'worker pass failed for organization',
+      );
     }
+  }
+
+  if (orgIds.length > 0 && failed === orgIds.length) {
+    throw new Error(`every organization failed (${orgIds.length})`);
+  }
+}
+
+/**
+ * The closing steps of shutdown. Never rejects: a failed app.close() is logged
+ * and the pool is still ended, so the process can exit.
+ */
+export async function closeWorker(
+  app: Pick<FastifyInstance, 'close'>,
+  logger: FastifyBaseLogger,
+): Promise<void> {
+  try {
+    await app.close();
+  } catch (error) {
+    logger.error({ err: error }, 'closing the app failed');
+  }
+  try {
+    await closeDbConnection();
+  } catch (error) {
+    logger.error({ err: error }, 'closing the database connection failed');
   }
 }
 
@@ -96,7 +132,8 @@ export async function runWorkerPass(
  * next one: two passes contend on the same rows, fan out duplicate
  * recomputations, and pile up on the connection pool. The gate also gives
  * shutdown something to await. A pass counts as completed only when its
- * promise fulfils; one that rejects does not.
+ * promise fulfils; one that rejects does not, which is how runWorkerPass
+ * reports a pass that did no work.
  */
 export function startLoop(options: {
   name: string;
@@ -126,7 +163,7 @@ export function startLoop(options: {
     // A rejected pass is logged here, not left unhandled, which would end the
     // process.
     gate.run().catch((error) => {
-      logger.error({ error }, `${name} pass failed`);
+      logger.error({ err: error }, `${name} pass failed`);
     });
   };
   const timer = setInterval(tick, intervalMs);
@@ -205,8 +242,7 @@ export async function startWorker() {
     }
     clearInterval(heartbeat);
 
-    await app.close();
-    await closeDbConnection();
+    await closeWorker(app, logger);
     // No process.exit: both intervals are cleared and every pool is closed, so
     // the process ends once its last handle has.
   };
