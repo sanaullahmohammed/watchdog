@@ -6,6 +6,7 @@ import Fastify, {
 } from 'fastify';
 import { env } from '@/config';
 import server from '@/server';
+import { appLoggerOptions } from '@/shared/db/sql-debug';
 
 /**
  * Builds a fully configured Fastify instance without listening.
@@ -18,10 +19,6 @@ export async function buildApp(
   overrides: FastifyServerOptions = {},
 ): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: {
-      level: env.log.level,
-      redact: ['headers.authorization'],
-    },
     genReqId: (req) => {
       // header best practice: don't use "x-" https://www.rfc-editor.org/info/rfc6648 and keep it lowercase
       return (req.headers['request-id'] as string) ?? randomUUID();
@@ -42,6 +39,11 @@ export async function buildApp(
       },
     },
     ...overrides,
+    // An instance passed as `loggerInstance` cannot be redacted here; no
+    // caller passes one. Otherwise the logger is the redacting options.
+    ...(overrides.loggerInstance
+      ? {}
+      : { logger: appLoggerOptions(overrides.logger, env.log.level) }),
   });
 
   await server(app);

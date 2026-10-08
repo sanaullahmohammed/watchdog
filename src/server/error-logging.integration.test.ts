@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance, InjectOptions } from 'fastify';
+import { env } from '@/config';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { signUpWithOrg } from '@/shared/testing/tenant';
@@ -174,5 +175,35 @@ describe('Failures logged by who caused them (retrospective AV-9, R-7)', () => {
     } finally {
       repository.listPublicServices = listPublicServices;
     }
+  });
+
+  it('keeps parameters and args off a logged error, whatever logger the app has', async () => {
+    const secret = `secret-subscriber-${tag}@example.test`;
+    const make = () =>
+      Object.assign(new Error('boom'), {
+        parameters: [secret],
+        args: [secret],
+      });
+    const lines: string[] = [];
+    const stream = { write: (line: string) => lines.push(line) };
+    // The default branch cannot take a stream; it is covered in sql-debug.spec.ts.
+    const other = await buildApp({ logger: { level: 'info', stream } });
+    try {
+      for (const target of [app, other]) {
+        const before = logLines.length;
+        target.log.error({ err: make() }, 'as err');
+        target.log.error({ error: make() }, 'as error');
+        const written = target === app ? logLines.slice(before) : lines;
+        assert.ok(written.length >= 2);
+        for (const line of written) assert.ok(!line.includes(secret), line);
+      }
+    } finally {
+      await other.close();
+    }
+  });
+
+  it('gives the shared connection debug: false at a non-debug level', () => {
+    assert.notEqual(env.log.level, 'debug');
+    assert.equal(sql.options.debug, false);
   });
 });

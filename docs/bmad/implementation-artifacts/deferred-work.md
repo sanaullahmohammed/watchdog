@@ -138,3 +138,18 @@
 - source_spec: `spec-9-12-public-cors.md`
   summary: A cross-origin script can read the public page's 429 but not its `Retry-After`, because only `ETag` is exposed. Exposing `Retry-After` changes ARCHITECTURE 5.4.1 first; the same edit could say the headers go on every answer.
   evidence: Story 9.12 Review Triage Log #3 and #4.
+
+## From Story 9.13 (2026-10-08)
+
+- source_spec: `spec-9-13-sql-log-redaction.md`
+  summary: Values inside a Postgres error message or `detail`, such as `invalid input syntax for type integer: "..."` or a unique-key violation's `Key (email)=(...)`, still reach the logs. Story 9.13 redacts only the `parameters` and `args` properties. Epic 6 prerequisite: redact or replace `message` and `detail` of database errors before subscriber addresses are stored.
+  evidence: Story 9.13 Boundaries (Never); `err.message` and `err.detail` are logged by `logFailure` and the worker.
+- source_spec: `spec-9-13-sql-log-redaction.md`
+  summary: Log redaction covers only top-level `err.parameters`, `err.args`, `error.parameters` and `error.args`. In debug mode, a database error wrapped in another error, inside an `AggregateError`, serialized through `ExceptionBase.toJSON` (which stringifies its `cause`), logged under another key, or printed with `console.error` (seed failures, the event bus's default reporter) still prints parameter values. Consider a recursive scrub in the `err`/`error` serializers before Epic 6.
+  evidence: Story 9.13 Review Triage Log #4 and #5. Unverified in practice: `DatabaseErrorException` exists but nothing constructs it today.
+- source_spec: `spec-9-13-sql-log-redaction.md`
+  summary: Record the logging rule in AGENTS.md: log database errors only as a top-level `err` or `error` through a pino logger, and give `postgres()` a `debug` option only through `sqlDebugOption`.
+  evidence: Story 9.13 Review Triage Log #6; routed defer because the fix edits an agent-context file.
+- source_spec: `spec-9-13-sql-log-redaction.md`
+  summary: Besides `message` and `detail`, Postgres errors carry `where`, `hint` and `internal_query`, which can echo values. The Epic 6 prerequisite on values in Postgres errors should cover every field postgres.js copies onto the error.
+  evidence: Story 9.13 Review Triage Log #7.
