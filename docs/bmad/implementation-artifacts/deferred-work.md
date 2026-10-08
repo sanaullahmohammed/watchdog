@@ -48,7 +48,7 @@
   summary: A `startedAt` whose offset moves it outside years 1..9999, such as `9999-12-31T23:59:59-23:59`, passes the format and becomes a masked 500 when Postgres rejects it. Settle with the year-0000 entry above.
   evidence: Story 9.3 Review Triage Log #16; `new Date(...).toISOString()` gives `+010000-01-01T23:58:59.000Z`.
 - source_spec: `spec-9-3-graphql-incident-validation.md`
-  summary: `query { incidentTimeline(id: "not-a-uuid") }` and `query { maintenanceWindow(id: "not-a-uuid") }` reach Postgres and are still masked, because their query handlers do not call `assertUuid` (`service(id)` was fixed by retro item 1a).
+  summary: `query { incidentTimeline(id: "not-a-uuid") }` reaches Postgres and is still masked, because its query handler does not call `assertUuid` (`service(id)` and `maintenanceWindow(id)` were fixed by retro items 1a and 1b).
   evidence: Story 9.3 Review Triage Log #17; `get-incident-timeline.handler.ts` calls `findById` without a check, while the REST route requires a uuid param.
 - source_spec: `spec-9-3-graphql-incident-validation.md`
   summary: Timeline order (`created_at` from `clock_timestamp()`, then `id`) assumes the database clock never steps back. On the owner's Docker Desktop on WSL2 it steps back by up to 1.4 s several times a minute, so incident timeline tests fail intermittently (about 1 full run in 10) with a later entry sorted before the declaration. Decide whether to record it as an AGENTS.md pitfall, make the tests tolerate it, or order entries by something monotonic.
@@ -73,7 +73,7 @@
   summary: The same service UUID written in two letter cases passes `assertNoDuplicates` (an exact string compare) and hits the `maintenance_services` primary key, an unmapped 23505 that answers a masked 500. Incident `affectedServices` is likely the same; compare ids case-insensitively or map 23505.
   evidence: Story 9.4 Review Triage Log #15; `maintenance.repository.ts` maps only 23503. Pre-existing on both surfaces.
 - source_spec: `spec-9-4-graphql-maintenance-validation.md`
-  summary: `urn:uuid:<uuid>` passes `assertUuid` on the new maintenance id checks too, so it still reaches Postgres as a masked 500. Settle with the 9.1 `urn:uuid:` entry.
+  summary: `urn:uuid:<uuid>` passes `assertUuid` on the 9.4 maintenance mutation id checks too, and, since retro item 1b, on the `maintenanceWindow(id)` read, so it still reaches Postgres as a masked 500. Settle with the 9.1 `urn:uuid:` entry.
   evidence: Story 9.4 Review Triage Log #16.
 
 ## From Story 9.5 (2026-10-07)

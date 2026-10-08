@@ -2,6 +2,7 @@ import { maintenanceActionCreator } from '@/modules/maintenance';
 import type { MaintenanceEntity } from '@/modules/maintenance/domain/maintenance.types';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { NotFoundException } from '@/shared/exceptions';
+import { assertUuid } from '@/shared/validation/typebox-guard';
 
 export type GetMaintenanceQueryResult = Promise<MaintenanceEntity>;
 
@@ -18,6 +19,7 @@ export default function makeGetMaintenance({
     async handler({
       payload,
     }: ReturnType<typeof getMaintenanceQuery>): GetMaintenanceQueryResult {
+      assertUuid(payload.id, 'id');
       const window = await withTenantTransaction(payload.orgId, (tx) =>
         maintenanceRepository.findById(tx, payload.id),
       );

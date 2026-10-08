@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
@@ -13,6 +13,10 @@ import { signUpWithOrg } from '@/shared/testing/tenant';
  *
  * Each refusal asserts the field it names, that no row or affected service was
  * written or changed, and that no maintenance event was emitted.
+ *
+ * Epic 9 retro item 1b: the maintenanceWindow(id) query refuses a malformed id
+ * with a 400, as REST does. It is a read, so it writes nothing and does not go
+ * through `refused()`.
  */
 
 const ORIGIN = 'http://localhost:3000';
@@ -34,7 +38,7 @@ const iso = (hours: number) =>
   new Date(Date.now() + hours * HOUR).toISOString();
 
 function api(
-  method: 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   url: string,
   payload?: object,
 ) {
@@ -287,6 +291,29 @@ describe('Story 9.4: GraphQL refuses what REST refuses, maintenance', () => {
     await refused(() => remove(NOT_A_UUID), 'handler', 'id');
     const rest = await api('POST', `/maintenance/${NOT_A_UUID}/complete`);
     assert.equal(rest.statusCode, 400, rest.body);
+  });
+
+  it('refuses a malformed id on the maintenanceWindow query over GraphQL as REST does', async () => {
+    const query = 'query ($id: ID!) { maintenanceWindow(id: $id) { id } }';
+    const result = await gql(query, { id: NOT_A_UUID });
+    assert.equal(result.statusCode, 400, JSON.stringify(result.body));
+    assert.equal(result.body.data, null);
+    assert.equal(result.body.errors?.length, 1);
+    assert.equal(
+      result.body.errors?.[0]?.message,
+      'Invalid input. id: must match format "uuid"',
+    );
+    const rest = await api('GET', `/maintenance/${NOT_A_UUID}`);
+    assert.equal(rest.statusCode, 400, rest.body);
+    assert.deepEqual(
+      JSON.parse(rest.body).subErrors.map((e: { path: string }) => e.path),
+      ['/id'],
+    );
+    const unknown = await gql(query, { id: randomUUID() });
+    assert.equal(unknown.statusCode, 404, JSON.stringify(unknown.body));
+    const found = await gql(query, { id: windowId });
+    assert.equal(found.statusCode, 200, JSON.stringify(found.body));
+    assert.deepEqual(found.body.data, { maintenanceWindow: { id: windowId } });
   });
 
   it('refuses a null date on update, and REST agrees', async () => {
