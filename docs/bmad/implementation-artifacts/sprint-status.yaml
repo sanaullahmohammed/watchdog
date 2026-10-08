@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-08-2026 04:44
+last_updated: 10-08-2026 15:30
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -98,19 +98,21 @@ development_status:
   9-11-every-graphql-mutation-runs-over-graphql: done
   9-12-public-cors-headers-on-every-answer: done
   9-13-sql-debug-logging-never-prints-parameter-values: done
-  9-14-the-runtime-role-cannot-hard-delete-a-service: review
-  epic-9-retrospective: optional
+  9-14-the-runtime-role-cannot-hard-delete-a-service: done
+  epic-9-retrospective: done
 
 # Action items committed during retrospectives. Copied on 2026-10-06 from the
 # Epic 2 and Epic 3 retrospectives, which stay as written; see
 # planning-artifacts/sprint-change-proposal-2026-10-06.md section 5.6.
 action_items:
   - epic: 2
-    action: "D-1: a timeline sequence column, deferred until there is a bulk writer (revisit in Epic 5, where monitors write into drafts)"
+    action: "D-1: a timeline sequence column, deferred until there is a bulk writer
+      (revisit in Epic 5, where monitors write into drafts)"
     owner: "dev loop"
     status: open
   - epic: 2
-    action: "D-2: doubled recomputes; settled for monitor traffic by DOMAIN's monitor.state_changed trigger (2026-10-06), still open for incident and maintenance events"
+    action: "D-2: doubled recomputes; settled for monitor traffic by DOMAIN's monitor.state_changed
+      trigger (2026-10-06), still open for incident and maintenance events"
     owner: "dev loop"
     status: open
   - epic: 2
@@ -122,9 +124,10 @@ action_items:
     owner: "dev loop"
     status: open
   - epic: 3
-    action: "Item 20: move createService, createGroup, declare and capturing into src/shared/testing/ (partly in story 9.11)"
+    action: "Item 20: move createService, createGroup, declare and capturing into
+      src/shared/testing/ (partly in story 9.11)"
     owner: "dev loop"
-    status: open
+    status: in-progress
   - epic: 3
     action: "Item 21: container smoke test in CI against the built image (Epic 8)"
     owner: "dev loop"
@@ -132,7 +135,7 @@ action_items:
   - epic: 3
     action: "Item 22: a GraphQL mutation test per command (story 9.11)"
     owner: "dev loop"
-    status: open
+    status: done
   - epic: 3
     action: "Item 23: foreign-table allowlist test, with Epic 5's uptime story"
     owner: "dev loop"
@@ -140,8 +143,74 @@ action_items:
   - epic: 3
     action: "Item 24a: apply the slug rule at organization creation (story 9.5)"
     owner: "dev loop"
-    status: open
+    status: done
   - epic: 3
     action: "Item 24b: README says RLS is the tenant boundary"
     owner: "dev loop"
     status: done
+  - id: "epic-9-retro-item-1-graphql-reads-refuse-malformed-ids"
+    epic: 9
+    action: "Item 1: GraphQL reads (service, maintenanceWindow, incidentTimeline)
+      refuse a malformed id with 400, as REST does; one story per module; service
+      story also closes VG-1 and VG-2 (before acceptance)"
+    owner: "dev loop"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
+  - id: "epic-9-retro-item-2-worker-health-fails-on-idle-passes"
+    epic: 9
+    action: "Item 2: worker health fails when passes complete without doing work (discovery
+      or every org fails), tested against the real runWorkerPass; worker shutdown
+      always ends the pool (before acceptance)"
+    owner: "dev loop"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
+  - id: "epic-9-retro-item-3-second-app-instance-works-or-fails-boot"
+    epic: 9
+    action: "Item 3: a second app built while the first is open works or fails at
+      boot, never a silent 500; settle deferred #25 with it (before acceptance)"
+    owner: "dev loop"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
+  - id: "epic-9-retro-item-4-shared-test-helpers"
+    epic: 9
+    action: "Item 4: finish Epic 3 item 20, move every local createService, createGroup,
+      declare, capturing and gql copy onto src/shared/testing/ (before acceptance)"
+    owner: "dev loop"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
+  - id: "epic-9-retro-item-5-shared-helper-story-constraint"
+    epic: 9
+    action: "Item 5: Story Generation Constraints say tests use src/shared/testing/
+      helpers and new helpers go there (with item 4)"
+    owner: "owner"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
+  - id: "epic-9-retro-item-6-definition-of-done-matches-ci"
+    epic: 9
+    action: "Item 6: add the no-.env unit run and test:e2e to the per-story definition
+      of done (before Epic 5)"
+    owner: "owner"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
+  - id: "epic-9-retro-item-7-clock-skew-rerun-pitfall"
+    epic: 9
+    action: "Item 7: AGENTS.md pitfall, the WSL2 clock can step backwards, so rerun
+      a failing integration test a few times before treating it as a defect; closes
+      deferred #17 (before Epic 5)"
+    owner: "dev loop"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
+  - id: "epic-9-retro-item-8-consolidate-deferred-work"
+    epic: 9
+    action: "Item 8: consolidate deferred-work.md (duplicates, stale entries, target
+      epic per entry) and remove entries items 1-3 close (with items 1-3)"
+    owner: "dev loop"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
+  - id: "epic-9-retro-item-9-reconcile-worker-restart-wording"
+    epic: 9
+    action: "Item 9: reconcile story 9.10's 'is restarted' with Compose marking the
+      worker unhealthy only (before Epic 8)"
+    owner: "owner"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
