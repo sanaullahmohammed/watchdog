@@ -18,9 +18,6 @@
   summary: REST coerces null to `0`, `false` or `""` before the handler (Fastify's ajv `coerceTypes`), so REST accepts nulls that GraphQL now refuses. Settle which is intended.
   evidence: Review Triage Log #22; `displayOrder: null` over REST gives 0.
 - source_spec: spec-9-1-graphql-service-validation.md
-  summary: A malformed id on a query (`query { service(id: "not-a-uuid") }`) is still a masked 500, because query handlers do not call `assertUuid`.
-  evidence: pinned by the test 'masks a database error a real resolver lets through, not only an injected one' in `graphql-error-formatter.integration.test.ts`; the fix changes that test with it.
-- source_spec: spec-9-1-graphql-service-validation.md
   summary: The AGENTS.md convention says older handlers using `src/shared/validation/input.ts` "move to this as they are touched", but only `assertNoNullFields` is replaced by a schema check; `parseDate`, `parseOptionalDate`, `assertNoDuplicates` and `assertNotBlank` have no schema equivalent and stay. Reword the bullet to name `assertNoNullFields`.
   evidence: Review Triage Log #33; routed defer because the fix edits an agent-context file.
 - source_spec: spec-9-2-anonymous-graphql-rate-limit.md
@@ -51,7 +48,7 @@
   summary: A `startedAt` whose offset moves it outside years 1..9999, such as `9999-12-31T23:59:59-23:59`, passes the format and becomes a masked 500 when Postgres rejects it. Settle with the year-0000 entry above.
   evidence: Story 9.3 Review Triage Log #16; `new Date(...).toISOString()` gives `+010000-01-01T23:58:59.000Z`.
 - source_spec: `spec-9-3-graphql-incident-validation.md`
-  summary: `query { incidentTimeline(id: "not-a-uuid") }` reaches Postgres and is masked, as the service query in the 9.1 entry is, because query handlers do not call `assertUuid`.
+  summary: `query { incidentTimeline(id: "not-a-uuid") }` and `query { maintenanceWindow(id: "not-a-uuid") }` reach Postgres and are still masked, because their query handlers do not call `assertUuid` (`service(id)` was fixed by retro item 1a).
   evidence: Story 9.3 Review Triage Log #17; `get-incident-timeline.handler.ts` calls `findById` without a check, while the REST route requires a uuid param.
 - source_spec: `spec-9-3-graphql-incident-validation.md`
   summary: Timeline order (`created_at` from `clock_timestamp()`, then `id`) assumes the database clock never steps back. On the owner's Docker Desktop on WSL2 it steps back by up to 1.4 s several times a minute, so incident timeline tests fail intermittently (about 1 full run in 10) with a later entry sorted before the declaration. Decide whether to record it as an AGENTS.md pitfall, make the tests tolerate it, or order entries by something monotonic.
@@ -165,3 +162,12 @@
 - source_spec: `spec-9-14-revoke-service-delete.md`
   summary: AGENTS.md says "Services are archived, never hard-deleted." as a convention. Note beside it that a migration revokes `DELETE` on `services` from `watchdog_app`, and that `service-delete-privilege.integration.test.ts` guards the grant, as the append-only bullet does for `incident_updates`.
   evidence: Story 9.14 Review Triage Log #8; routed defer because the fix edits an agent-context file.
+
+## From Epic 9 retro item 1a (2026-10-08)
+
+- source_spec: `spec-epic-9-retro-1a-service-read-ids.md`
+  summary: The REST-versus-GraphQL row comparison covers service create only; service update and service-group create and update are not compared, though REST's null coercion can store different values there.
+  evidence: Review Triage Log #8; `service-input-validation.integration.test.ts` "stores the same columns over REST and GraphQL" creates only.
+- source_spec: `spec-epic-9-retro-1a-service-read-ids.md`
+  summary: `service(id: "urn:uuid:<uuid>")` passes `assertUuid` and still answers a masked 500, as the other `urn:uuid:` entries describe for mutations, maintenance and groups.
+  evidence: Review Triage Log #13; `typebox-guard.ts:78` checks `format: 'uuid'` only, which ajv-formats lets carry the `urn:uuid:` prefix.
