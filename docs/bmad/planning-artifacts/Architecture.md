@@ -61,4 +61,4 @@ Entities, fields, constraints, foreign keys, state machines and the event catalo
 
 ## Definition of done for a story
 
-Beyond its own acceptance criteria, a story is done when `pnpm run check`, `pnpm run test`, `pnpm run test:integration` and `pnpm run auth:schema:check` all pass, any new tenant table has RLS enabled and `FORCE`d with a policy, and any emitted event exists in the DOMAIN catalog.
+Beyond its own acceptance criteria, a story is done when `pnpm run check`, `pnpm run test`, `pnpm run test:integration`, `pnpm run test:e2e` and `pnpm run auth:schema:check` all pass, and `pnpm run test` passes again without a local `.env`, matching CI's unit job. Any new tenant table has RLS enabled and `FORCE`d with a policy, any emitted event exists in the DOMAIN catalog, and the slice preserves REST/GraphQL parity. This mirrors `epics.md`, Story Generation Constraints, item 8.

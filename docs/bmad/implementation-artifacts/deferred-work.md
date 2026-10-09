@@ -92,9 +92,9 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 ## From Story 9.9 (2026-10-07)
 
 - source_spec: `spec-9-9-close-auth-pool.md`
-  summary: ARCHITECTURE section 7 says "no entrypoint or script forces exit", but graceful-server ends the api with its own `process.exit`; and neither ARCHITECTURE nor AGENTS.md records that Better Auth's pool is process-wide and ends at the last `app.close()`, after which `buildApp()` in that process throws. Update ARCHITECTURE first, then add an AGENTS.md pitfall for test authors (build apps while one is open, or one per process).
-  evidence: Story 9.9 Review Triage Log #6; ARCHITECTURE section 7, the Better Auth pool bullet; `holdAuthPool()` in `src/server/auth/auth.ts`. Routed defer because the fix edits genesis and agent-context files. Retro item 3 (#92) since added to ARCHITECTURE 5.1 that the auth pool stays process-wide; the section 7 wording and the AGENTS.md pitfall are still open.
-  target: Genesis edit (owner).
+  summary: Add an AGENTS.md pitfall for test authors: build test apps while another is still open, or use one process per app (Better Auth's pool is process-wide and ends at the last `app.close()`, after which `buildApp()` in that process throws).
+  evidence: Story 9.9 Review Triage Log #6; `holdAuthPool()` in `src/server/auth/auth.ts`. This commit fixed the ARCHITECTURE section 7 wording; only the AGENTS.md pitfall remains.
+  target: AGENTS.md edit.
 - source_spec: `spec-9-9-close-auth-pool.md`
   summary: No test proves the api's shutdown finishes `fastify.close()` (drain, auth pool) before `closeDbConnection()`; removing `syncClose: true` would pass every suite.
   evidence: Story 9.9 Review Triage Log #7. A meaningful test spawns the api, starts a slow event handler, sends SIGTERM and checks the handler's database work completed.

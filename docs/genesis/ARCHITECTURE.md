@@ -16,7 +16,7 @@ CQRS is the boundary between protocol adapters and use cases:
 
 - Commands mutate state and emit domain events.
 - Queries compose read models and return protocol-neutral DTOs.
-- Middleware injects authenticated user, active organization, role, request metadata, and RLS context before a handler runs.
+- Planned CQRS middleware will inject authenticated user, active organization, role and request metadata. Today protocol adapters resolve organization context explicitly; tenant repositories receive a transaction with its RLS context set.
 - Cross-module request-response interactions go through command/query buses.
 - Cross-module fire-and-forget reactions go through the event bus.
 
@@ -43,19 +43,27 @@ Event names below reference the canonical event catalog in [DOMAIN.md](./DOMAIN.
 |---|---|---|---|
 | `organization` | Active-organization resolution, org slug lookup, org switcher data, and membership/role context through Better Auth-owned organization plugin tables. Org/team/membership mutations happen inside Better Auth; WatchDog does not own their DDL or domain events. If default WatchDog rows are later needed after org creation, use a Better Auth after-hook that calls a command directly instead of emitting a WatchDog domain event. | `ResolveOrganizationBySlugQuery`, `ListMyOrganizationsQuery`, `ResolveActiveOrganizationContextQuery`, `SwitchActiveOrganizationCommand` | None |
 | `service` | Services/components, service groups, public ordering, archive/restore lifecycle, manual status override, status recomputation orchestration. | `CreateServiceCommand`, `UpdateServiceCommand`, `ArchiveServiceCommand`, `RestoreServiceCommand`, `SetManualStatusOverrideCommand`, `ClearManualStatusOverrideCommand`, `CreateServiceGroupCommand`, `UpdateServiceGroupCommand`, `DeleteServiceGroupCommand`, `ListServicesQuery`, `GetServiceQuery` | `service.created`, `service.updated`, `service.archived`, `service.restored`, `service.status_changed`, `service.manual_override_set`, `service.manual_override_cleared`, `service_group.created`, `service_group.updated`, `service_group.deleted` |
-| `incident` | Incident aggregate, append-only updates, affected-service impact, lifecycle transitions, draft confirmation/dismissal. | `CreateIncidentCommand`, `TransitionIncidentCommand` (every move on the ladder, including confirming and dismissing a draft, and resolving), `UpdateIncidentCommand`, `PostIncidentUpdateCommand`, `ListIncidentsQuery`, `GetIncidentTimelineQuery` | `incident.created`, `incident.draft_created`, `incident.confirmed`, `incident.updated`, `incident.update_posted`, `incident.state_changed`, `incident.resolved`, `incident.dismissed` |
+| `incident` | Incident aggregate, append-only updates, affected-service impact, lifecycle transitions, monitor-triggered draft creation and reconciliation, draft confirmation/dismissal. | `CreateIncidentCommand`, `TransitionIncidentCommand` (every move on the ladder, including confirming and dismissing a draft, and resolving), `UpdateIncidentCommand`, `PostIncidentUpdateCommand`, `ListIncidentsQuery`, `GetIncidentTimelineQuery` | `incident.created`, `incident.draft_created`, `incident.confirmed`, `incident.updated`, `incident.update_posted`, `incident.state_changed`, `incident.resolved`, `incident.dismissed` |
 | `maintenance` | Scheduled maintenance windows, affected services, idempotent worker-driven lifecycle transitions. | `CreateMaintenanceCommand`, `UpdateMaintenanceCommand`, `DeleteMaintenanceCommand`, `StartDueMaintenanceCommand`, `CompleteDueMaintenanceCommand`, `ListMaintenanceQuery`, `GetMaintenanceQuery` | `maintenance.created`, `maintenance.updated`, `maintenance.started`, `maintenance.completed`, `maintenance.deleted` |
-| `monitoring` | Synthetic monitor configuration, worker check execution, check result persistence, consecutive-failure tracking, uptime rollup refresh, partition maintenance, draft incident generation. | `CreateMonitorCommand`, `UpdateMonitorCommand`, `DeleteMonitorCommand`, `RunDueMonitorChecksCommand`, `RecordCheckResultCommand`, `RefreshUptimeRollupsCommand`, `MaintainCheckResultPartitionsCommand`, `ListMonitorsQuery`, `GetMonitorResultsQuery` | `monitor.created`, `monitor.updated`, `monitor.deleted`, `monitor.check_succeeded`, `monitor.check_failed`, `monitor.recovered`, `monitor.threshold_breached`, `monitor.ssl_expiry_warning`, `uptime.rollup_refreshed` |
-| `notification` | Public subscribers, confirmation/unsubscribe flow, email dispatch via Mailpit, RSS/Atom feed generation, event-driven notification dispatch. | `CreateSubscriberCommand`, `ConfirmSubscriberCommand`, `UnsubscribeCommand`, `QueueEmailNotificationCommand`, `SendQueuedEmailCommand`, `GetRssFeedQuery`, `GetAtomFeedQuery` | `subscriber.created`, `subscriber.confirmed`, `subscriber.unsubscribed`, `notification.email_queued`, `notification.email_sent`, `notification.email_failed` |
+| `monitoring` | Synthetic monitor configuration, worker check execution, check result persistence, consecutive-failure tracking, derived monitor state and threshold events, uptime rollup refresh, partition maintenance. The incident module owns draft creation. | `CreateMonitorCommand`, `UpdateMonitorCommand`, `DeleteMonitorCommand` (deferred past v1), `RunDueMonitorChecksCommand`, `RecordCheckResultCommand`, `RefreshUptimeRollupsCommand`, `MaintainCheckResultPartitionsCommand`, `ListMonitorsQuery`, `GetMonitorResultsQuery` (deferred past v1) | `monitor.created`, `monitor.updated`, `monitor.deleted` (deferred past v1), `monitor.check_succeeded`, `monitor.check_failed`, `monitor.state_changed`, `monitor.recovered`, `monitor.threshold_breached`, `monitor.ssl_expiry_warning`, `uptime.rollup_refreshed` |
+| `notification` | Public subscribers, confirmation/unsubscribe flow, email dispatch via Mailpit, RSS/Atom feed generation, durable-history-driven delivery through a ledger. Events only wake the worker pass. | `CreateSubscriberCommand`, `ConfirmSubscriberCommand`, `UnsubscribeCommand`, `QueueEmailNotificationCommand`, `SendQueuedEmailCommand`, `GetRssFeedQuery`, `GetAtomFeedQuery` | `subscriber.created`, `subscriber.confirmed`, `subscriber.unsubscribed`, `notification.email_queued`, `notification.email_sent`, `notification.email_failed` |
 | `ai` | Provider port, incident copilot, postmortem draft, NL query over status history, weekly digest draft. All customer-facing actions stay human-in-the-loop. | `DraftIncidentUpdateCommand`, `DraftPostmortemCommand`, `DraftWeeklyDigestCommand`, `AnswerStatusHistoryQuestionQuery` | `ai.incident_update_drafted`, `ai.postmortem_drafted`, `ai.weekly_digest_drafted`, `ai.nl_query_answered` |
 | `status-page` | Public per-org read side, status page payload composition, 90-day uptime payload, public SSE stream. | `GetPublicStatusPageQuery`, `GetPublicUptimeHistoryQuery`, `OpenPublicStatusEventStreamQuery` | None; consumes bridged events and read models. |
-| `auth` | Not a domain module. Better Auth Fastify plugin plus session-to-context middleware outside the CQRS bus. | `GetSession`, `RequireSession`, `ResolveRequestActor`, `ResolveActiveOrgRole` | None owned by WatchDog architecture. |
+| `auth` | Not a domain module. Better Auth Fastify plugin plus explicit session/organization-context resolution outside the CQRS bus; centralized CQRS context middleware is planned. |
+
+Decided 2026-10-09 (owner): v1 ships no monitor delete and no raw-result history read. An operator disables a monitor instead (DOMAIN, Monitor). Results are still persisted and rolled up, and `ListMonitorsQuery` is the read that lets a client reopen a monitor's configuration. `DeleteMonitorCommand`, `GetMonitorResultsQuery` and `monitor.deleted` stay in the table, marked deferred, so the planned capability is not silently dropped. `GetSession`, `RequireSession`, `ResolveRequestActor`, `ResolveActiveOrgRole` | None owned by WatchDog architecture. |
 
 ---
 
 ## 3. Request lifecycle
 
 All REST and GraphQL entrypoints converge on the same CQRS handlers.
+
+**Current implementation:** each authenticated route and resolver calls `resolveOrganizationContext` from `src/server/auth/organization-context.ts` and places the resolved `orgId` on the command or query payload. Public reads resolve the organization by slug. Handlers validate their inputs, and `withTenantTransaction` validates the organization id before setting the transaction-local GUC. Centralized CQRS context middleware is not implemented.
+
+Decided 2026-10-09 (owner): v1 resolves organization context in each route and resolver, and `authenticated-surface.spec.ts` fails the build on any operation that skips it. Central middleware is a later consolidation, not a v1 requirement.
+
+**Target design:** the middleware chain below and `RequestContext` sketch describe the intended consolidation, not the current runtime wiring.
 
 ```text
 Route / Resolver
@@ -88,9 +96,9 @@ REST route or GraphQL resolver
   maps result/error to protocol response
 ```
 
-The tenant-context injection step is explicit and mandatory. CQRS middleware resolves `session -> user -> active organization -> role` through Better Auth-owned user, organization, membership, team, invitation, and role data. After active-org resolution and before any repository sets `app.current_org_id`, the middleware validates the resolved org id against the Better Auth id format, not a UUID regex. A malformed org id is rejected with a 4xx response so a resolution bug fails loudly instead of surfacing as an empty tenant.
+In the target design, tenant-context injection is explicit and mandatory. CQRS middleware resolves `session -> user -> active organization -> role` through Better Auth-owned user, organization, membership, team, invitation, and role data. After active-org resolution and before any repository sets `app.current_org_id`, the middleware validates the resolved org id against the Better Auth id format, not a UUID regex. A malformed org id is rejected with a 4xx response so a resolution bug fails loudly instead of surfacing as an empty tenant.
 
-The middleware then injects a command/query context similar to:
+The planned middleware would inject a command/query context similar to:
 
 ```ts
 type RequestContext = {
@@ -104,7 +112,7 @@ type RequestContext = {
 
 Public status-page reads resolve `/status/:orgSlug` through the pre-tenant path before a GUC exists. Authenticated admin requests resolve the active organization from the session and Better Auth organization plugin membership data. After `orgId` is resolved and validated, all WatchDog tenant-scoped repository operations set `app.current_org_id` inside the transaction.
 
-Repository shape:
+Illustrative target-context repository shape, not the implemented helper signature. The current `src/shared/db/tenant-transaction.ts` exports `withTenantTransaction(orgId, work, options)` and passes a `TenantTransaction` to each repository call. Its options support read-only, repeatable-read composition where one snapshot is required.
 
 ```ts
 type TxContext = {
@@ -144,6 +152,8 @@ WatchDog builds one Docker image and runs two commands from it:
 | `api` | Fastify HTTP server | REST API, GraphQL API, Swagger, Better Auth plugin, public status page reads, public SSE, admin GraphQL subscriptions, Postgres `LISTEN` subscriber for client fanout. |
 | `worker` | Worker process | Synthetic monitor scheduler/executor, maintenance state transitions, uptime rollup refresh, check-result partition maintenance, old rollup pruning, email dispatch, background notification workflows, Postgres `LISTEN` subscriber for worker-side cross-process reactions when needed. |
 
+**Shutdown.** Decided 2026-10-09 (owner). On SIGTERM or SIGINT, `api` and `worker` stop taking new work, finish in-flight work and event handlers, and close their database pools before terminating. The API's `graceful-server` exits the process after those steps, and that is permitted; a forced exit must never substitute for cleanup. The worker needs no exit, because once its loops stop and its pools close nothing keeps the process alive. Section 6.0 gives the worker's order and section 7 the pools. The wording does not prove the behaviour: tests of the real entrypoints' shutdown paths are still owed (`deferred-work.md`).
+
 The image is shared so dependency graph, configuration, migrations, and module code remain identical. Runtime behavior is selected by command, for example:
 
 ```text
@@ -158,13 +168,13 @@ node ./dist/index.js worker
 
 Resolved: the project keeps the boilerplate's `tsx` (development) and `tsc` + `resolve-tspaths` (production) toolchain rather than Node 24 native type-stripping. Native stripping cannot resolve the `@/*` tsconfig path alias at runtime and forbids `enum`, which `src/config/env.ts` uses for `NodeEnv` and `LogLevel`. The Dockerfile therefore carries a build stage.
 
-The in-process event bus cannot be the cross-process backplane because `api` and `worker` are separate OS processes. A domain event emitted in the worker after a monitor threshold breach cannot reach SSE clients connected to the API process through memory. Likewise, an incident update created through the API cannot trigger worker-side notification dispatch in another process through an in-memory bus.
+The in-process event bus cannot be the cross-process backplane because `api` and `worker` are separate OS processes. A domain event emitted in the worker after a monitor threshold breach cannot reach SSE clients connected to the API process through memory. Worker-side notifications instead discover API-originated changes from durable history on their scheduled pass (section 5.6); cross-process events may wake that pass early but are not required for delivery.
 
 Therefore:
 
 - In-process bus remains for same-process handlers.
 - Postgres `LISTEN/NOTIFY` is the cross-process and client-fanout backplane.
-- Only events requiring cross-process fanout, SSE, GraphQL subscriptions, public status updates, or notification dispatch are bridged to `NOTIFY`.
+- Selected events are bridged for cross-process fanout, SSE, GraphQL subscriptions and public status updates. Notification events are optional wake-ups, never the source of delivery work.
 - The worker owns partition maintenance: detach and drop expired `check_results` partitions using `CHECK_RESULTS_RETENTION_DAYS`, and prune old `uptime_rollups` using `ROLLUP_RETENTION_DAYS`.
 
 ---
@@ -176,7 +186,7 @@ Therefore:
 | Mechanism | Scope | Use cases | Non-use cases |
 |---|---|---|---|
 | In-process event bus | Same process only | Local domain reactions, same-command follow-up handlers, decoupled module reactions inside `api` or inside `worker`. | API-to-worker communication, worker-to-API communication, SSE fanout, GraphQL subscription fanout. |
-| Postgres `LISTEN/NOTIFY` | Cross-process | API/worker coordination, public SSE, admin GraphQL subscriptions, notification dispatch triggers. | Durable job queue, large payload transport, event store. |
+| Postgres `LISTEN/NOTIFY` | Cross-process | API/worker coordination, public SSE, admin GraphQL subscriptions, optional notification-pass wake-ups. | Durable job queue, large payload transport, event store. |
 
 The in-process bus delivers one event to **every** handler registered for its type, and treats an event with no handler as a no-op. Both matter and neither was true of the boilerplate's implementation, which kept a single handler per type and threw on an unsubscribed event.
 
@@ -307,6 +317,8 @@ The handler for append-only incident timeline updates keys on `incident.update_p
 
 ### 5.4 LISTEN subscriber sketch
 
+**Unimplemented design sketch.** The visibility gate is deliberately left abstract: Epic 4 must apply DOMAIN's full public-status-page visibility rule inside `withTenantTransaction`, not copy a draft-only query on the global connection.
+
 ```ts
 type WatchdogNotifyPayload = {
   eventName: string;
@@ -358,31 +370,13 @@ export async function startWatchdogEventsListener(
   });
 }
 
-async function isPubliclyVisibleEvent(
+declare function isPubliclyVisibleEvent(
   sql: import('postgres').Sql,
   payload: WatchdogNotifyPayload,
-): Promise<boolean> {
-  if (!PUBLIC_EVENT_NAMES.has(payload.eventName)) {
-    return false;
-  }
-
-  if (payload.eventName.startsWith('incident.')) {
-    const rows = await sql<{ status: string }[]>`
-      select status
-      from incidents
-      where id = ${payload.aggregateId}
-        and org_id = ${payload.orgId}
-      limit 1
-    `;
-
-    return rows[0]?.status !== 'draft';
-  }
-
-  return true;
-}
+): Promise<boolean>;
 ```
 
-The visibility rule is name-set intersection draft-gate. `aggregateType` never bypasses the public-name whitelist. This prevents admin-only incident events such as `incident.dismissed` and `incident.state_changed` from leaking simply because their aggregate is no longer in `draft` status. Draft dismissal must emit `incident.dismissed` only and never `incident.resolved`; `incident.resolved` is reserved for confirmed or directly created incidents that resolve through the public lifecycle. `incident.created` needs no special branch: direct human-created incidents pass the draft gate, while monitor-born drafts do not.
+The public event-name whitelist is necessary but not sufficient. The gate must also enforce DOMAIN's Public status page rule: drafts are private, services must be public and unarchived, and incidents/windows naming only hidden services must not expose their data or affected-service ids. Tenant-scoped reads run inside `withTenantTransaction`; an absent row is not permission to publish. Epic 4 must define privacy-safe invalidation for deletion, archive and visibility changes, rather than assuming every event can be judged from a row that still exists. `aggregateType` never bypasses the whitelist. Draft dismissal emits `incident.dismissed` only, never `incident.resolved`.
 
 ### 5.4.1 What bounds the anonymous surface
 
@@ -466,8 +460,8 @@ WatchDog uses a shared PostgreSQL database with tenant isolation by `org_id`. Ev
 Enforcement layers:
 
 1. Application code never trusts `orgId` from request input.
-2. CQRS middleware resolves active org and role through Better Auth-owned tables.
-3. CQRS middleware validates the resolved org id shape against the Better Auth id format before repository work begins; see [Request lifecycle](#3-request-lifecycle).
+2. Authenticated routes and resolvers resolve active org and role through `resolveOrganizationContext`; public reads use the pre-tenant slug lookup. Centralized CQRS context middleware remains planned.
+3. `withTenantTransaction` validates the resolved org id shape before opening the tenant transaction; see [Request lifecycle](#3-request-lifecycle).
 4. Repository operations run inside transactions.
 5. Each transaction sets `SET LOCAL app.current_org_id`.
 6. PostgreSQL RLS policies enforce `org_id = current_setting('app.current_org_id', true)`.
@@ -781,11 +775,11 @@ Every column is camelCase (`"userId"`, `"organizationId"`, `"createdAt"`) and mu
 
 Three consequences worth stating plainly:
 
-- `"member"."role"` is unconstrained text. The `owner`/`admin`/`member` ladder is a Better Auth convention, not a database guarantee, so the organization-context middleware validates the value rather than trusting it.
+- `"member"."role"` is unconstrained text. The `owner`/`admin`/`member` ladder is a Better Auth convention, not a database guarantee, so the organization-context helper validates the value rather than trusting it.
 - Better Auth reaches Postgres through Kysely over `pg`, which it brings as an optional peer. WatchDog's own data access stays on raw `postgres.js` and the two never share a connection. This does not breach the no-ORM non-goal, which governs WatchDog's data access, but the process does load two Postgres drivers.
-- Better Auth's `pg` pool is closed by the application that opened it: an `onClose` hook ends it after the event bus drains, so `app.close()` releases every connection the process holds, and no entrypoint or script forces exit to escape an open pool (audit F-07).
+- Better Auth's `pg` pool is process-wide and reference-counted. Each app holds it; its `onClose` hook drains the event bus and releases its hold. Only the last release ends the pool, after which another app cannot be built in that process. The shared postgres.js pool is closed separately by the entrypoint. The API's `graceful-server` exits the process after its shutdown steps; `app.close()` alone neither closes every shared connection nor exits the process (audit F-07).
 
-`pnpm run auth:schema:check` regenerates against a migrated database and fails if anything is emitted, which is what pins the `better-auth` version to the committed contract. It runs in the `schema` CI job. Upgrades to `better-auth` are expected to fail this check; the fix is a new migration plus a refreshed artifact, never an edit to the applied migration.
+`pnpm run auth:schema:check` regenerates against a migrated database and fails if anything is emitted, which is what pins the `better-auth` version to the committed contract. It runs in the `database` CI job. Upgrades to `better-auth` are expected to fail this check; the fix is a new migration plus a refreshed artifact, never an edit to the applied migration.
 
 RBAC v1 uses Better Auth's built-in organization roles: `owner`, `admin`, and `member`. All three can perform v1 write actions. Finer editor/viewer roles are roadmap.
 
@@ -839,106 +833,17 @@ Guessed values are placeholders for local development only. Production-grade sec
 
 GitHub Actions verifies the backend without deploying it. CI mirrors the Compose owner/app role split: the owner role runs DBMate, and the app role runs tests under `FORCE ROW LEVEL SECURITY`.
 
-Stages:
+The committed [workflow](../../.github/workflows/ci.yml) is the executable source of truth; its YAML is not duplicated here.
 
-1. Checkout and install pnpm dependencies.
-2. Static checks: Biome formatting/linting, TypeScript checks compatible with native type-stripping, package consistency.
-3. Unit tests with `node:test`.
-4. Integration tests against a Postgres service container.
-5. Create `watchdog_app` with `watchdog_app_test_password`, mirroring the Compose init script.
-6. DBMate migration check against the service database as `watchdog_owner`.
-7. Integration and Cucumber/Gherkin E2E tests using `watchdog_app`.
-8. k6 smoke/load scripts where practical for CI runtime.
-9. Docker build validation for the shared image.
+| Job | Current checks |
+|---|---|
+| `check` | Frozen-lockfile install, Biome, `tsc --noEmit`, dependency-cruiser and unit tests. No database or local `.env`. |
+| `database` | Postgres service, restricted app role creation, `pnpm run db:migrate` using `DBMATE_DATABASE_URL`, Better Auth schema drift check as owner, integration and Cucumber E2E tests as `watchdog_app`. |
+| `docker` | Build the shared image without pushing or booting it. |
 
-```yaml
-name: ci
+The toolchain is `tsx` in development and `tsc` plus `resolve-tspaths` in production, not native type-stripping (section 4). Corepack uses the package-manager pin, Node uses `.nvmrc`, and pnpm >= 12 reads `allowBuilds` from `pnpm-workspace.yaml`.
 
-on:
-  pull_request:
-  push:
-    branches:
-      - master
-      - main
-
-jobs:
-  check:
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_DB: watchdog_test
-          POSTGRES_USER: watchdog_owner
-          POSTGRES_PASSWORD: watchdog_owner_test_password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U watchdog_owner -d watchdog_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - run: corepack enable
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - run: pnpm run check
-
-      - run: pnpm run test:unit
-
-      - name: Create app database role
-        run: |
-          psql "postgres://watchdog_owner:watchdog_owner_test_password@localhost:5432/watchdog_test" <<'SQL'
-          do $$
-          begin
-            if not exists (select from pg_roles where rolname = 'watchdog_app') then
-              create role watchdog_app login password 'watchdog_app_test_password' nosuperuser nocreatedb nocreaterole noinherit;
-            end if;
-          end
-          $$;
-          SQL
-
-      - name: Run migrations
-        run: pnpm dbmate up
-        env:
-          DATABASE_URL: postgres://watchdog_owner:watchdog_owner_test_password@localhost:5432/watchdog_test
-
-      - run: pnpm test:integration
-        env:
-          DATABASE_URL: postgres://watchdog_app:watchdog_app_test_password@localhost:5432/watchdog_test
-          BETTER_AUTH_SECRET: test_secret
-          BETTER_AUTH_URL: http://localhost:3000
-
-      - run: pnpm test:e2e
-        env:
-          DATABASE_URL: postgres://watchdog_app:watchdog_app_test_password@localhost:5432/watchdog_test
-          BETTER_AUTH_SECRET: test_secret
-          BETTER_AUTH_URL: http://localhost:3000
-
-      - run: pnpm test:k6:smoke
-
-      - run: docker build -t watch-dog:ci .
-```
-
-Script names confirmed against the scaffolded `package.json`: `pnpm run check` (Biome format + Biome lint + `tsc --noEmit` + dependency-cruiser),
-`pnpm run test:unit`, `pnpm run test:e2e`, `pnpm run test:k6:smoke`, `pnpm run db:migrate`.
-The committed `.github/workflows/ci.yml` runs install, `check` and `test:unit`; then, against a Postgres service container, the
-`create app database role` step, `dbmate up`, the Better Auth schema drift check, integration and E2E; and the docker build. k6 is
-still target shape, and arrives with ROADMAP phase 5 when there is a monitor worth loading.
-
-Two CI details that differ from the sketch above and are already committed: `corepack enable` plus `node-version-file: .nvmrc` replaces
-`pnpm/action-setup`, because `packageManager` is pinned in `package.json`; and pnpm >= 12 reads settings from `pnpm-workspace.yaml`
-(`allowBuilds`) rather than a `pnpm` key in `package.json`, which the runner needs in order to build `esbuild`.
+**Planned checks, not current CI coverage:** k6 smoke/load tests arrive with ROADMAP phase 5. A smoke test that boots the built container is separately tracked for Epic 8.
 
 CI does not deploy. Deployment is explicitly outside v1 genesis scope.
 
