@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-09-2026 05:44
+last_updated: 10-09-2026 05:54
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -183,14 +183,14 @@ action_items:
     action: "Item 5: Story Generation Constraints say tests use src/shared/testing/
       helpers and new helpers go there (with item 4)"
     owner: "owner"
-    status: open
+    status: done
     ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
   - id: "epic-9-retro-item-6-definition-of-done-matches-ci"
     epic: 9
     action: "Item 6: add the no-.env unit run and test:e2e to the per-story definition
       of done (before Epic 5)"
     owner: "owner"
-    status: open
+    status: done
     ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
   - id: "epic-9-retro-item-7-clock-skew-rerun-pitfall"
     epic: 9
@@ -212,5 +212,5 @@ action_items:
     action: "Item 9: reconcile story 9.10's 'is restarted' with Compose marking the
       worker unhealthy only (before Epic 8)"
     owner: "owner"
-    status: open
+    status: done
     ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
