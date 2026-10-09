@@ -1,5 +1,6 @@
 import envSchema from 'env-schema';
 import { type Static, Type } from 'typebox';
+import { parseAllowedCidrs } from './allowed-cidrs';
 import { authEnvProperties } from './auth-env';
 
 enum NodeEnv {
@@ -48,6 +49,10 @@ const schema = Type.Object({
   // How long a worker loop may go without completing a pass before the
   // healthcheck fails. Four maintenance intervals by default.
   WORKER_PASS_OVERDUE_MS: Type.Number({ default: 120_000, minimum: 1_000 }),
+  // Comma-separated CIDR ranges a monitor target may resolve into although they
+  // are loopback, private or otherwise blocked. Empty by default. ARCHITECTURE
+  // 6.5.
+  MONITOR_ALLOWED_CIDRS: Type.String({ default: '' }),
 });
 
 const env = envSchema<Static<typeof schema>>({
@@ -64,6 +69,9 @@ if (env.WORKER_PASS_OVERDUE_MS <= env.WORKER_MAINTENANCE_INTERVAL_MS) {
     `WORKER_PASS_OVERDUE_MS (${env.WORKER_PASS_OVERDUE_MS}) must be greater than WORKER_MAINTENANCE_INTERVAL_MS (${env.WORKER_MAINTENANCE_INTERVAL_MS})`,
   );
 }
+
+// An invalid entry fails boot, naming it.
+const monitorAllowedCidrs = parseAllowedCidrs(env.MONITOR_ALLOWED_CIDRS);
 
 export default {
   nodeEnv: env.NODE_ENV,
@@ -90,6 +98,9 @@ export default {
       max: env.PUBLIC_RATE_LIMIT_MAX,
       windowMs: env.PUBLIC_RATE_LIMIT_WINDOW_MS,
     },
+  },
+  monitor: {
+    allowedCidrs: monitorAllowedCidrs,
   },
   worker: {
     heartbeatPath: env.WORKER_HEARTBEAT_PATH,

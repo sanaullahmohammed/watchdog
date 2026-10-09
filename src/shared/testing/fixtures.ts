@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
+import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { TEST_ORIGIN } from '@/shared/testing/tenant';
 
 /**
@@ -76,5 +77,51 @@ export function scheduleMaintenance(
     scheduledStartAt: new Date(Date.now() + HOUR).toISOString(),
     scheduledEndAt: new Date(Date.now() + 2 * HOUR).toISOString(),
     ...overrides,
+  });
+}
+
+/**
+ * An enabled http monitor on `serviceId`. The target is a TEST-NET-3 literal
+ * (203.0.113.0/24), which the courtesy check accepts without a DNS lookup.
+ */
+export function createMonitor(
+  app: FastifyInstance,
+  cookie: string,
+  serviceId: string,
+  overrides: object = {},
+) {
+  return create(app, cookie, '/monitors', {
+    serviceId,
+    type: 'http',
+    name: unique('mon'),
+    target: 'https://203.0.113.10/health',
+    ...overrides,
+  });
+}
+
+/**
+ * Writes a monitor's check counters directly, standing in for a check until
+ * story 5.6 records them. `lastCheckedAt` defaults to now, so the monitor
+ * counts as checked.
+ */
+export async function setMonitorCheckState(
+  orgId: string,
+  monitorId: string,
+  state: {
+    consecutiveFailures: number;
+    failureEpisode?: number;
+    lastCheckedAt?: Date | null;
+  },
+) {
+  await withTenantTransaction(orgId, async ({ sql }) => {
+    const rows = await sql`
+      update monitors set
+        consecutive_failures = ${state.consecutiveFailures},
+        failure_episode = coalesce(${state.failureEpisode ?? null}, failure_episode),
+        last_checked_at = ${state.lastCheckedAt === undefined ? new Date() : state.lastCheckedAt}
+      where id = ${monitorId}
+      returning id
+    `;
+    assert.equal(rows.length, 1, `monitor ${monitorId} not found`);
   });
 }

@@ -192,3 +192,18 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: 23 test files still declare `const ORIGIN = 'http://localhost:3000'`, a copy of `TEST_ORIGIN` from `src/shared/testing/tenant.ts`. Migrated files now send both: the fixtures send `TEST_ORIGIN`, the file's own requests send `ORIGIN`.
   evidence: Review Triage Log #4; `grep -rln "const ORIGIN = 'http://localhost:3000'" src`.
   target: The next story that touches one of those suites.
+
+## From Story 5.1 (2026-10-09)
+
+- source_spec: `spec-5-1-create-and-update-a-monitor.md`
+  summary: No test proves `MONITOR_ALLOWED_CIDRS` reaches `config.monitor.allowedCidrs`, or that an invalid entry stops `api` and `worker` at boot. Tests assign the config object directly and unit-test the parser alone.
+  evidence: Review Triage Log, loop-1 V3 and pass-2 V2; `grep -rln MONITOR_ALLOWED src tests`. The spawned-process pattern is `src/worker-health.integration.test.ts:293`.
+  target: Story 5.4, which wires the connect-time guard to the same setting.
+- source_spec: `spec-5-1-create-and-update-a-monitor.md`
+  summary: REST bodies go through Fastify's default ajv options, so unknown keys are silently stripped (a PATCH carrying `type`, a misspelled `config` key) and `null` is coerced (`enabled: null` becomes `false`), where GraphQL and the handler's schema check refuse the same input. Every slice behaves this way.
+  evidence: Review Triage Log, loop-1 E1/E2/B11/E3; `src/server/build-app.ts:36-40` sets only `keywords`, leaving `removeAdditional` and `coerceTypes` at Fastify's defaults.
+  target: A cross-cutting story; changing the global options affects every REST route.
+- source_spec: `spec-5-1-create-and-update-a-monitor.md`
+  summary: A U+0000 character in a string field (a monitor's name or keyword, a service's name) reaches Postgres, which rejects it in `text` and `jsonb`; the unmapped error is masked as a 500 instead of a 400. Unverified for monitors; the class is pre-existing for every slice.
+  evidence: Review Triage Log, loop-1 E11 and pass-2 E5. Settle by sending `"name": "a\u0000b"` to `POST /api/v1/monitors` and reading the status.
+  target: Same cross-cutting story as the REST options entry.
