@@ -27,9 +27,6 @@
   summary: The anonymous GraphQL limiter looks up the session before checking the bucket, so a caller replaying a validly signed but signed-out session token costs one session query per request even after its bucket is spent. Unsigned or forged cookies cost nothing, because Better Auth refuses them before querying.
   evidence: Story 9.2 Review Triage Log #4; `node_modules/better-auth/dist/api/routes/session.mjs` returns null on a failed signed-cookie check before any query. Revisit with the authenticated-limit entry above.
 - source_spec: spec-9-2-anonymous-graphql-rate-limit.md
-  summary: A second `buildApp()` in the same process reportedly answers `publicStatusPage` with a masked 500, "Command type of status_page/page.get is not registered", which suggests CQRS handler registration is process-global. Unverified, medium if true, because any test needing a fresh app instance would hit it.
-  evidence: Story 9.2 Review Triage Log #8, observed by the implementer. Settle by building two apps in one process and fetching the public page from the second.
-- source_spec: spec-9-2-anonymous-graphql-rate-limit.md
   summary: The AGENTS.md "anonymous surface is bounded" bullet now carries a `/graphql`-specific parenthetical inside a list of bounds every new public route inherits. Move it into its own sentence after the list, so it does not read as a rule for every route.
   evidence: Story 9.2 Review Triage Log #15; routed defer because the fix edits an agent-context file.
 
@@ -81,9 +78,6 @@
 
 ## From Story 9.6 (2026-10-07)
 
-- source_spec: `spec-9-6-read-service-groups.md`
-  summary: `commandBus.register` and `queryBus.register` are a `Map.set`, so a second handler registered under an existing action type silently replaces the first, with no error at boot. A copied slice that reuses a type breaks another read or command depending on load order. Make `register` throw on a duplicate type (checking first how a second `buildApp()` in one process re-registers, per the 9.2 entry).
-  evidence: Story 9.6 spec review; `src/shared/cqrs/command-bus.ts:13-24`. The service reads use `'get'` and `'list'`; 9.6 names its types `'group.get'` and `'group.list'` to avoid the collision.
 - source_spec: `spec-9-6-read-service-groups.md`
   summary: `GET /api/v1/service-groups/urn:uuid:<uuid>` and `serviceGroup(id: "urn:uuid:<uuid>")` pass the uuid checks and reach Postgres as a masked 500. Settle with the 9.1 `urn:uuid:` entry.
   evidence: Story 9.6 Review Triage Log #6; `ajv-formats` uuid regex allows the `urn:uuid:` prefix and Postgres's uuid input refuses it.

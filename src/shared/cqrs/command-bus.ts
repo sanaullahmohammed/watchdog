@@ -20,6 +20,9 @@ export function commandBus(): CommandBus {
     if (typeof handler !== 'function') {
       throw new TypeError('handler must be a function');
     }
+    if (handlers.has(type)) {
+      throw new Error(`A handler for type ${type} is already registered`);
+    }
     handlers.set(type, handler);
   }
 

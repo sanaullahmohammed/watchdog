@@ -184,6 +184,10 @@ Several reactions to one event is the design here, not an edge case: the NOTIFY 
 
 **Handlers are isolated from each other and from the emitter.** Events are emitted after the emitting command commits, so no handler can undo that work, and a handler's failure must not pretend it did. The bus catches a synchronous throw or a rejected promise per handler, reports it to its `onHandlerError` (the app logs it), and still runs the handlers after it. The emitting request keeps its success response. The bus does not retry, so a handler whose work matters owns its own recovery. For status recomputation, that is the reconciliation pass the Epic 2 retrospective proposes. Before this rule, one throwing listener skipped every listener after it and turned a committed change into a 500 (retrospective R-4). The bus also tracks the promises async handlers return, so closing the app drains them: shutdown waits for handler work in flight rather than ending the connection pool underneath it.
 
+The command and query buses hold exactly one handler per type, and registering a second throws at boot, so a copied slice that reuses a type fails loudly instead of silently replacing another handler.
+
+Each app instance owns its command, query and event buses and its DI container, so its handlers bind to its own buses, and closing one app disposes only its own container. The Better Auth instance, its `authPool` and the postgres.js pool stay process-wide and are shared by every app in the process.
+
 `NOTIFY` payloads are intentionally small. Subscribers re-query read models by `orgId`, `aggregateType`, and `aggregateId` under the appropriate tenant context.
 
 ### 5.2 Fanout path
