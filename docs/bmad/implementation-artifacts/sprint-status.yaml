@@ -137,7 +137,7 @@ action_items:
     owner: "dev loop"
     status: done
   - epic: 3
-    action: "Item 23: foreign-table allowlist test, with Epic 5's uptime story"
+    action: "Item 23: foreign-table allowlist test, before the next new foreign-table read; extend it in each later story"
     owner: "dev loop"
     status: open
   - epic: 3
