@@ -1,11 +1,14 @@
 import path from 'node:path';
-import { diContainer, fastifyAwilixPlugin } from '@fastify/awilix';
-import { asFunction, Lifetime } from 'awilix';
+import { type Cradle, fastifyAwilixPlugin } from '@fastify/awilix';
+import { asFunction, createContainer, Lifetime } from 'awilix';
 import type { FastifyInstance } from 'fastify';
 import { makeDependencies } from '@/modules';
 import { formatName } from '@/server/di/util';
 
 export async function di(fastify: FastifyInstance) {
+  // One container per app, so its handlers bind to this app's buses and closing
+  // the app disposes only its own container.
+  const diContainer = createContainer<Cradle>({ injectionMode: 'PROXY' });
   diContainer
     .register({
       ...makeDependencies({
