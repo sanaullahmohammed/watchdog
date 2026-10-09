@@ -9,6 +9,8 @@ import {
   withTenantTransaction,
 } from '@/shared/db/tenant-transaction';
 import { incidentUpdatedEvent } from '@/shared/events/incident.events';
+import { createService, declareIncident } from '@/shared/testing/fixtures';
+import { gql } from '@/shared/testing/graphql';
 import { signUpWithOrg, TEST_ORIGIN } from '@/shared/testing/tenant';
 
 /**
@@ -42,28 +44,6 @@ let emptyId = '';
 let draftId = '';
 const updatedIds: string[] = [];
 
-async function createService(cookie: string, slug: string) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/services',
-    headers: { cookie, origin: TEST_ORIGIN },
-    payload: { name: slug, slug },
-  });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
-}
-
-async function declare(cookie: string, payload: object) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/incidents',
-    headers: { cookie, origin: TEST_ORIGIN },
-    payload,
-  });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
-}
-
 function rest(url: string, cookie?: string) {
   return app.inject({
     method: 'GET',
@@ -81,25 +61,6 @@ function patch(id: string, payload: object) {
   });
 }
 
-async function gql(query: string, cookie?: string, variables?: object) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/graphql',
-    headers: {
-      ...(cookie ? { cookie } : {}),
-      'content-type': 'application/json',
-    },
-    payload: { query, variables },
-  });
-  return {
-    statusCode: response.statusCode,
-    body: JSON.parse(response.body) as {
-      data: Record<string, unknown> | null;
-      errors?: { message: string; extensions?: { code?: string } }[];
-    },
-  };
-}
-
 const FIELDS = `id title status impact source startedAt resolvedAt
   affectedServices { serviceId impact }`;
 const ONE = `query($id: ID!) { incident(id: $id) { ${FIELDS} } }`;
@@ -113,7 +74,7 @@ async function readRest(id: string) {
 }
 
 async function readGql(id: string) {
-  const result = await gql(ONE, cookieA, { id });
+  const result = await gql(app, ONE, { cookie: cookieA, variables: { id } });
   assert.equal(result.statusCode, 200, JSON.stringify(result.body));
   return result.body.data?.incident as Detail;
 }
@@ -141,12 +102,18 @@ describe('Story 9.7: read one incident with its affected services', () => {
     orgIds.push(a.orgId, b.orgId);
     userIds.push(a.userId, b.userId);
 
-    const first = await createService(cookieA, `${tag}-s1`);
-    const second = await createService(cookieA, `${tag}-s2`);
+    const first = await createService(app, cookieA, {
+      name: `${tag}-s1`,
+      slug: `${tag}-s1`,
+    });
+    const second = await createService(app, cookieA, {
+      name: `${tag}-s2`,
+      slug: `${tag}-s2`,
+    });
     [serviceLow, serviceHigh] = [first, second].sort();
 
     // The larger serviceId goes first, so only an order by puts them right.
-    twoId = await declare(cookieA, {
+    twoId = await declareIncident(app, cookieA, {
       title: `${tag}-two`,
       impact: 'major',
       affectedServices: [
@@ -154,7 +121,10 @@ describe('Story 9.7: read one incident with its affected services', () => {
         { serviceId: serviceLow, impact: 'major' },
       ],
     });
-    emptyId = await declare(cookieA, { title: `${tag}-none`, impact: 'minor' });
+    emptyId = await declareIncident(app, cookieA, {
+      title: `${tag}-none`,
+      impact: 'minor',
+    });
 
     draftId = await withTenantTransaction(orgAId, async ({ sql: tx }) => {
       const rows = await tx<{ id: string }[]>`
@@ -214,9 +184,12 @@ describe('Story 9.7: read one incident with its affected services', () => {
     const { title, impact, affectedServices } = first;
 
     const emitted = await updatedFor(async () => {
-      const result = await gql(UPDATE, cookieA, {
-        id: twoId,
-        input: { title, impact, affectedServices },
+      const result = await gql(app, UPDATE, {
+        cookie: cookieA,
+        variables: {
+          id: twoId,
+          input: { title, impact, affectedServices },
+        },
       });
       assert.equal(result.statusCode, 200, JSON.stringify(result.body));
       assert.equal(result.body.errors, undefined);
@@ -242,7 +215,7 @@ describe('Story 9.7: read one incident with its affected services', () => {
   });
 
   it('reads one snapshot even when an edit commits between its two statements', async () => {
-    const id = await declare(cookieA, {
+    const id = await declareIncident(app, cookieA, {
       title: `${tag}-snap`,
       impact: 'minor',
       affectedServices: [{ serviceId: serviceLow, impact: 'minor' }],
@@ -282,7 +255,10 @@ describe('Story 9.7: read one incident with its affected services', () => {
   });
 
   it('ignores read-only fields sent to PATCH', async () => {
-    const id = await declare(cookieA, { title: `${tag}-ro`, impact: 'minor' });
+    const id = await declareIncident(app, cookieA, {
+      title: `${tag}-ro`,
+      impact: 'minor',
+    });
     const first = await readRest(id);
 
     const response = await patch(id, {
@@ -301,7 +277,10 @@ describe('Story 9.7: read one incident with its affected services', () => {
   });
 
   it('reads a resolved incident with its resolvedAt on both surfaces', async () => {
-    const id = await declare(cookieA, { title: `${tag}-res`, impact: 'minor' });
+    const id = await declareIncident(app, cookieA, {
+      title: `${tag}-res`,
+      impact: 'minor',
+    });
     const response = await app.inject({
       method: 'POST',
       url: `/api/v1/incidents/${id}/transition`,
@@ -324,7 +303,10 @@ describe('Story 9.7: read one incident with its affected services', () => {
     const viaRest = await rest(`/incidents/${twoId}`, cookieB);
     assert.equal(viaRest.statusCode, 404, viaRest.body);
 
-    const viaGql = await gql(ONE, cookieB, { id: twoId });
+    const viaGql = await gql(app, ONE, {
+      cookie: cookieB,
+      variables: { id: twoId },
+    });
     assert.equal(viaGql.statusCode, 404);
     assert.equal(viaGql.body.data, null);
     assert.match(viaGql.body.errors?.[0]?.message ?? '', /not found/i);
@@ -334,7 +316,7 @@ describe('Story 9.7: read one incident with its affected services', () => {
     const id = randomUUID();
     assert.equal((await rest(`/incidents/${id}`, cookieA)).statusCode, 404);
 
-    const viaGql = await gql(ONE, cookieA, { id });
+    const viaGql = await gql(app, ONE, { cookie: cookieA, variables: { id } });
     assert.equal(viaGql.statusCode, 404);
     assert.equal(viaGql.body.data, null);
     assert.match(viaGql.body.errors?.[0]?.message ?? '', /not found/i);
@@ -344,7 +326,10 @@ describe('Story 9.7: read one incident with its affected services', () => {
     const viaRest = await rest('/incidents/not-a-uuid', cookieA);
     assert.equal(viaRest.statusCode, 400, viaRest.body);
 
-    const viaGql = await gql(ONE, cookieA, { id: 'not-a-uuid' });
+    const viaGql = await gql(app, ONE, {
+      cookie: cookieA,
+      variables: { id: 'not-a-uuid' },
+    });
     assert.equal(viaGql.statusCode, 400);
     assert.equal(viaGql.body.data, null);
     const message = viaGql.body.errors?.[0]?.message ?? '';
@@ -355,7 +340,7 @@ describe('Story 9.7: read one incident with its affected services', () => {
   it('answers 401 without a session', async () => {
     assert.equal((await rest(`/incidents/${twoId}`)).statusCode, 401);
 
-    const viaGql = await gql(ONE, undefined, { id: twoId });
+    const viaGql = await gql(app, ONE, { variables: { id: twoId } });
     assert.equal(viaGql.statusCode, 200);
     assert.equal(viaGql.body.data, null);
     assert.equal(viaGql.body.errors?.[0]?.extensions?.code, 'UNAUTHENTICATED');

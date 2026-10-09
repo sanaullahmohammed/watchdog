@@ -5,6 +5,8 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { createService } from '@/shared/testing/fixtures';
+import { gqlData } from '@/shared/testing/graphql';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /**
@@ -32,21 +34,6 @@ let userAId = '';
 let userBId = '';
 let orgAId = '';
 let orgBId = '';
-
-async function createService(
-  cookie: string,
-  slug: string,
-  extra: Record<string, unknown> = {},
-) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/services',
-    headers: { cookie, origin: ORIGIN },
-    payload: { name: slug, slug, ...extra },
-  });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
-}
 
 async function listSlugs(cookie: string, query = '') {
   const response = await app.inject({
@@ -94,8 +81,11 @@ describe('Story 2.5: exclusion from active and public lists', () => {
   it('excludes archived services from the admin list by default', async () => {
     const live = `${tag}-live`;
     const retired = `${tag}-retired`;
-    await createService(cookieA, live);
-    const retiredId = await createService(cookieA, retired);
+    await createService(app, cookieA, { name: live, slug: live });
+    const retiredId = await createService(app, cookieA, {
+      name: retired,
+      slug: retired,
+    });
     await app.inject({
       method: 'POST',
       url: `/api/v1/services/${retiredId}/archive`,
@@ -126,7 +116,11 @@ describe('Story 2.5: exclusion from active and public lists', () => {
 
   it('hides a non-public service from public surfaces while keeping it on admin', async () => {
     const hidden = `${tag}-internal`;
-    await createService(cookieA, hidden, { isPublic: false });
+    await createService(app, cookieA, {
+      name: hidden,
+      slug: hidden,
+      isPublic: false,
+    });
 
     const admin = await listSlugs(cookieA);
     const publicOnly = await listSlugs(cookieA, '?publicOnly=true');
@@ -156,7 +150,10 @@ describe('Story 2.5: exclusion from active and public lists', () => {
   });
 
   it('keeps each organization listing only its own', async () => {
-    await createService(cookieB, `${tag}-theirs`);
+    await createService(app, cookieB, {
+      name: `${tag}-theirs`,
+      slug: `${tag}-theirs`,
+    });
 
     const mine = await listSlugs(cookieA, '?includeArchived=true');
     const theirs = await listSlugs(cookieB, '?includeArchived=true');
@@ -180,8 +177,9 @@ describe('Story 9.8: service lists settle ties by id', () => {
   // reorder equal keys and the test could pass without `id asc`.
   before(async () => {
     ({ cookie, userId, orgId } = await signUpWithOrg(app, `${tag}-ties`));
-    await createService(cookie, `${tag}-zulu`, {
+    await createService(app, cookie, {
       name: 'Zulu',
+      slug: `${tag}-zulu`,
       displayOrder: 0,
     });
     // Larger id inserted first and given the earlier slug. Insertion order is
@@ -231,19 +229,13 @@ describe('Story 9.8: service lists settle ties by id', () => {
   });
 
   it('orders the same way over GraphQL', async () => {
-    const response = await app.inject({
-      method: 'POST',
-      url: '/graphql',
-      headers: { cookie, 'content-type': 'application/json' },
-      payload: { query: '{ services { slug } }' },
-    });
-    const body = JSON.parse(response.body) as {
-      data: { services: { slug: string }[] };
-      errors?: unknown[];
-    };
-    assert.equal(body.errors, undefined, response.body);
+    const data = await gqlData<{ services: { slug: string }[] }>(
+      app,
+      '{ services { slug } }',
+      { cookie },
+    );
     assert.deepEqual(
-      body.data.services.map((s) => s.slug),
+      data.services.map((s) => s.slug),
       expected,
     );
   });

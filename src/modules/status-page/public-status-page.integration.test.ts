@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { SLUG_MAX_LENGTH } from '@/shared/domain/slug';
+import { gql } from '@/shared/testing/graphql';
 import {
   displayNameFor,
   signUpWithOrg,
@@ -54,19 +55,6 @@ const MISS = {
 /** No cookie, no origin: the way anyone holding the link arrives. */
 function fetchPage(slug: string, prefix = '') {
   return app.inject({ method: 'GET', url: `${prefix}/status/${slug}` });
-}
-
-async function gql(query: string, variables?: object) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/graphql',
-    headers: { 'content-type': 'application/json' },
-    payload: { query, variables },
-  });
-  return JSON.parse(response.body) as {
-    data: { publicStatusPage?: unknown } | null;
-    errors?: { message: string }[];
-  };
 }
 
 describe('Story 3.2: resolve an organization from its public slug', () => {
@@ -191,10 +179,13 @@ describe('Story 3.2: resolve an organization from its public slug', () => {
   });
 
   it('answers the same page over GraphQL, also without a session', async () => {
-    const result = await gql(
-      'query ($slug: ID!) { publicStatusPage(orgSlug: $slug) { organization { name slug } } }',
-      { slug: slugA },
-    );
+    const result = (
+      await gql<{ publicStatusPage?: unknown }>(
+        app,
+        'query ($slug: ID!) { publicStatusPage(orgSlug: $slug) { organization { name slug } } }',
+        { variables: { slug: slugA } },
+      )
+    ).body;
 
     assert.equal(result.errors, undefined, JSON.stringify(result.errors));
     assert.deepEqual(result.data?.publicStatusPage, {
@@ -205,7 +196,9 @@ describe('Story 3.2: resolve an organization from its public slug', () => {
   it('refuses every miss over GraphQL with one identical error', async () => {
     const query =
       'query ($slug: ID!) { publicStatusPage(orgSlug: $slug) { organization { slug } } }';
-    const reference = await gql(query, { slug: `${tag}-nobody` });
+    const reference = (
+      await gql(app, query, { variables: { slug: `${tag}-nobody` } })
+    ).body;
 
     assert.deepEqual(reference, {
       data: null,
@@ -231,10 +224,16 @@ describe('Story 3.2: resolve an organization from its public slug', () => {
       'an existing slug over the length limit': edge.overLimit.slug,
       'an existing slug outside the pattern': edge.offRule.slug,
     })) {
-      assert.deepEqual(await gql(query, { slug }), reference, what);
+      assert.deepEqual(
+        (await gql(app, query, { variables: { slug } })).body,
+        reference,
+        what,
+      );
     }
 
-    const atLimit = await gql(query, { slug: edge.atLimit.slug });
+    const atLimit = (
+      await gql(app, query, { variables: { slug: edge.atLimit.slug } })
+    ).body;
     assert.deepEqual(atLimit, {
       data: { publicStatusPage: { organization: { slug: edge.atLimit.slug } } },
     });

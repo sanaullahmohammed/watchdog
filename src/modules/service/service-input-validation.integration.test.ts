@@ -6,6 +6,7 @@ import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import * as events from '@/shared/events/service.events';
+import { type GraphqlResult, gql } from '@/shared/testing/graphql';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /**
@@ -44,25 +45,9 @@ function api(
   });
 }
 
-async function gql(query: string, variables?: object) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/graphql',
-    headers: { cookie, 'content-type': 'application/json' },
-    payload: { query, variables },
-  });
-  return {
-    statusCode: response.statusCode,
-    body: JSON.parse(response.body) as {
-      data: unknown;
-      errors?: { message: string }[];
-    },
-  };
-}
-
 /** Refused as a client mistake, with the offending field named. */
 function assertRefused(
-  result: Awaited<ReturnType<typeof gql>>,
+  result: GraphqlResult,
   source: 'handler' | RegExp,
   ...fields: string[]
 ) {
@@ -102,13 +87,13 @@ async function rows() {
 }
 
 /** Runs a refused operation and proves it wrote and emitted nothing. */
-async function refused(run: () => ReturnType<typeof gql>, ...fields: string[]) {
+async function refused(run: () => Promise<GraphqlResult>, ...fields: string[]) {
   return refusedFrom('handler', run, ...fields);
 }
 
 async function refusedFrom(
   source: 'handler' | RegExp,
-  run: () => ReturnType<typeof gql>,
+  run: () => Promise<GraphqlResult>,
   ...fields: string[]
 ) {
   await app.eventBus.drain();
@@ -123,31 +108,35 @@ async function refusedFrom(
   assert.deepEqual(emitted, [], 'an event was emitted');
 }
 
-const createService = (input: object) =>
+const createServiceMutation = (input: object) =>
   gql(
+    app,
     `mutation ($input: CreateServicePayload!) { createService(input: $input) }`,
-    { input },
+    { cookie, variables: { input } },
   );
 const updateService = (id: string, input: object) =>
   gql(
+    app,
     `mutation ($id: ID!, $input: UpdateServicePayload!) {
        updateService(id: $id, input: $input)
      }`,
-    { id, input },
+    { cookie, variables: { id, input } },
   );
-const createGroup = (input: object) =>
+const createServiceGroupMutation = (input: object) =>
   gql(
+    app,
     `mutation ($input: CreateServiceGroupPayload!) {
        createServiceGroup(input: $input)
      }`,
-    { input },
+    { cookie, variables: { input } },
   );
 const updateGroup = (id: string, input: object) =>
   gql(
+    app,
     `mutation ($id: ID!, $input: UpdateServiceGroupPayload!) {
        updateServiceGroup(id: $id, input: $input)
      }`,
-    { id, input },
+    { cookie, variables: { id, input } },
   );
 
 describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', () => {
@@ -198,15 +187,26 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
 
   it('refuses name, slug and displayOrder together, and REST answers 400', async () => {
     const input = { name: '', slug: 'INVALID SLUG!', displayOrder: -1 };
-    await refused(() => createService(input), 'name', 'slug', 'displayOrder');
+    await refused(
+      () => createServiceMutation(input),
+      'name',
+      'slug',
+      'displayOrder',
+    );
     assert.equal((await api('POST', '/services', input)).statusCode, 400);
   });
 
   it('refuses a name of 121 characters on create and update, services and groups', async () => {
     const name = 'n'.repeat(121);
-    await refused(() => createService({ name, slug: `${tag}-a` }), 'name');
+    await refused(
+      () => createServiceMutation({ name, slug: `${tag}-a` }),
+      'name',
+    );
     await refused(() => updateService(serviceId, { name }), 'name');
-    await refused(() => createGroup({ name, slug: `${tag}-a` }), 'name');
+    await refused(
+      () => createServiceGroupMutation({ name, slug: `${tag}-a` }),
+      'name',
+    );
     await refused(() => updateGroup(groupId, { name }), 'name');
     assert.equal(
       (await api('POST', '/services', { name, slug: `${tag}-a` })).statusCode,
@@ -220,8 +220,11 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
 
   it('refuses a bad slug: a space, a leading hyphen, 121 characters', async () => {
     for (const slug of ['Has Space', '-lead', 'a'.repeat(121)]) {
-      await refused(() => createService({ name: tag, slug }), 'slug');
-      await refused(() => createGroup({ name: tag, slug }), 'slug');
+      await refused(() => createServiceMutation({ name: tag, slug }), 'slug');
+      await refused(
+        () => createServiceGroupMutation({ name: tag, slug }),
+        'slug',
+      );
       await refused(() => updateGroup(groupId, { slug }), 'slug');
       assert.equal(
         (await api('POST', '/services', { name: tag, slug })).statusCode,
@@ -240,10 +243,11 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
         displayOrder === 1.5
           ? /^Variable "\$input" got invalid value 1\.5/
           : 'handler';
-      const refused = (run: () => ReturnType<typeof gql>, field: string) =>
+      const refused = (run: () => Promise<GraphqlResult>, field: string) =>
         refusedFrom(source, run, field);
       await refused(
-        () => createService({ name: tag, slug: `${tag}-o`, displayOrder }),
+        () =>
+          createServiceMutation({ name: tag, slug: `${tag}-o`, displayOrder }),
         'displayOrder',
       );
       await refused(
@@ -251,7 +255,12 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
         'displayOrder',
       );
       await refused(
-        () => createGroup({ name: tag, slug: `${tag}-o`, displayOrder }),
+        () =>
+          createServiceGroupMutation({
+            name: tag,
+            slug: `${tag}-o`,
+            displayOrder,
+          }),
         'displayOrder',
       );
       await refused(
@@ -269,7 +278,11 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
   it('refuses a group id that is not a uuid on create and update', async () => {
     await refused(
       () =>
-        createService({ name: tag, slug: `${tag}-g`, serviceGroupId: 'nope' }),
+        createServiceMutation({
+          name: tag,
+          slug: `${tag}-g`,
+          serviceGroupId: 'nope',
+        }),
       'serviceGroupId',
     );
     await refused(
@@ -290,24 +303,44 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
 
   it('refuses null on create for service description, serviceGroupId, isPublic and displayOrder, and group displayOrder', async () => {
     await refused(
-      () => createService({ name: tag, slug: `${tag}-n`, description: null }),
+      () =>
+        createServiceMutation({
+          name: tag,
+          slug: `${tag}-n`,
+          description: null,
+        }),
       'description',
     );
     await refused(
       () =>
-        createService({ name: tag, slug: `${tag}-n`, serviceGroupId: null }),
+        createServiceMutation({
+          name: tag,
+          slug: `${tag}-n`,
+          serviceGroupId: null,
+        }),
       'serviceGroupId',
     );
     await refused(
-      () => createGroup({ name: tag, slug: `${tag}-n`, displayOrder: null }),
+      () =>
+        createServiceGroupMutation({
+          name: tag,
+          slug: `${tag}-n`,
+          displayOrder: null,
+        }),
       'displayOrder',
     );
     await refused(
-      () => createService({ name: tag, slug: `${tag}-n`, isPublic: null }),
+      () =>
+        createServiceMutation({ name: tag, slug: `${tag}-n`, isPublic: null }),
       'isPublic',
     );
     await refused(
-      () => createService({ name: tag, slug: `${tag}-n`, displayOrder: null }),
+      () =>
+        createServiceMutation({
+          name: tag,
+          slug: `${tag}-n`,
+          displayOrder: null,
+        }),
       'displayOrder',
     );
     assert.equal(
@@ -341,9 +374,12 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
   });
 
   it('accepts null on update, clearing a description and a group', async () => {
-    const group = await createGroup({ name: `${tag} g`, slug: `${tag}-cg` });
+    const group = await createServiceGroupMutation({
+      name: `${tag} g`,
+      slug: `${tag}-cg`,
+    });
     const groupRef = group.body.data as { createServiceGroup: string };
-    const made = await createService({
+    const made = await createServiceMutation({
       name: `${tag} c`,
       slug: `${tag}-c`,
       description: 'something',
@@ -374,7 +410,10 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
 
   it('refuses a name of one letter and 200 combining marks, as REST does', async () => {
     const name = `a${'\u0301'.repeat(200)}`;
-    await refused(() => createService({ name, slug: `${tag}-cp` }), 'name');
+    await refused(
+      () => createServiceMutation({ name, slug: `${tag}-cp` }),
+      'name',
+    );
     assert.equal(
       (await api('POST', '/services', { name, slug: `${tag}-cp` })).statusCode,
       400,
@@ -410,7 +449,7 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
   it('accepts valid input and emits service.created', async () => {
     await app.eventBus.drain();
     emitted.length = 0;
-    const result = await createService({
+    const result = await createServiceMutation({
       name: `${tag} ok`,
       slug: `${tag}-ok`,
       displayOrder: 3,
@@ -421,9 +460,16 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
   });
 
   it('refuses a malformed id on a service query over GraphQL as REST does', async () => {
-    const result = await gql('query ($id: ID!) { service(id: $id) { id } }', {
-      id: 'not-a-uuid',
-    });
+    const result = await gql(
+      app,
+      'query ($id: ID!) { service(id: $id) { id } }',
+      {
+        cookie,
+        variables: {
+          id: 'not-a-uuid',
+        },
+      },
+    );
     assert.equal(result.statusCode, 400, JSON.stringify(result.body));
     assert.equal(result.body.data, null);
     assert.equal(result.body.errors?.length, 1);
@@ -432,9 +478,16 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
       'Invalid input. id: must match format "uuid"',
     );
     assert.equal((await api('GET', '/services/not-a-uuid')).statusCode, 400);
-    const unknown = await gql('query ($id: ID!) { service(id: $id) { id } }', {
-      id: randomUUID(),
-    });
+    const unknown = await gql(
+      app,
+      'query ($id: ID!) { service(id: $id) { id } }',
+      {
+        cookie,
+        variables: {
+          id: randomUUID(),
+        },
+      },
+    );
     assert.equal(unknown.statusCode, 404, JSON.stringify(unknown.body));
   });
 
@@ -462,7 +515,10 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
         slug: `${tag}-rest${i}`,
       });
       assert.equal(rest.statusCode, 201, rest.body);
-      const viaGql = await createService({ ...input, slug: `${tag}-gql${i}` });
+      const viaGql = await createServiceMutation({
+        ...input,
+        slug: `${tag}-gql${i}`,
+      });
       assert.equal(viaGql.body.errors, undefined, JSON.stringify(viaGql.body));
       const restRow = await columns(JSON.parse(rest.body).id);
       const gqlRow = await columns(
@@ -503,10 +559,11 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
       /does not exist in "ServiceStatus"/,
       () =>
         gql(
+          app,
           `mutation ($id: ID!, $input: SetStatusOverridePayload!) {
              setServiceStatusOverride(id: $id, input: $input)
            }`,
-          { id: serviceId, input: { status: 'bogus' } },
+          { cookie, variables: { id: serviceId, input: { status: 'bogus' } } },
         ),
       'status',
     );
@@ -530,8 +587,9 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
     assert.deepEqual(emitted, [], 'an event was emitted');
 
     const cleared = await gql(
+      app,
       `mutation ($id: ID!) { clearServiceStatusOverride(id: $id) }`,
-      { id: serviceId },
+      { cookie, variables: { id: serviceId } },
     );
     assert.equal(cleared.body.errors, undefined, JSON.stringify(cleared.body));
     await app.eventBus.drain();
@@ -542,20 +600,40 @@ describe('Story 9.1: GraphQL refuses what REST refuses, services and groups', ()
     const attempts = [
       () => updateService(id, { name: 'x' }),
       () => updateGroup(id, { name: 'x' }),
-      () => gql(`mutation ($id: ID!) { deleteServiceGroup(id: $id) }`, { id }),
-      () => gql(`mutation ($id: ID!) { archiveService(id: $id) }`, { id }),
-      () => gql(`mutation ($id: ID!) { restoreService(id: $id) }`, { id }),
+      () =>
+        gql(app, `mutation ($id: ID!) { deleteServiceGroup(id: $id) }`, {
+          cookie,
+          variables: { id },
+        }),
+      () =>
+        gql(app, `mutation ($id: ID!) { archiveService(id: $id) }`, {
+          cookie,
+          variables: { id },
+        }),
+      () =>
+        gql(app, `mutation ($id: ID!) { restoreService(id: $id) }`, {
+          cookie,
+          variables: { id },
+        }),
       () =>
         gql(
+          app,
           `mutation ($id: ID!) {
              setServiceStatusOverride(id: $id, input: { status: operational })
            }`,
-          { id },
+          { cookie, variables: { id } },
         ),
       () =>
-        gql(`mutation ($id: ID!) { clearServiceStatusOverride(id: $id) }`, {
-          id,
-        }),
+        gql(
+          app,
+          `mutation ($id: ID!) { clearServiceStatusOverride(id: $id) }`,
+          {
+            cookie,
+            variables: {
+              id,
+            },
+          },
+        ),
     ];
     for (const attempt of attempts) {
       await refused(attempt, 'id');

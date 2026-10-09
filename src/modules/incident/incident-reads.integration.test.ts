@@ -5,6 +5,8 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { declareIncident } from '@/shared/testing/fixtures';
+import { gqlData } from '@/shared/testing/graphql';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /** Story 2.11 — read an incident timeline in order, and list incidents. */
@@ -20,16 +22,6 @@ let userBId = '';
 let orgAId = '';
 let orgBId = '';
 let openIncidentId = '';
-
-async function declare(cookie: string, title: string) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/incidents',
-    headers: { cookie, origin: ORIGIN },
-    payload: { title, impact: 'major' },
-  });
-  return JSON.parse(response.body).id as string;
-}
 
 async function listIncidents(cookie: string, query = '') {
   const response = await app.inject({
@@ -56,8 +48,14 @@ describe('Story 2.11: read incidents and their timelines', () => {
       orgId: orgBId,
     } = await signUpWithOrg(app, `${tag}-b`));
 
-    openIncidentId = await declare(cookieA, `${tag}-open`);
-    const resolved = await declare(cookieA, `${tag}-resolved`);
+    openIncidentId = await declareIncident(app, cookieA, {
+      title: `${tag}-open`,
+      impact: 'major',
+    });
+    const resolved = await declareIncident(app, cookieA, {
+      title: `${tag}-resolved`,
+      impact: 'major',
+    });
     await app.inject({
       method: 'POST',
       url: `/api/v1/incidents/${resolved}/transition`,
@@ -123,20 +121,10 @@ describe('Story 2.11: read incidents and their timelines', () => {
     // The parity contract compares the request shapes each surface accepts,
     // never the responses they build. One presenter per response is what keeps
     // these equal; two hand-written mappings drifted apart unnoticed before.
-    const gql = async <T>(query: string, variables?: object) => {
-      const response = await app.inject({
-        method: 'POST',
-        url: '/graphql',
-        headers: { cookie: cookieA, 'content-type': 'application/json' },
-        payload: { query, variables },
-      });
-      const body = JSON.parse(response.body) as { data: T; errors?: unknown[] };
-      assert.equal(body.errors, undefined, response.body);
-      return body.data;
-    };
-
-    const graphList = await gql<{ incidents: unknown[] }>(
+    const graphList = await gqlData<{ incidents: unknown[] }>(
+      app,
       '{ incidents { id title status impact source startedAt resolvedAt } }',
+      { cookie: cookieA },
     );
     assert.deepEqual(graphList.incidents, await listIncidents(cookieA));
 
@@ -149,9 +137,10 @@ describe('Story 2.11: read incidents and their timelines', () => {
         })
       ).body,
     );
-    const graphTimeline = await gql<{ incidentTimeline: unknown[] }>(
+    const graphTimeline = await gqlData<{ incidentTimeline: unknown[] }>(
+      app,
       'query ($id: ID!) { incidentTimeline(id: $id) { id status message createdAt } }',
-      { id: openIncidentId },
+      { cookie: cookieA, variables: { id: openIncidentId } },
     );
     assert.deepEqual(graphTimeline.incidentTimeline, restTimeline);
   });

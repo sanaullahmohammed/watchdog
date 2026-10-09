@@ -12,6 +12,7 @@ import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentConfirmedEvent } from '@/shared/events/incident.events';
 import { maintenanceStartedEvent } from '@/shared/events/maintenance.events';
 import { serviceStatusChangedEvent } from '@/shared/events/service.events';
+import { createService, declareIncident } from '@/shared/testing/fixtures';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /** Story 2.17 — recompute and announce service status. */
@@ -52,22 +53,6 @@ function api(
     headers: { cookie, origin: ORIGIN },
     payload,
   });
-}
-
-async function createService(cookie: string, slug: string) {
-  const response = await api(cookie, 'POST', '/services', { name: slug, slug });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
-}
-
-async function declare(cookie: string, serviceId: string, impact: string) {
-  const response = await api(cookie, 'POST', '/incidents', {
-    title: `${impact} trouble`,
-    impact,
-    affectedServices: [{ serviceId, impact }],
-  });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
 }
 
 /** An incident written straight to the table, so no event announces it. */
@@ -170,9 +155,13 @@ describe('Story 2.17: recompute and announce service status', () => {
 
   it('writes the new status and announces it when an incident names a service', async () => {
     const slug = `${tag}-api`;
-    const id = await createService(cookieA, slug);
+    const id = await createService(app, cookieA, { name: slug, slug });
 
-    await declare(cookieA, id, 'critical');
+    await declareIncident(app, cookieA, {
+      title: 'critical trouble',
+      impact: 'critical',
+      affectedServices: [{ serviceId: id, impact: 'critical' }],
+    });
     await settle();
 
     assert.equal(await statusOf(orgAId, id), 'major_outage');
@@ -182,8 +171,15 @@ describe('Story 2.17: recompute and announce service status', () => {
   });
 
   it('writes nothing and announces nothing when the answer has not moved', async () => {
-    const id = await createService(cookieA, `${tag}-steady`);
-    await declare(cookieA, id, 'minor');
+    const id = await createService(app, cookieA, {
+      name: `${tag}-steady`,
+      slug: `${tag}-steady`,
+    });
+    await declareIncident(app, cookieA, {
+      title: 'minor trouble',
+      impact: 'minor',
+      affectedServices: [{ serviceId: id, impact: 'minor' }],
+    });
     await settle();
     const settled = await stored(orgAId, id);
     assert.equal(settled.status, 'degraded');
@@ -199,8 +195,15 @@ describe('Story 2.17: recompute and announce service status', () => {
   });
 
   it('returns the service to operational, once, when the incident resolves', async () => {
-    const id = await createService(cookieA, `${tag}-resolves`);
-    const incidentId = await declare(cookieA, id, 'major');
+    const id = await createService(app, cookieA, {
+      name: `${tag}-resolves`,
+      slug: `${tag}-resolves`,
+    });
+    const incidentId = await declareIncident(app, cookieA, {
+      title: 'major trouble',
+      impact: 'major',
+      affectedServices: [{ serviceId: id, impact: 'major' }],
+    });
     await settle();
     assert.equal(await statusOf(orgAId, id), 'partial_outage');
 
@@ -223,7 +226,10 @@ describe('Story 2.17: recompute and announce service status', () => {
   });
 
   it('ignores a draft until it is confirmed', async () => {
-    const id = await createService(cookieA, `${tag}-draft`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-draft`,
+      slug: `${tag}-draft`,
+    });
     const incidentId = await silentIncident(orgAId, id, 'critical', 'draft');
 
     assert.deepEqual(
@@ -249,7 +255,10 @@ describe('Story 2.17: recompute and announce service status', () => {
     // Which statuses are active is one shared subset now, so this and the
     // public page cannot disagree about what "active" means (AV-3). No fixture
     // anywhere reached `monitoring` before (VG-F).
-    const id = await createService(cookieA, `${tag}-watching`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-watching`,
+      slug: `${tag}-watching`,
+    });
     await silentIncident(orgAId, id, 'major', 'monitoring');
 
     assert.deepEqual(
@@ -264,8 +273,15 @@ describe('Story 2.17: recompute and announce service status', () => {
   });
 
   it('follows an edit that drops the service from an active incident', async () => {
-    const id = await createService(cookieA, `${tag}-dropped`);
-    const incidentId = await declare(cookieA, id, 'critical');
+    const id = await createService(app, cookieA, {
+      name: `${tag}-dropped`,
+      slug: `${tag}-dropped`,
+    });
+    const incidentId = await declareIncident(app, cookieA, {
+      title: 'critical trouble',
+      impact: 'critical',
+      affectedServices: [{ serviceId: id, impact: 'critical' }],
+    });
     await settle();
     assert.equal(await statusOf(orgAId, id), 'major_outage');
 
@@ -279,7 +295,10 @@ describe('Story 2.17: recompute and announce service status', () => {
   });
 
   it('follows a window into maintenance, and back out when it completes', async () => {
-    const id = await createService(cookieA, `${tag}-window`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-window`,
+      slug: `${tag}-window`,
+    });
     const windowId = await inProgressWindow(orgAId, id);
 
     app.eventBus.emit(maintenanceStartedEvent({ id: windowId, orgId: orgAId }));
@@ -303,8 +322,14 @@ describe('Story 2.17: recompute and announce service status', () => {
   it('follows an edit that swaps the services a running window covers', async () => {
     // The trigger story 2.17 added maintenance.updated for, which no test
     // exercised through a running window (VG-2).
-    const before = await createService(cookieA, `${tag}-covered-before`);
-    const after = await createService(cookieA, `${tag}-covered-after`);
+    const before = await createService(app, cookieA, {
+      name: `${tag}-covered-before`,
+      slug: `${tag}-covered-before`,
+    });
+    const after = await createService(app, cookieA, {
+      name: `${tag}-covered-after`,
+      slug: `${tag}-covered-after`,
+    });
     const windowId = await inProgressWindow(orgAId, before);
 
     app.eventBus.emit(maintenanceStartedEvent({ id: windowId, orgId: orgAId }));
@@ -322,8 +347,15 @@ describe('Story 2.17: recompute and announce service status', () => {
   });
 
   it('lets an override win, and falls back to computed status when cleared', async () => {
-    const id = await createService(cookieA, `${tag}-override`);
-    await declare(cookieA, id, 'critical');
+    const id = await createService(app, cookieA, {
+      name: `${tag}-override`,
+      slug: `${tag}-override`,
+    });
+    await declareIncident(app, cookieA, {
+      title: 'critical trouble',
+      impact: 'critical',
+      affectedServices: [{ serviceId: id, impact: 'critical' }],
+    });
     await settle();
 
     await api(cookieA, 'PUT', `/services/${id}/status-override`, {
@@ -338,7 +370,10 @@ describe('Story 2.17: recompute and announce service status', () => {
   });
 
   it('skips an archived service, and recomputes it when restored', async () => {
-    const id = await createService(cookieA, `${tag}-archived`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-archived`,
+      slug: `${tag}-archived`,
+    });
     const archive = await api(cookieA, 'POST', `/services/${id}/archive`);
     assert.equal(archive.statusCode, 200, archive.body);
     await silentIncident(orgAId, id, 'critical', 'investigating');
@@ -356,8 +391,14 @@ describe('Story 2.17: recompute and announce service status', () => {
   });
 
   it('recomputes each organization under its own tenant context', async () => {
-    const serviceA = await createService(cookieA, `${tag}-tenant-a`);
-    const serviceB = await createService(cookieB, `${tag}-tenant-b`);
+    const serviceA = await createService(app, cookieA, {
+      name: `${tag}-tenant-a`,
+      slug: `${tag}-tenant-a`,
+    });
+    const serviceB = await createService(app, cookieB, {
+      name: `${tag}-tenant-b`,
+      slug: `${tag}-tenant-b`,
+    });
     const windowA = await inProgressWindow(orgAId, serviceA);
     const windowB = await inProgressWindow(orgBId, serviceB);
 
@@ -383,7 +424,10 @@ describe('Story 2.17: recompute and announce service status', () => {
   });
 
   it('announces a change exactly once when recomputations race', async () => {
-    const id = await createService(cookieA, `${tag}-race`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-race`,
+      slug: `${tag}-race`,
+    });
     await silentIncident(orgAId, id, 'minor', 'investigating');
 
     const results = await Promise.all(
@@ -397,8 +441,12 @@ describe('Story 2.17: recompute and announce service status', () => {
 
   it('reconciles a status that drifted, through the command the worker runs', async () => {
     const slug = `${tag}-drifted`;
-    const id = await createService(cookieA, slug);
-    await declare(cookieA, id, 'critical');
+    const id = await createService(app, cookieA, { name: slug, slug });
+    await declareIncident(app, cookieA, {
+      title: 'critical trouble',
+      impact: 'critical',
+      affectedServices: [{ serviceId: id, impact: 'critical' }],
+    });
     await settle();
     assert.equal(await statusOf(orgAId, id), 'major_outage');
 

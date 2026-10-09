@@ -10,6 +10,8 @@ import {
   serviceGroupDeletedEvent,
   serviceGroupUpdatedEvent,
 } from '@/shared/events/service.events';
+import { capturing } from '@/shared/testing/events';
+import { createService, createServiceGroup } from '@/shared/testing/fixtures';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /** Story 2.3 — group services. */
@@ -32,28 +34,6 @@ function post(url: string, cookie: string, payload: Record<string, unknown>) {
     headers: { cookie, origin: ORIGIN },
     payload,
   });
-}
-
-async function capturing<T>(type: string, run: () => Promise<T>) {
-  const captured: unknown[] = [];
-  app.eventBus.on(type, (event) => captured.push(event));
-  const result = await run();
-  return { result, captured };
-}
-
-async function createGroup(cookie: string, slug: string) {
-  const response = await post('/api/v1/service-groups', cookie, {
-    name: slug,
-    slug,
-  });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
-}
-
-async function createService(cookie: string, slug: string) {
-  const response = await post('/api/v1/services', cookie, { name: slug, slug });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
 }
 
 function assignGroup(
@@ -103,6 +83,7 @@ describe('Story 2.3: group services', () => {
 
   it('creates a group scoped to the organization and emits service_group.created', async () => {
     const { result, captured } = await capturing(
+      app,
       serviceGroupCreatedEvent.type,
       () =>
         post('/api/v1/service-groups', cookieA, {
@@ -123,9 +104,13 @@ describe('Story 2.3: group services', () => {
   });
 
   it('renames a group and emits service_group.updated', async () => {
-    const id = await createGroup(cookieA, `${tag}-rename`);
+    const id = await createServiceGroup(app, cookieA, {
+      name: `${tag}-rename`,
+      slug: `${tag}-rename`,
+    });
 
     const { result, captured } = await capturing(
+      app,
       serviceGroupUpdatedEvent.type,
       () =>
         app.inject({
@@ -149,8 +134,14 @@ describe('Story 2.3: group services', () => {
   });
 
   it('ungroups rather than deletes services when a group is deleted', async () => {
-    const groupId = await createGroup(cookieA, `${tag}-doomed`);
-    const serviceId = await createService(cookieA, `${tag}-survivor`);
+    const groupId = await createServiceGroup(app, cookieA, {
+      name: `${tag}-doomed`,
+      slug: `${tag}-doomed`,
+    });
+    const serviceId = await createService(app, cookieA, {
+      name: `${tag}-survivor`,
+      slug: `${tag}-survivor`,
+    });
     assert.equal(
       (await assignGroup(cookieA, serviceId, groupId)).statusCode,
       200,
@@ -158,6 +149,7 @@ describe('Story 2.3: group services', () => {
     assert.equal(await groupOf(orgAId, serviceId), groupId);
 
     const { result, captured } = await capturing(
+      app,
       serviceGroupDeletedEvent.type,
       () =>
         app.inject({
@@ -187,9 +179,18 @@ describe('Story 2.3: group services', () => {
   });
 
   it('keeps a service in exactly one group as it moves between them', async () => {
-    const first = await createGroup(cookieA, `${tag}-first`);
-    const second = await createGroup(cookieA, `${tag}-second`);
-    const serviceId = await createService(cookieA, `${tag}-mover`);
+    const first = await createServiceGroup(app, cookieA, {
+      name: `${tag}-first`,
+      slug: `${tag}-first`,
+    });
+    const second = await createServiceGroup(app, cookieA, {
+      name: `${tag}-second`,
+      slug: `${tag}-second`,
+    });
+    const serviceId = await createService(app, cookieA, {
+      name: `${tag}-mover`,
+      slug: `${tag}-mover`,
+    });
 
     assert.equal(
       (await assignGroup(cookieA, serviceId, first)).statusCode,
@@ -208,8 +209,14 @@ describe('Story 2.3: group services', () => {
   });
 
   it('refuses to assign a service to another organization group', async () => {
-    const foreignGroup = await createGroup(cookieB, `${tag}-foreign`);
-    const serviceId = await createService(cookieA, `${tag}-loyal`);
+    const foreignGroup = await createServiceGroup(app, cookieB, {
+      name: `${tag}-foreign`,
+      slug: `${tag}-foreign`,
+    });
+    const serviceId = await createService(app, cookieA, {
+      name: `${tag}-loyal`,
+      slug: `${tag}-loyal`,
+    });
 
     const response = await assignGroup(cookieA, serviceId, foreignGroup);
 

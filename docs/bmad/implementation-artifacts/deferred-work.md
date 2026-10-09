@@ -174,3 +174,12 @@
 - source_spec: `spec-epic-9-retro-2-worker-health-idle-passes.md`
   summary: `src/worker-health.ts:149` logs a failed heartbeat write as `{ error }`, which pino prints as `{}`, so the reason is lost. Use `{ err: error }`, as `src/worker.ts` now does.
   evidence: Review Triage Log #6; `fastify({ logger: true }).log.error({ error: new Error('boom') }, 'x')` prints `"error":{}`. Pre-existing, and the spec ruled `worker-health.ts` out of this change.
+
+## From Epic 9 retro item 4 (2026-10-09)
+
+- source_spec: `spec-epic-9-retro-4-shared-test-helpers.md`
+  summary: Maintenance suites still define their own window fixture, which duplicates the shared `scheduleMaintenance`: `schedule` in `end-maintenance` and `read-maintenance`, and `createWindow` in `maintenance-input-validation`. Item 4 named only `createService`, `createGroup`, `declare`, `capturing` and `gql`, so these stayed. (`schedule-maintenance`'s and `maintenance-input-validation`'s `schedule` return the raw response for the test to assert on, so those are not fixtures.)
+  evidence: Review Triage Log #3; `grep -rnE "(function|const) (schedule|createWindow)\b" src --include='*.test.ts'`.
+- source_spec: `spec-epic-9-retro-4-shared-test-helpers.md`
+  summary: 23 test files still declare `const ORIGIN = 'http://localhost:3000'`, a copy of `TEST_ORIGIN` from `src/shared/testing/tenant.ts`. Migrated files now send both: the fixtures send `TEST_ORIGIN`, the file's own requests send `ORIGIN`.
+  evidence: Review Triage Log #4; `grep -rln "const ORIGIN = 'http://localhost:3000'" src`.

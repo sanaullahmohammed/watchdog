@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
+import { gql } from '@/shared/testing/graphql';
 import { captureCookie } from '@/shared/testing/tenant';
 
 /**
@@ -40,22 +41,6 @@ function api(
     headers: { cookie, origin: ORIGIN },
     payload,
   });
-}
-
-async function gql(query: string, variables?: object) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/graphql',
-    headers: { cookie, 'content-type': 'application/json' },
-    payload: { query, variables },
-  });
-  return {
-    statusCode: response.statusCode,
-    body: JSON.parse(response.body) as {
-      data: unknown;
-      errors?: { message: string }[];
-    },
-  };
 }
 
 /** Refused, and refused as a client mistake rather than a server fault. */
@@ -165,14 +150,18 @@ describe('Input refused as a client mistake, not a crash (retrospective R-9)', (
 
   it('refuses a GraphQL date that is not a date', async () => {
     const result = await gql(
+      app,
       `mutation ($input: ScheduleMaintenancePayload!) {
          scheduleMaintenance(input: $input)
        }`,
       {
-        input: {
-          title: `${tag}-bad-date`,
-          scheduledStartAt: 'the day after tomorrow',
-          scheduledEndAt: new Date(Date.now() + 2 * HOUR).toISOString(),
+        cookie,
+        variables: {
+          input: {
+            title: `${tag}-bad-date`,
+            scheduledStartAt: 'the day after tomorrow',
+            scheduledEndAt: new Date(Date.now() + 2 * HOUR).toISOString(),
+          },
         },
       },
     );
@@ -183,10 +172,14 @@ describe('Input refused as a client mistake, not a crash (retrospective R-9)', (
 
   it('refuses an explicit GraphQL null where a field cannot be null', async () => {
     const result = await gql(
+      app,
       `mutation ($id: ID!, $input: UpdateMaintenancePayload!) {
          updateMaintenance(id: $id, input: $input)
        }`,
-      { id: windowId, input: { affectedServiceIds: null } },
+      {
+        cookie,
+        variables: { id: windowId, input: { affectedServiceIds: null } },
+      },
     );
 
     assertRefused(result, /^Invalid input\..*affectedServiceIds/i);
@@ -194,10 +187,11 @@ describe('Input refused as a client mistake, not a crash (retrospective R-9)', (
 
   it('still lets null clear a field that is genuinely nullable', async () => {
     const result = await gql(
+      app,
       `mutation ($id: ID!, $input: UpdateMaintenancePayload!) {
          updateMaintenance(id: $id, input: $input)
        }`,
-      { id: windowId, input: { description: null } },
+      { cookie, variables: { id: windowId, input: { description: null } } },
     );
 
     assert.deepEqual(

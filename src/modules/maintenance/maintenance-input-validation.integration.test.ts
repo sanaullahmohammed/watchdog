@@ -6,6 +6,8 @@ import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import * as events from '@/shared/events/maintenance.events';
+import { createService } from '@/shared/testing/fixtures';
+import { type GraphqlResult, gql } from '@/shared/testing/graphql';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /**
@@ -50,25 +52,7 @@ function api(
   });
 }
 
-async function gql(query: string, variables?: object) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/graphql',
-    headers: { cookie, 'content-type': 'application/json' },
-    payload: { query, variables },
-  });
-  return {
-    statusCode: response.statusCode,
-    body: JSON.parse(response.body) as {
-      data: unknown;
-      errors?: { message: string }[];
-    },
-  };
-}
-
-type Result = Awaited<ReturnType<typeof gql>>;
-
-function messagesOf(result: Result) {
+function messagesOf(result: GraphqlResult) {
   assert.ok(result.statusCode < 500, `answered ${result.statusCode}`);
   const messages = (result.body.errors ?? []).map((e) => e.message).join(' | ');
   assert.notEqual(messages, '', 'expected an error');
@@ -108,7 +92,7 @@ async function rows() {
  * schema passes and `parseDate` refuses with its own message.
  */
 async function refused(
-  run: () => Promise<Result>,
+  run: () => Promise<GraphqlResult>,
   match: 'handler' | 'fieldOnly' | RegExp,
   ...fields: string[]
 ) {
@@ -134,20 +118,28 @@ async function refused(
 
 const schedule = (input: object) =>
   gql(
+    app,
     `mutation ($input: ScheduleMaintenancePayload!) { scheduleMaintenance(input: $input) }`,
-    { input },
+    { cookie, variables: { input } },
   );
 const update = (id: string, input: object) =>
   gql(
+    app,
     `mutation ($id: ID!, $input: UpdateMaintenancePayload!) {
        updateMaintenance(id: $id, input: $input)
      }`,
-    { id, input },
+    { cookie, variables: { id, input } },
   );
 const complete = (id: string) =>
-  gql(`mutation ($id: ID!) { completeMaintenance(id: $id) }`, { id });
+  gql(app, `mutation ($id: ID!) { completeMaintenance(id: $id) }`, {
+    cookie,
+    variables: { id },
+  });
 const remove = (id: string) =>
-  gql(`mutation ($id: ID!) { deleteMaintenance(id: $id) }`, { id });
+  gql(app, `mutation ($id: ID!) { deleteMaintenance(id: $id) }`, {
+    cookie,
+    variables: { id },
+  });
 
 const validSchedule = () => ({
   title: 'Valid',
@@ -171,13 +163,11 @@ describe('Story 9.4: GraphQL refuses what REST refuses, maintenance', () => {
     app = await buildApp({ logger: false });
     await app.ready();
     ({ cookie, userId, orgId } = await signUpWithOrg(app, tag));
-    const createService = async (slug: string) => {
-      const response = await api('POST', '/services', { name: slug, slug });
-      assert.equal(response.statusCode, 201, response.body);
-      return JSON.parse(response.body).id as string;
-    };
-    serviceId = await createService(tag);
-    otherServiceId = await createService(`${tag}-b`);
+    serviceId = await createService(app, cookie, { name: tag, slug: tag });
+    otherServiceId = await createService(app, cookie, {
+      name: `${tag}-b`,
+      slug: `${tag}-b`,
+    });
     windowId = await createWindow(tag, [serviceId]);
     const registered: string[] = [];
     for (const creator of Object.values(events)) {
@@ -295,7 +285,10 @@ describe('Story 9.4: GraphQL refuses what REST refuses, maintenance', () => {
 
   it('refuses a malformed id on the maintenanceWindow query over GraphQL as REST does', async () => {
     const query = 'query ($id: ID!) { maintenanceWindow(id: $id) { id } }';
-    const result = await gql(query, { id: NOT_A_UUID });
+    const result = await gql(app, query, {
+      cookie,
+      variables: { id: NOT_A_UUID },
+    });
     assert.equal(result.statusCode, 400, JSON.stringify(result.body));
     assert.equal(result.body.data, null);
     assert.equal(result.body.errors?.length, 1);
@@ -309,9 +302,15 @@ describe('Story 9.4: GraphQL refuses what REST refuses, maintenance', () => {
       JSON.parse(rest.body).subErrors.map((e: { path: string }) => e.path),
       ['/id'],
     );
-    const unknown = await gql(query, { id: randomUUID() });
+    const unknown = await gql(app, query, {
+      cookie,
+      variables: { id: randomUUID() },
+    });
     assert.equal(unknown.statusCode, 404, JSON.stringify(unknown.body));
-    const found = await gql(query, { id: windowId });
+    const found = await gql(app, query, {
+      cookie,
+      variables: { id: windowId },
+    });
     assert.equal(found.statusCode, 200, JSON.stringify(found.body));
     assert.deepEqual(found.body.data, { maintenanceWindow: { id: windowId } });
   });

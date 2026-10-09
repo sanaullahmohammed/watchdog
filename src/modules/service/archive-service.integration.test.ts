@@ -9,6 +9,8 @@ import {
   serviceArchivedEvent,
   serviceRestoredEvent,
 } from '@/shared/events/service.events';
+import { capturing } from '@/shared/testing/events';
+import { createService, createServiceGroup } from '@/shared/testing/fixtures';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /**
@@ -31,30 +33,12 @@ let userBId = '';
 let orgAId = '';
 let orgBId = '';
 
-async function createService(cookie: string, slug: string) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/services',
-    headers: { cookie, origin: ORIGIN },
-    payload: { name: slug, slug },
-  });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
-}
-
 function act(cookie: string, id: string, verb: 'archive' | 'restore') {
   return app.inject({
     method: 'POST',
     url: `/api/v1/services/${id}/${verb}`,
     headers: { cookie, origin: ORIGIN },
   });
-}
-
-async function capturing<T>(type: string, run: () => Promise<T>) {
-  const captured: unknown[] = [];
-  app.eventBus.on(type, (event) => captured.push(event));
-  const result = await run();
-  return { result, captured };
 }
 
 function rowOf(orgId: string, id: string) {
@@ -95,9 +79,13 @@ describe('Story 2.4: archive and restore a service', () => {
   });
 
   it('sets archived_at, emits service.archived, and keeps the row', async () => {
-    const id = await createService(cookieA, `${tag}-retire`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-retire`,
+      slug: `${tag}-retire`,
+    });
 
     const { result, captured } = await capturing(
+      app,
       serviceArchivedEvent.type,
       () => act(cookieA, id, 'archive'),
     );
@@ -115,10 +103,14 @@ describe('Story 2.4: archive and restore a service', () => {
   });
 
   it('clears archived_at and emits service.restored', async () => {
-    const id = await createService(cookieA, `${tag}-revive`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-revive`,
+      slug: `${tag}-revive`,
+    });
     await act(cookieA, id, 'archive');
 
     const { result, captured } = await capturing(
+      app,
       serviceRestoredEvent.type,
       () => act(cookieA, id, 'restore'),
     );
@@ -130,15 +122,15 @@ describe('Story 2.4: archive and restore a service', () => {
   });
 
   it('leaves a service intact, including its associations', async () => {
-    const group = await app.inject({
-      method: 'POST',
-      url: '/api/v1/service-groups',
-      headers: { cookie: cookieA, origin: ORIGIN },
-      payload: { name: 'Kept', slug: `${tag}-kept` },
+    const groupId = await createServiceGroup(app, cookieA, {
+      name: 'Kept',
+      slug: `${tag}-kept`,
     });
-    const groupId = JSON.parse(group.body).id;
 
-    const id = await createService(cookieA, `${tag}-history`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-history`,
+      slug: `${tag}-history`,
+    });
     await app.inject({
       method: 'PATCH',
       url: `/api/v1/services/${id}`,
@@ -158,11 +150,15 @@ describe('Story 2.4: archive and restore a service', () => {
   });
 
   it('is a no-op when the service is already archived', async () => {
-    const id = await createService(cookieA, `${tag}-twice`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-twice`,
+      slug: `${tag}-twice`,
+    });
     await act(cookieA, id, 'archive');
     const firstArchivedAt = (await rowOf(orgAId, id)).archived_at;
 
     const { result, captured } = await capturing(
+      app,
       serviceArchivedEvent.type,
       () => act(cookieA, id, 'archive'),
     );
@@ -177,9 +173,13 @@ describe('Story 2.4: archive and restore a service', () => {
   });
 
   it('is a no-op when restoring a service that is not archived', async () => {
-    const id = await createService(cookieA, `${tag}-live`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-live`,
+      slug: `${tag}-live`,
+    });
 
     const { result, captured } = await capturing(
+      app,
       serviceRestoredEvent.type,
       () => act(cookieA, id, 'restore'),
     );
@@ -189,7 +189,10 @@ describe('Story 2.4: archive and restore a service', () => {
   });
 
   it('does not let another organization archive a service', async () => {
-    const id = await createService(cookieA, `${tag}-guarded`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-guarded`,
+      slug: `${tag}-guarded`,
+    });
 
     const response = await act(cookieB, id, 'archive');
 

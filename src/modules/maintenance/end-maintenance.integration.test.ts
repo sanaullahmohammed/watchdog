@@ -9,6 +9,8 @@ import {
   maintenanceCompletedEvent,
   maintenanceDeletedEvent,
 } from '@/shared/events/maintenance.events';
+import { capturing } from '@/shared/testing/events';
+import { createService } from '@/shared/testing/fixtures';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /** Story 2.14 — end a maintenance window: cancel or complete. */
@@ -62,13 +64,6 @@ function remove(cookie: string, id: string) {
   });
 }
 
-async function capturing<T>(type: string, run: () => Promise<T>) {
-  const captured: unknown[] = [];
-  app.eventBus.on(type, (event) => captured.push(event));
-  const result = await run();
-  return { result, captured };
-}
-
 function rowOf(id: string) {
   return withTenantTransaction(orgAId, async ({ sql: tx }) => {
     const rows = await tx<
@@ -92,13 +87,10 @@ describe('Story 2.14: end a maintenance window', () => {
       userId: userBId,
       orgId: orgBId,
     } = await signUpWithOrg(app, `${tag}-b`));
-    const svc = await app.inject({
-      method: 'POST',
-      url: '/api/v1/services',
-      headers: { cookie: cookieA, origin: ORIGIN },
-      payload: { name: `${tag}-svc`, slug: `${tag}-svc` },
+    serviceAId = await createService(app, cookieA, {
+      name: `${tag}-svc`,
+      slug: `${tag}-svc`,
     });
-    serviceAId = JSON.parse(svc.body).id;
   });
 
   after(async () => {
@@ -112,6 +104,7 @@ describe('Story 2.14: end a maintenance window', () => {
     const id = await schedule(cookieA, `${tag}-never`, [serviceAId]);
 
     const { result, captured } = await capturing(
+      app,
       maintenanceDeletedEvent.type,
       () => remove(cookieA, id),
     );
@@ -133,6 +126,7 @@ describe('Story 2.14: end a maintenance window', () => {
     const id = await schedule(cookieA, `${tag}-cancelled`);
 
     const { result, captured } = await capturing(
+      app,
       maintenanceCompletedEvent.type,
       () => complete(cookieA, id),
     );
@@ -194,6 +188,7 @@ describe('Story 2.14: end a maintenance window', () => {
     const firstCompletedAt = (await rowOf(id)).completed_at;
 
     const { result, captured } = await capturing(
+      app,
       maintenanceCompletedEvent.type,
       () => complete(cookieA, id),
     );

@@ -7,6 +7,8 @@ import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentCreatedEvent } from '@/shared/events/incident.events';
+import { capturing } from '@/shared/testing/events';
+import { createService } from '@/shared/testing/fixtures';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /** Story 2.8 — declare an incident. */
@@ -24,30 +26,13 @@ let orgBId = '';
 let serviceAId = '';
 let serviceBId = '';
 
-async function createService(cookie: string, slug: string) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/services',
-    headers: { cookie, origin: ORIGIN },
-    payload: { name: slug, slug },
-  });
-  return JSON.parse(response.body).id as string;
-}
-
-function declare(cookie: string, payload: Record<string, unknown>) {
+function postIncident(cookie: string, payload: Record<string, unknown>) {
   return app.inject({
     method: 'POST',
     url: '/api/v1/incidents',
     headers: { cookie, origin: ORIGIN },
     payload,
   });
-}
-
-async function capturing<T>(type: string, run: () => Promise<T>) {
-  const captured: unknown[] = [];
-  app.eventBus.on(type, (event) => captured.push(event));
-  const result = await run();
-  return { result, captured };
 }
 
 describe('Story 2.8: declare an incident', () => {
@@ -64,8 +49,14 @@ describe('Story 2.8: declare an incident', () => {
       userId: userBId,
       orgId: orgBId,
     } = await signUpWithOrg(app, `${tag}-b`));
-    serviceAId = await createService(cookieA, `${tag}-svc-a`);
-    serviceBId = await createService(cookieB, `${tag}-svc-b`);
+    serviceAId = await createService(app, cookieA, {
+      name: `${tag}-svc-a`,
+      slug: `${tag}-svc-a`,
+    });
+    serviceBId = await createService(app, cookieB, {
+      name: `${tag}-svc-b`,
+      slug: `${tag}-svc-b`,
+    });
   });
 
   after(async () => {
@@ -77,9 +68,10 @@ describe('Story 2.8: declare an incident', () => {
 
   it('starts a declared incident at investigating, never at draft', async () => {
     const { result, captured } = await capturing(
+      app,
       incidentCreatedEvent.type,
       () =>
-        declare(cookieA, {
+        postIncident(cookieA, {
           title: 'Checkout is failing',
           impact: 'major',
           affectedServices: [{ serviceId: serviceAId, impact: 'major' }],
@@ -112,7 +104,7 @@ describe('Story 2.8: declare an incident', () => {
 
   it('opens the timeline with the declaration, worded or by default', async () => {
     const idOf = async (payload: Record<string, unknown>) => {
-      const response = await declare(cookieA, payload);
+      const response = await postIncident(cookieA, payload);
       assert.equal(response.statusCode, 201, response.body);
       return JSON.parse(response.body).id as string;
     };
@@ -154,7 +146,7 @@ describe('Story 2.8: declare an incident', () => {
   });
 
   it('records per-service impact on the join table', async () => {
-    const response = await declare(cookieA, {
+    const response = await postIncident(cookieA, {
       title: 'Partial degradation',
       impact: 'minor',
       affectedServices: [{ serviceId: serviceAId, impact: 'minor' }],
@@ -177,7 +169,7 @@ describe('Story 2.8: declare an incident', () => {
   });
 
   it('accepts an incident declared before its blast radius is known', async () => {
-    const response = await declare(cookieA, {
+    const response = await postIncident(cookieA, {
       title: 'Something is wrong',
       impact: 'none',
     });
@@ -186,7 +178,7 @@ describe('Story 2.8: declare an incident', () => {
   });
 
   it('refuses to attach a service from another organization', async () => {
-    const response = await declare(cookieA, {
+    const response = await postIncident(cookieA, {
       title: 'Cross-tenant attempt',
       impact: 'critical',
       affectedServices: [{ serviceId: serviceBId, impact: 'critical' }],
@@ -205,7 +197,7 @@ describe('Story 2.8: declare an incident', () => {
   });
 
   it('rejects an impact outside the ladder, at the API and at the database', async () => {
-    const viaApi = await declare(cookieA, {
+    const viaApi = await postIncident(cookieA, {
       title: 'Bad impact',
       impact: 'apocalyptic',
     });

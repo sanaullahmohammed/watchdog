@@ -8,6 +8,7 @@ import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentResolvedEvent } from '@/shared/events/incident.events';
+import { declareIncident } from '@/shared/testing/fixtures';
 import { captureCookie } from '@/shared/testing/tenant';
 
 /**
@@ -29,17 +30,6 @@ let cookie = '';
 let userId = '';
 let orgId = '';
 const resolvedAnnounced: string[] = [];
-
-async function declare(title: string) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/incidents',
-    headers: { cookie, origin: ORIGIN },
-    payload: { title, impact: 'major' },
-  });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
-}
 
 function transition(id: string, status: IncidentStatus) {
   return app.inject({
@@ -136,7 +126,10 @@ describe('Concurrent writes to one incident (Epic 2 retrospective, R-2 and R-3)'
   });
 
   it('lets exactly one of several concurrent resolutions through', async () => {
-    const id = await declare('Raced resolution');
+    const id = await declareIncident(app, cookie, {
+      title: 'Raced resolution',
+      impact: 'major',
+    });
 
     const responses = await Promise.all(
       Array.from({ length: 6 }, () => transition(id, 'resolved')),
@@ -161,7 +154,10 @@ describe('Concurrent writes to one incident (Epic 2 retrospective, R-2 and R-3)'
 
   it('never reopens a resolved incident when conflicting moves race', async () => {
     for (let round = 0; round < 5; round++) {
-      const id = await declare(`Conflicting moves ${round}`);
+      const id = await declareIncident(app, cookie, {
+        title: `Conflicting moves ${round}`,
+        impact: 'major',
+      });
       const identified = await transition(id, 'identified');
       assert.equal(identified.statusCode, 200, identified.body);
 
@@ -182,7 +178,10 @@ describe('Concurrent writes to one incident (Epic 2 retrospective, R-2 and R-3)'
 
   it('never records a status the incident had already left', async () => {
     for (let round = 0; round < 8; round++) {
-      const id = await declare(`Update racing a move ${round}`);
+      const id = await declareIncident(app, cookie, {
+        title: `Update racing a move ${round}`,
+        impact: 'major',
+      });
 
       await Promise.all([
         post(id, 'Still looking into it'),
@@ -201,7 +200,10 @@ describe('Concurrent writes to one incident (Epic 2 retrospective, R-2 and R-3)'
     // arrives after the transition's own entry. So stage it. Hold the row lock
     // a transition takes, move the status without committing, and post
     // meanwhile.
-    const id = await declare('Update behind a transition');
+    const id = await declareIncident(app, cookie, {
+      title: 'Update behind a transition',
+      impact: 'major',
+    });
 
     let release!: () => void;
     const released = new Promise<void>((resolve) => {

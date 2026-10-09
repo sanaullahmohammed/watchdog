@@ -10,6 +10,12 @@ import {
   type TenantTransaction,
   withTenantTransaction,
 } from '@/shared/db/tenant-transaction';
+import {
+  createService,
+  createServiceGroup,
+  declareIncident,
+} from '@/shared/testing/fixtures';
+import { gqlData } from '@/shared/testing/graphql';
 import { signUpWithOrg, TEST_ORIGIN } from '@/shared/testing/tenant';
 
 /** Story 3.3 — serve the public status payload. */
@@ -73,30 +79,6 @@ async function post(cookie: string, path: string, payload: object = {}) {
   return JSON.parse(response.body) as { id?: string };
 }
 
-async function createGroup(name: string, slug: string, displayOrder: number) {
-  const body = await post(cookieA, '/service-groups', {
-    name,
-    slug,
-    displayOrder,
-  });
-  return body.id as string;
-}
-
-async function createService(
-  cookie: string,
-  service: {
-    name: string;
-    slug: string;
-    description?: string;
-    displayOrder?: number;
-    serviceGroupId?: string;
-    isPublic?: boolean;
-  },
-) {
-  const body = await post(cookie, '/services', service);
-  return body.id as string;
-}
-
 /** Writes a status nothing would recompute, to prove the page reads it. */
 function forceStatus(orgId: string, serviceId: string, status: string) {
   return withTenantTransaction(
@@ -133,21 +115,12 @@ const PAGE_SELECTION = `
 `;
 
 async function fetchPageOverGraphql(slug: string) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/graphql',
-    headers: { 'content-type': 'application/json' },
-    payload: {
-      query: `query ($slug: ID!) { publicStatusPage(orgSlug: $slug) { ${PAGE_SELECTION} } }`,
-      variables: { slug },
-    },
-  });
-  const body = JSON.parse(response.body) as {
-    data: { publicStatusPage: PublicStatusPageResponseDto } | null;
-    errors?: { message: string }[];
-  };
-  assert.equal(body.errors, undefined, JSON.stringify(body.errors));
-  return body.data?.publicStatusPage as PublicStatusPageResponseDto;
+  const data = await gqlData<{ publicStatusPage: PublicStatusPageResponseDto }>(
+    app,
+    `query ($slug: ID!) { publicStatusPage(orgSlug: $slug) { ${PAGE_SELECTION} } }`,
+    { variables: { slug } },
+  );
+  return data.publicStatusPage;
 }
 
 describe('Story 3.3: serve the public status payload', () => {
@@ -167,11 +140,23 @@ describe('Story 3.3: serve the public status payload', () => {
 
     // Groups. Aardvark and Beta share a display order, so the name settles
     // them; Alpha sorts first by name and last by order.
-    const aardvark = await createGroup('Aardvark', `${tag}-aardvark`, 1);
-    const beta = await createGroup('Beta', `${tag}-beta`, 1);
-    const alpha = await createGroup('Alpha', `${tag}-alpha`, 2);
+    const aardvark = await createServiceGroup(app, cookieA, {
+      name: 'Aardvark',
+      slug: `${tag}-aardvark`,
+      displayOrder: 1,
+    });
+    const beta = await createServiceGroup(app, cookieA, {
+      name: 'Beta',
+      slug: `${tag}-beta`,
+      displayOrder: 1,
+    });
+    const alpha = await createServiceGroup(app, cookieA, {
+      name: 'Alpha',
+      slug: `${tag}-alpha`,
+      displayOrder: 2,
+    });
 
-    id.solo = await createService(cookieA, {
+    id.solo = await createService(app, cookieA, {
       name: 'Solo',
       slug: `${tag}-solo`,
       serviceGroupId: aardvark,
@@ -179,7 +164,7 @@ describe('Story 3.3: serve the public status payload', () => {
     });
     // Inside Beta the same two rules apply to services: Aurora is first
     // alphabetically and last by display order, and Cobalt and Delta tie.
-    id.aurora = await createService(cookieA, {
+    id.aurora = await createService(app, cookieA, {
       name: 'Aurora',
       slug: `${tag}-aurora`,
       serviceGroupId: beta,
@@ -191,13 +176,13 @@ describe('Story 3.3: serve the public status payload', () => {
     // the lower id, which is what the final `s.id` tiebreaker would otherwise
     // decide. Insertion order alone proved nothing (VG-D).
     const tied = [
-      await createService(cookieA, {
+      await createService(app, cookieA, {
         name: 'Tied one',
         slug: `${tag}-tied-1`,
         serviceGroupId: beta,
         displayOrder: 0,
       }),
-      await createService(cookieA, {
+      await createService(app, cookieA, {
         name: 'Tied two',
         slug: `${tag}-tied-2`,
         serviceGroupId: beta,
@@ -217,19 +202,19 @@ describe('Story 3.3: serve the public status payload', () => {
       });
       assert.equal(named.statusCode, 200, named.body);
     }
-    id.late = await createService(cookieA, {
+    id.late = await createService(app, cookieA, {
       name: 'Late',
       slug: `${tag}-late`,
       serviceGroupId: alpha,
       displayOrder: 0,
     });
-    id.unfiled = await createService(cookieA, {
+    id.unfiled = await createService(app, cookieA, {
       name: 'Unfiled',
       slug: `${tag}-unfiled`,
       displayOrder: 0,
     });
 
-    id.hidden = await createService(cookieA, {
+    id.hidden = await createService(app, cookieA, {
       name: 'Hidden',
       slug: `${tag}-hidden`,
       serviceGroupId: beta,
@@ -238,7 +223,7 @@ describe('Story 3.3: serve the public status payload', () => {
     // Archived only once the incident and window below name it: the way a
     // real one gets there, since nothing stops an operator archiving a
     // service an open incident still names.
-    id.archived = await createService(cookieA, {
+    id.archived = await createService(app, cookieA, {
       name: 'Archived',
       slug: `${tag}-archived`,
       serviceGroupId: beta,
@@ -246,20 +231,18 @@ describe('Story 3.3: serve the public status payload', () => {
 
     // Incidents. The older one carries impact `none` and names no service, so
     // it changes no status and this file's status assertions stay readable.
-    id.activeIncident = (
-      await post(cookieA, '/incidents', {
-        title: 'Checkout is degraded',
-        impact: 'minor',
-        // Hidden and Archived ride along, so the exclusion checks below look
-        // at affected-service ids as well as at the service list (R-1).
-        affectedServices: [
-          { serviceId: id.solo, impact: 'minor' },
-          { serviceId: id.hidden, impact: 'minor' },
-          { serviceId: id.archived, impact: 'minor' },
-        ],
-        message: 'We are looking into it.',
-      })
-    ).id as string;
+    id.activeIncident = await declareIncident(app, cookieA, {
+      title: 'Checkout is degraded',
+      impact: 'minor',
+      // Hidden and Archived ride along, so the exclusion checks below look
+      // at affected-service ids as well as at the service list (R-1).
+      affectedServices: [
+        { serviceId: id.solo, impact: 'minor' },
+        { serviceId: id.hidden, impact: 'minor' },
+        { serviceId: id.archived, impact: 'minor' },
+      ],
+      message: 'We are looking into it.',
+    });
     await post(cookieA, `/incidents/${id.activeIncident}/transition`, {
       status: 'identified',
       message: 'A bad deploy; rolling back.',
@@ -267,25 +250,21 @@ describe('Story 3.3: serve the public status payload', () => {
 
     // Created after the incident that outranks it, and back-dated, so the page
     // cannot be ordering by creation time (VG-G).
-    id.olderIncident = (
-      await post(cookieA, '/incidents', {
-        title: 'Older, still open',
-        impact: 'none',
-        startedAt: at.olderIncident,
-        message: 'Watching a slow queue.',
-      })
-    ).id as string;
+    id.olderIncident = await declareIncident(app, cookieA, {
+      title: 'Older, still open',
+      impact: 'none',
+      startedAt: at.olderIncident,
+      message: 'Watching a slow queue.',
+    });
 
     // The one status no fixture covered: dropping `monitoring` from the active
     // subset passed every suite, while the recomputation kept its services
     // degraded (VG-F). Impact `none` and no service named, so org A's banner
     // and statuses are untouched; what it proves is that the page lists it.
-    id.monitoringIncident = (
-      await post(cookieA, '/incidents', {
-        title: 'Watching the fix',
-        impact: 'none',
-      })
-    ).id as string;
+    id.monitoringIncident = await declareIncident(app, cookieA, {
+      title: 'Watching the fix',
+      impact: 'none',
+    });
     await post(cookieA, `/incidents/${id.monitoringIncident}/transition`, {
       status: 'monitoring',
       message: 'The fix is deployed; watching.',
@@ -295,20 +274,16 @@ describe('Story 3.3: serve the public status payload', () => {
     // last, it is the newest: were it listed, it would come first. Its
     // `critical` would also take the banner to major_outage, which the banner
     // test below rules out.
-    id.privateIncident = (
-      await post(cookieA, '/incidents', {
-        title: 'Internal ledger rebuild',
-        impact: 'critical',
-        affectedServices: [{ serviceId: id.hidden, impact: 'critical' }],
-      })
-    ).id as string;
+    id.privateIncident = await declareIncident(app, cookieA, {
+      title: 'Internal ledger rebuild',
+      impact: 'critical',
+      affectedServices: [{ serviceId: id.hidden, impact: 'critical' }],
+    });
 
-    id.resolvedIncident = (
-      await post(cookieA, '/incidents', {
-        title: 'Yesterday, and over',
-        impact: 'minor',
-      })
-    ).id as string;
+    id.resolvedIncident = await declareIncident(app, cookieA, {
+      title: 'Yesterday, and over',
+      impact: 'minor',
+    });
     await post(cookieA, `/incidents/${id.resolvedIncident}/transition`, {
       status: 'resolved',
     });
@@ -378,17 +353,15 @@ describe('Story 3.3: serve the public status payload', () => {
     await post(cookieA, `/maintenance/${id.completedWindow}/complete`);
 
     // The neighbour, with one of everything.
-    id.otherService = await createService(cookieB, {
+    id.otherService = await createService(app, cookieB, {
       name: 'Their service',
       slug: `${tag}-theirs`,
     });
-    id.otherIncident = (
-      await post(cookieB, '/incidents', {
-        title: 'Their incident',
-        impact: 'critical',
-        affectedServices: [{ serviceId: id.otherService, impact: 'critical' }],
-      })
-    ).id as string;
+    id.otherIncident = await declareIncident(app, cookieB, {
+      title: 'Their incident',
+      impact: 'critical',
+      affectedServices: [{ serviceId: id.otherService, impact: 'critical' }],
+    });
     id.otherWindow = (
       await post(cookieB, '/maintenance', {
         title: 'Their window',
@@ -403,30 +376,30 @@ describe('Story 3.3: serve the public status payload', () => {
         userId: org.userId,
         orgId: org.orgId,
       } = await signUpWithOrg(app, org.slug));
-      await createService(org.cookie, {
+      await createService(app, org.cookie, {
         name: 'Front door',
         slug: `${org.slug}-front`,
       });
     }
     // No service named yet: blast radius is often unknown at first.
-    id.unnamedIncident = (
-      await post(banner.unnamed.cookie, '/incidents', {
-        title: 'Something is wrong',
-        impact: 'major',
-      })
-    ).id as string;
-    const backOffice = await createService(banner.privateOnly.cookie, {
+    id.unnamedIncident = await declareIncident(app, banner.unnamed.cookie, {
+      title: 'Something is wrong',
+      impact: 'major',
+    });
+    const backOffice = await createService(app, banner.privateOnly.cookie, {
       name: 'Back office',
       slug: `${banner.privateOnly.slug}-back`,
       isPublic: false,
     });
-    id.backOfficeIncident = (
-      await post(banner.privateOnly.cookie, '/incidents', {
+    id.backOfficeIncident = await declareIncident(
+      app,
+      banner.privateOnly.cookie,
+      {
         title: 'Back office outage',
         impact: 'critical',
         affectedServices: [{ serviceId: backOffice, impact: 'critical' }],
-      })
-    ).id as string;
+      },
+    );
 
     // Monitor-born, the way Epic 5 will write it. Then two triage notes while
     // it is still a draft, then the confirmation, then one note after. The
@@ -460,21 +433,19 @@ describe('Story 3.3: serve the public status payload', () => {
     // gets the service that sorts first, so a sort that stopped at the name
     // would let the service columns put that group first.
     const twin = async (n: number) =>
-      (
-        await post(ties.cookie, '/service-groups', {
-          name: 'Twin',
-          slug: `${ties.slug}-twin-${n}`,
-          displayOrder: 3,
-        })
-      ).id as string;
+      await createServiceGroup(app, ties.cookie, {
+        name: 'Twin',
+        slug: `${ties.slug}-twin-${n}`,
+        displayOrder: 3,
+      });
     [id.twinLow, id.twinHigh] = [await twin(1), await twin(2)].sort();
-    await createService(ties.cookie, {
+    await createService(app, ties.cookie, {
       name: 'First',
       slug: `${ties.slug}-first`,
       serviceGroupId: id.twinHigh,
       displayOrder: 0,
     });
-    await createService(ties.cookie, {
+    await createService(app, ties.cookie, {
       name: 'Second',
       slug: `${ties.slug}-second`,
       serviceGroupId: id.twinLow,
@@ -484,15 +455,13 @@ describe('Story 3.3: serve the public status payload', () => {
     // Two services tied on display order and name. The one with the higher id
     // is made to come first in the table, which is the order a sort that
     // stopped at the name would keep.
-    const echoes = (
-      await post(ties.cookie, '/service-groups', {
-        name: 'Echoes',
-        slug: `${ties.slug}-echoes`,
-        displayOrder: 4,
-      })
-    ).id as string;
+    const echoes = await createServiceGroup(app, ties.cookie, {
+      name: 'Echoes',
+      slug: `${ties.slug}-echoes`,
+      displayOrder: 4,
+    });
     const echo = (n: number) =>
-      createService(ties.cookie, {
+      createService(app, ties.cookie, {
         name: 'Echo',
         slug: `${ties.slug}-echo-${n}`,
         serviceGroupId: echoes,

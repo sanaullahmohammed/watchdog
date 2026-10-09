@@ -13,6 +13,7 @@ import {
   maintenanceCompletedEvent,
   maintenanceStartedEvent,
 } from '@/shared/events/maintenance.events';
+import { capturingTypes } from '@/shared/testing/events';
 import { runWorkerPass } from '@/worker';
 
 /** Story 2.15 — transition due maintenance automatically. */
@@ -99,13 +100,6 @@ function stateOf(orgId: string, id: string) {
   });
 }
 
-async function capturing<T>(types: string[], run: () => Promise<T>) {
-  const seen: string[] = [];
-  for (const type of types) app.eventBus.on(type, () => seen.push(type));
-  await run();
-  return seen;
-}
-
 // Scoped to this file's organizations. A pass now reconciles the status of
 // every service it visits, and the suites run against one database at once.
 const runPass = () => runWorkerPass(app, silent, { orgIds: [orgAId, orgBId] });
@@ -182,7 +176,11 @@ describe('Story 2.15: transition due maintenance automatically', () => {
       hour,
     );
 
-    const seen = await capturing([maintenanceStartedEvent.type], runPass);
+    const { seen } = await capturingTypes(
+      app,
+      [maintenanceStartedEvent.type],
+      runPass,
+    );
 
     assert.ok(seen.includes(maintenanceStartedEvent.type));
     const state = await stateOf(orgAId, id);
@@ -199,7 +197,11 @@ describe('Story 2.15: transition due maintenance automatically', () => {
       -hour,
     );
 
-    const seen = await capturing([maintenanceCompletedEvent.type], runPass);
+    const { seen } = await capturingTypes(
+      app,
+      [maintenanceCompletedEvent.type],
+      runPass,
+    );
 
     assert.ok(seen.includes(maintenanceCompletedEvent.type));
     assert.equal((await stateOf(orgAId, id)).status, 'completed');
@@ -214,7 +216,8 @@ describe('Story 2.15: transition due maintenance automatically', () => {
       -2 * hour,
     );
 
-    const seen = await capturing(
+    const { seen } = await capturingTypes(
+      app,
       [maintenanceStartedEvent.type, maintenanceCompletedEvent.type],
       runPass,
     );
@@ -238,7 +241,8 @@ describe('Story 2.15: transition due maintenance automatically', () => {
     await window(orgAId, `${tag}-settled`, 'scheduled', -hour, hour);
     await runPass();
 
-    const seen = await capturing(
+    const { seen } = await capturingTypes(
+      app,
       [maintenanceStartedEvent.type, maintenanceCompletedEvent.type],
       runPass,
     );
