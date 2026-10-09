@@ -1446,22 +1446,22 @@ Outages are detected rather than noticed. Synthetic checks run on schedule, resu
 
 **FRs covered:** FR10, FR11, FR12, FR13, FR18. Also carries the monitor halves of FR4 (archive suspends monitors) and FR5 (monitor-derived state), and Epic 2's D-1.
 
-Written 2026-10-09 from DEC-MON M1–M8 (2026-10-06) and the owner's decisions of 2026-10-09, recorded in DOMAIN (Monitor, MonitorSslWarning, Public status page), ARCHITECTURE (sections 2 and 4) and ROADMAP (Monitoring configs, Docker Compose). **Delivered after Epic 9 and before Epic 4.** The stories run in order; each depends only on earlier ones:
+Written 2026-10-09 from DEC-MON M1–M8 (2026-10-06) and the owner's decisions of 2026-10-09, recorded in DOMAIN (Monitor, MonitorSslWarning, Public status page), ARCHITECTURE (sections 2 and 4) and ROADMAP (Monitoring configs, Docker Compose). **Delivered after Epic 9 and before Epic 4.** Sixteen stories, after the step-4 validation split 5.8 in two. The stories run in order; each depends only on earlier ones:
 
 - 5.1–5.7 build the `monitoring` module from configuration to a recorded result: configure, read back, store, check, record, warn.
-- 5.8 runs it on the worker's own check loop.
-- 5.9 feeds monitor state into service status.
-- 5.10–5.11 roll results up into the public 90-day history.
-- 5.12–5.13 make timeline order independent of the clock (D-1) before monitors write into drafts.
-- 5.14–5.15 open drafts from breaches and reconcile the ones an event lost.
+- 5.8–5.9 find the due checks and run them on the worker's own loop.
+- 5.10 feeds monitor state into service status.
+- 5.11–5.12 roll results up into the public 90-day history.
+- 5.13–5.14 make timeline order independent of the clock (D-1) before monitors write into drafts.
+- 5.15–5.16 open drafts from breaches and reconcile the ones an event lost.
 
-> **Constraint 1 (one module per story).** `src/worker.ts` is the composition root, not a module, so a story may wire a module's command into a worker pass, as Story 2.15 did. Stories 5.8 and 5.15 do this. D-1 is two stories, 5.12 and 5.13, because the admin timeline (`incident`) and the public timeline (`status-page`) each order `incident_updates` in their own SQL.
+> **Constraint 1 (one module per story).** `src/worker.ts` is the composition root, not a module, so a story may wire a module's command into a worker pass, as Story 2.15 did. Stories 5.3, 5.9, 5.11 and 5.16 do this. D-1 is two stories, 5.13 and 5.14, because the admin timeline (`incident`) and the public timeline (`status-page`) each order `incident_updates` in their own SQL.
 >
 > **Deferred past v1 by the owner, 2026-10-09** (ARCHITECTURE section 2): `DeleteMonitorCommand`, `GetMonitorResultsQuery` and `monitor.deleted`. A monitor is disabled instead.
 >
-> **Epic 3 retrospective item 23** goes with the first story that adds a foreign-table read: 5.8, where the due-monitor query joins `services`. Stories 5.9, 5.11 and 5.13 extend its allowlist.
+> **Epic 3 retrospective item 23** goes with the first story that adds a foreign-table read: 5.8, where the due-monitor query joins `services`. Stories 5.10 and 5.12 extend its allowlist. The unit is the table, so 5.14's new column on an already listed table needs no entry.
 >
-> **Deferred work picked up:** 5.2 carries the id-taking `Query` field registry (`deferred-work.md`, "Before the next id-taking GraphQL `Query` field is added"). 5.8 carries the three entries whose target is Epic 5. Each story removes the entries it closes.
+> **Deferred work picked up:** 5.2 carries the id-taking `Query` field registry (`deferred-work.md`, "Before the next id-taking GraphQL `Query` field is added"). 5.9 carries the three entries whose target is Epic 5. Each story removes the entries it closes.
 >
 > **Monitor event contracts** live in a new `src/shared/events/monitor.events.ts`, with their own payload types, so `service` and `incident` subscribe without importing `monitoring`. The derived-state rule (DOMAIN M1) is a pure function in `src/shared/domain/monitor-state.ts`, because both `monitoring` and `service` compute it.
 
@@ -1473,7 +1473,7 @@ So that the service is checked without anyone watching it.
 
 **Actor:** human
 **Satisfies:** FR10 verification — "Validation tests cover all check types and invalid configs"; DOMAIN, Monitor (including "Editing a monitor can move its derived state", 2026-10-09) and How monitor state is derived (M1); ARCHITECTURE section 6.5 (M6), the configure-time courtesy check
-**Files:** `db/migrations/*_create_monitors.sql`, `src/modules/monitoring/index.ts`, `src/modules/monitoring/commands/create-monitor/` and `.../update-monitor/` (each: `.handler.ts`, `.route.ts`, `.resolver.ts`, `.schema.ts`, `.graphql-schema.ts`), `src/modules/monitoring/domain/` (`monitor.domain.ts`, `monitor.types.ts`, `target-safety.ts`), `src/modules/monitoring/database/monitor.repository.ts`, `src/modules/monitoring/dtos/` (`monitor.present.ts`, `monitor.response.dto.ts`, `monitor.graphql-schema.ts`), `src/shared/domain/monitor-state.ts`, `src/shared/events/monitor.events.ts`, `src/config/env.ts` (the allowed-CIDR list), `src/shared/testing/fixtures.ts` (`createMonitor`)
+**Files:** `db/migrations/*_create_monitors.sql`, `src/modules/monitoring/index.ts`, `src/modules/monitoring/commands/create-monitor/` and `.../update-monitor/` (each: `.handler.ts`, `.route.ts`, `.resolver.ts`, `.schema.ts`, `.graphql-schema.ts`), `src/modules/monitoring/domain/` (`monitor.domain.ts`, `monitor.types.ts`, `target-safety.ts`), `src/modules/monitoring/database/monitor.repository.ts`, `src/modules/monitoring/dtos/` (`monitor.present.ts`, `monitor.response.dto.ts`, `monitor.graphql-schema.ts`), `src/shared/domain/monitor-state.ts`, `src/shared/events/monitor.events.ts`, `src/config/env.ts` (the allowed-CIDR list), `src/shared/testing/fixtures.ts` (`createMonitor`), 9.11's mutation registry and the parity contract in `src/shared/api/`, `docs/genesis/DOMAIN.md` (the bounds below)
 **Verification layer:** unit (`target-safety.spec.ts`, `monitor-state.spec.ts`) and integration (`src/modules/monitoring/monitor.integration.test.ts`, `monitor-input-validation.integration.test.ts`)
 
 **Acceptance Criteria:**
@@ -1589,6 +1589,11 @@ So that raw results stay cheap to keep and are never edited.
 **Then** the current month and at least the two following months exist
 **And** a second run creates nothing new
 
+**Given** the creation function's optional start month, which the worker never passes
+**When** a test passes an earlier month
+**Then** the partitions from that month onward exist, so retention, rollup and uptime tests can store results in past months
+**And** the function still computes every partition name itself
+
 **Given** a partition the function created
 **When** `watchdog_app` reads or inserts into it directly, bypassing `check_results`
 **Then** it is refused, because the function revoked the default grants
@@ -1612,14 +1617,15 @@ So that a monitor measures a public service and cannot be turned against the wor
 
 **Actor:** system — the worker entrypoint
 **Satisfies:** FR11 verification — "Worker integration tests run checks against controlled test endpoints"; ARCHITECTURE section 6.5 (M6); section 6.0.1's timeout rule (M7)
-**Files:** `src/modules/monitoring/checks/` (`http-check.ts`, `keyword-check.ts`, `guarded-connect.ts`, `check-outcome.ts`), `src/modules/monitoring/domain/target-safety.ts`. `checks/` holds the network adapters; the story confirms dependency-cruiser accepts the folder.
+**Files:** `src/modules/monitoring/checks/` (`http-check.ts`, `keyword-check.ts`, `guarded-connect.ts`, `check-outcome.ts`), `src/modules/monitoring/domain/target-safety.ts`, `src/shared/testing/test-endpoints.ts` (local HTTP servers, including a slow one, that later suites reuse). `checks/` holds the network adapters; the story confirms dependency-cruiser accepts the folder.
 **Verification layer:** unit (`target-safety.spec.ts`) and integration (`src/modules/monitoring/http-checks.integration.test.ts`, against local test servers)
 
 **Acceptance Criteria:**
 
 **Given** any check in this story
 **When** it runs
-**Then** it returns an outcome of `success` or `failure`, latency, an error code, a truncated error message and type-specific metadata
+**Then** it returns an outcome of `success` or `failure`, its `checked_at`, latency, an error code, a truncated error message and type-specific metadata
+**And** `checked_at` is stamped when the attempt starts, which DOMAIN's rollup window relies on
 **And** it writes nothing; story 5.6 records outcomes
 
 **Given** HTTP test endpoints answering 2xx, 5xx, refusing the connection, and never answering
@@ -1657,7 +1663,7 @@ So that every check type ROADMAP names can be executed.
 
 **Actor:** system — the worker entrypoint
 **Satisfies:** FR11 verification — "Worker integration tests run checks against controlled test endpoints"; FR10, SSL-expiry checks; DOMAIN, "SSL-expiry checks measure availability" (2026-10-09); ARCHITECTURE section 6.5
-**Files:** `src/modules/monitoring/checks/` (`tcp-check.ts`, `ssl-expiry-check.ts`)
+**Files:** `src/modules/monitoring/checks/` (`tcp-check.ts`, `ssl-expiry-check.ts`), `src/shared/testing/test-endpoints.ts` (TCP and TLS servers and a test certificate authority; a dev dependency for generating certificates, if one is needed, is added with `pnpm install --lockfile-only`)
 **Verification layer:** integration (`src/modules/monitoring/tcp-ssl-checks.integration.test.ts`, against local TCP and TLS servers whose CA the test trusts)
 
 **Acceptance Criteria:**
@@ -1693,7 +1699,7 @@ I want each outcome stored and the monitor's failure count updated in one transa
 So that monitor state is derived from stored rows and every move of it is announced once.
 
 **Actor:** system — the worker entrypoint
-**Satisfies:** FR11 verification (results persisted); FR13 verification — "Worker tests simulate failure thresholds" (the event half; drafts arrive in 5.14); DOMAIN M1, and M2 steps 3–4; M8; DOMAIN, Monitor `failure_episode` (2026-10-09)
+**Satisfies:** FR11 verification (results persisted); FR13 verification — "Worker tests simulate failure thresholds" (the event half; drafts arrive in 5.15); DOMAIN M1, and M2 steps 3–4; M8; DOMAIN, Monitor `failure_episode` (2026-10-09)
 **Files:** `src/modules/monitoring/commands/record-check-result/record-check-result.handler.ts`, `src/modules/monitoring/database/check-result.repository.ts`, `src/modules/monitoring/database/monitor.repository.ts`, `src/shared/domain/monitor-state.ts`, `src/shared/events/monitor.events.ts`
 **Verification layer:** integration (`src/modules/monitoring/record-check-result.integration.test.ts`); tests execute the command directly and run no worker pass
 
@@ -1723,7 +1729,8 @@ So that monitor state is derived from stored rows and every move of it is announ
 
 **Given** a monitor disabled while its check was in flight
 **When** the result is recorded
-**Then** the row is stored
+**Then** the row is stored and `monitor.check_succeeded` or `monitor.check_failed` is emitted
+**And** `consecutive_failures`, `last_checked_at` and `failure_episode` are left unchanged, since re-enabling resets the first two
 **And** no state event is emitted, since a disabled monitor contributes nothing
 
 **Given** each monitor event
@@ -1732,12 +1739,12 @@ So that monitor state is derived from stored rows and every move of it is announ
 
 ### Story 5.7: Warn once per certificate before it expires
 
-As an operator,
-I want one warning when a monitored certificate comes within its warning window,
-So that I can renew it before it expires, without the warning lowering uptime or opening an incident.
+As the worker,
+I want to warn once when a monitored certificate comes within its warning window,
+So that an operator can renew it before it expires, without the warning lowering uptime or opening an incident.
 
-**Actor:** system — the worker, for an operator
-**Satisfies:** FR10 verification — "Tests verify a warning on the first qualifying observation, no repetition across subsequent checks or worker restarts, eligibility after certificate renewal, and no warning-induced failure, uptime reduction, or draft incident"; DOMAIN, SSL-expiry checks and MonitorSslWarning (2026-10-09)
+**Actor:** system — the worker entrypoint
+**Satisfies:** FR10 verification — "Tests verify a warning on the first qualifying observation, no repetition across subsequent checks or worker restarts, eligibility after certificate renewal, and no warning-induced failure, uptime reduction, or draft incident" (the draft clause is proven in story 5.15, once drafts exist); DOMAIN, SSL-expiry checks and MonitorSslWarning (2026-10-09)
 **Files:** `db/migrations/*_create_monitor_ssl_warnings.sql`, `src/modules/monitoring/commands/record-check-result/record-check-result.handler.ts`, `src/modules/monitoring/database/monitor-ssl-warning.repository.ts`, `src/shared/events/monitor.events.ts`
 **Verification layer:** integration (`src/modules/monitoring/ssl-expiry-warning.integration.test.ts`)
 
@@ -1773,46 +1780,76 @@ So that I can renew it before it expires, without the warning lowering uptime or
 **When** it is recorded
 **Then** no marker is written and no warning is emitted
 
-**Given** a check that warns
+**Given** the warning depends on the expiry condition, not on whether the check succeeded
+**When** an expired certificate, an untrusted certificate inside the window, and an untrusted certificate outside it are each recorded as failed checks
+**Then** the first two each warn once and the third does not, since untrusted does not mean expiring
+
+**Given** a certificate that warned while valid and later expires
+**When** the expired check is recorded
+**Then** no second warning is emitted
+
+**Given** a check of a valid certificate that warns
 **When** it is recorded
 **Then** its result is still `success` and `consecutive_failures` is unchanged
-**And** no `monitor.state_changed`, `monitor.threshold_breached` or draft follows
+**And** no `monitor.state_changed` or `monitor.threshold_breached` follows
 **And** dropping the partition that held the warned result does not make the certificate warn again
 
 **Given** the warning event
 **When** it is emitted
 **Then** it reaches in-process handlers only; email delivery (Epic 6) and realtime transport (Epic 4) are outside this story
 
-### Story 5.8: Run due checks on their own loop
+### Story 5.8: Find and run the checks that are due
 
 As the worker,
-I want to run every due monitor on a loop of its own, capped and bounded by timeouts,
-So that checks happen on schedule without delaying maintenance transitions.
+I want each organization's due monitors found and checked, capped and bounded by timeouts,
+So that every monitor is checked on its interval and archiving a service suspends its monitors.
 
 **Actor:** system — the worker entrypoint
-**Satisfies:** FR11 verification — "The `worker` entrypoint executes checks on configured intervals and persists results … against controlled test endpoints"; ARCHITECTURE section 6.0.1 (M7), section 4 (shutdown) and section 8 (per-loop health); the epic's FR4 note (archive suspends monitors); Epic 3 retrospective item 23; `deferred-work.md`, the three entries targeting Epic 5
-**Files:** `src/modules/monitoring/commands/run-due-monitor-checks/run-due-monitor-checks.handler.ts`, `src/modules/monitoring/database/monitor.repository.ts` (the due query), `src/worker.ts`, `src/worker-health.ts`, `src/config/env.ts` (`WORKER_MONITOR_INTERVAL_MS`, the concurrency cap, and the overdue cross-check), `src/shared/db/foreign-table-allowlist.spec.ts`
-**Verification layer:** unit (the allowlist, env) and integration (`src/modules/monitoring/due-monitors.integration.test.ts`, `src/worker-lifecycle.integration.test.ts`)
+**Satisfies:** FR11 verification — "The `worker` entrypoint executes checks on configured intervals and persists results … against controlled test endpoints"; ARCHITECTURE section 6.0.1 (M7); the epic's FR4 note (archive suspends monitors); Epic 3 retrospective item 23
+**Files:** `src/shared/db/foreign-table-allowlist.spec.ts`, `src/modules/monitoring/commands/run-due-monitor-checks/run-due-monitor-checks.handler.ts`, `src/modules/monitoring/database/monitor.repository.ts` (the due query), `src/config/env.ts` (the concurrency cap), `src/shared/testing/` (the test endpoints from story 5.4)
+**Verification layer:** unit (the allowlist) and integration (`src/modules/monitoring/due-monitors.integration.test.ts`); tests execute `RunDueMonitorChecksCommand` for their own organization and run no worker loop
 
 **Acceptance Criteria:**
 
 **Given** the foreign-table allowlist test, added before the due query
 **When** it reads every repository's SQL
 **Then** each module may name its own tables and only the foreign tables listed for it: today's reads by `service` and `status-page`, Better Auth's tables where already read, and `monitoring` → `services` for this story
+**And** the unit is the table, so a new column on a listed table needs no change
 **And** an unlisted foreign table fails the build naming the module, the table and the file, which a deliberately unlisted read proves
 
 **Given** monitors that are enabled and due, enabled and not yet due, never checked, and disabled
-**When** a tick runs
-**Then** exactly the due and the never-checked monitors are checked, each executed by stories 5.4–5.5 and recorded through `RecordCheckResultCommand` under its organization's tenant context
+**When** the command runs for their organization
+**Then** exactly the due and the never-checked monitors are checked, each executed by stories 5.4–5.5 and recorded through `RecordCheckResultCommand` under the organization's tenant context
 
 **Given** a service with enabled monitors
 **When** it is archived
 **Then** its monitors are no longer checked, and the monitor rows are not written to
-**And** when it is restored, its enabled monitors are checked again on the next due tick and its disabled ones stay off
+**And** when it is restored, its enabled monitors are checked again when next due and its disabled ones stay off
 
 **Given** more due monitors than the concurrency cap, against a slow endpoint
-**When** a tick runs
+**When** the command runs
 **Then** no more than the cap are in flight at once
+
+**Given** one check that times out among others
+**When** the command runs
+**Then** it is recorded as a failure with the timeout error code, and the others complete
+
+### Story 5.9: Run checks on the worker's own loop
+
+As the worker,
+I want checks on a loop of their own that reports its health and shuts down cleanly,
+So that slow targets never delay maintenance transitions, and a stuck loop or a deploy never loses a result.
+
+**Actor:** system — the worker entrypoint
+**Satisfies:** ARCHITECTURE section 6.0.1 (M7, the loop's three rules), section 4 (shutdown) and section 8 (per-loop health); ROADMAP, Docker Compose verification — "Each healthcheck fails when its process stops doing its work … `api` and `worker` stop taking new work, finish in-flight work and event handlers, and close their database pools before terminating"; `deferred-work.md`, the three entries targeting Epic 5
+**Files:** `src/worker.ts`, `src/worker-health.ts`, `src/config/env.ts` (`WORKER_MONITOR_INTERVAL_MS` and the overdue cross-check)
+**Verification layer:** unit (env) and integration (`src/worker-lifecycle.integration.test.ts`)
+
+**Acceptance Criteria:**
+
+**Given** the worker
+**When** it starts
+**Then** it runs story 5.8's command for each organization on a loop separate from the maintenance pass, every `WORKER_MONITOR_INTERVAL_MS`
 
 **Given** a tick still running when the next is due
 **When** the interval fires
@@ -1837,15 +1874,15 @@ So that checks happen on schedule without delaying maintenance transitions.
 **When** it is logged
 **Then** the log carries the error's message under `err`, not an empty `error` object
 
-**Given** the integration suites
-**When** they drive ticks
-**Then** each passes `{ orgIds }` for its own organizations; none runs an unscoped pass
+**Given** the integration suite
+**When** it starts the worker
+**Then** it is scoped to its own organizations; nothing runs an unscoped pass
 
-### Story 5.9: Monitor state moves service status
+### Story 5.10: Monitor state moves service status
 
-As a visitor,
-I want a service's status to reflect what its monitors say,
-So that an outage a monitor detects shows before anyone declares it.
+As the system,
+I want a service's status recomputed from what its monitors say,
+So that a visitor sees an outage a monitor detects before anyone declares it.
 
 **Actor:** system — an event handler in the `service` module
 **Satisfies:** FR5 verification — "monitor-derived state", the fourth condition Story 2.18 could not construct, verified by a service listing the status its monitor state resolves to; DOMAIN M1 and M3
@@ -1885,22 +1922,22 @@ So that an outage a monitor detects shows before anyone declares it.
 **When** recomputation runs
 **Then** the service is skipped
 
-### Story 5.10: Refresh daily uptime rollups
+### Story 5.11: Refresh daily uptime rollups
 
 As the worker,
 I want each day's check results reduced to one row per service,
 So that 90-day history is read from rollups rather than raw results.
 
 **Actor:** system — the worker entrypoint
-**Satisfies:** FR12 verification — "rollup tests validate daily aggregates"; FR18 verification — "Rollup tests" (the rollup half); DOMAIN, UptimeRollup and partitioning (`ROLLUP_RETENTION_DAYS`)
-**Files:** `db/migrations/*_create_uptime_rollups.sql`, `src/modules/monitoring/commands/refresh-uptime-rollups/refresh-uptime-rollups.handler.ts`, `src/modules/monitoring/database/uptime-rollup.repository.ts`, `src/shared/events/monitor.events.ts` (`uptime.rollup_refreshed`), `src/worker.ts`, `src/config/env.ts` (`ROLLUP_RETENTION_DAYS`, default 400)
+**Satisfies:** FR12 verification — "rollup tests validate daily aggregates"; FR18 verification — "Rollup tests" (the rollup half); DOMAIN, UptimeRollup (including "Which days a refresh covers", 2026-10-09), UptimeRollupProgress, and partitioning (`ROLLUP_RETENTION_DAYS`); ARCHITECTURE section 6.1 (refresh before partition maintenance)
+**Files:** `db/migrations/*_create_uptime_rollups.sql` (also creates `uptime_rollup_progress`), `src/modules/monitoring/commands/refresh-uptime-rollups/refresh-uptime-rollups.handler.ts`, `src/modules/monitoring/database/uptime-rollup.repository.ts`, `src/shared/events/monitor.events.ts` (`uptime.rollup_refreshed`), `src/worker.ts`, `src/config/env.ts` (`ROLLUP_RETENTION_DAYS`, default 400)
 **Verification layer:** integration (`src/modules/monitoring/uptime-rollups.integration.test.ts`)
 
 **Acceptance Criteria:**
 
 **Given** `uptime_rollups` is created as DOMAIN specifies, primary key `(org_id, service_id, day)`, `worst_status` CHECK on the three-level scale, and a tenant foreign key `(service_id, org_id)` to `services`
-**When** the migration is applied
-**Then** row level security is enabled and `FORCE`d with the standard policy
+**When** the migration is applied, together with `uptime_rollup_progress` as DOMAIN specifies
+**Then** both tables have row level security enabled and `FORCE`d with the standard policy
 **And** `tenant-rls-coverage.integration.test.ts` passes
 
 **Given** a day of results for a service
@@ -1912,27 +1949,41 @@ So that 90-day history is read from rollups rather than raw results.
 **Then** no row is written for it
 
 **Given** a refresh already run
-**When** it runs again, and when a late result arrives for a day still inside the refresh window
-**Then** the rerun changes nothing, and the late result is reflected
+**When** it runs again with no new results
+**Then** no row changes, `updated_at` included, because an unchanged day's aggregates leave its row alone
 
-**Given** days
-**When** results are grouped
-**Then** they are grouped by UTC day. DOMAIN's sketch truncates in the session's time zone; the story pins UTC and records it in DOMAIN first
+**Given** a result checked just before midnight UTC and recorded just after
+**When** the next pass refreshes today and yesterday
+**Then** it is counted in yesterday's row
+
+**Given** results grouped into days
+**When** they straddle midnight in a non-UTC session time zone
+**Then** they are grouped by UTC date, as DOMAIN decides
+
+**Given** an organization whose `refreshed_through` is several days behind, as after a worker outage, with those days' raw results still retained
+**When** the next pass runs
+**Then** every closed day after it is refreshed, oldest first, up to yesterday, and `refreshed_through` advances to yesterday
+**And** with no progress row, catch-up starts at the organization's oldest retained result
+
+**Given** a pass in which retention is about to drop a partition holding a day not yet rolled up
+**When** the pass runs
+**Then** catch-up runs before partition maintenance, so the day is rolled up first
+**And** a day already dropped before it could be rolled up is logged as a lost range, and no row is written for it
 
 **Given** two organizations
 **When** the worker refreshes
 **Then** each refresh runs under its own organization's tenant transaction, and neither's rollups include the other's results
 
-**Given** an SSL-expiry result that warned
-**When** its day is rolled up
-**Then** it counts as successful, since its result was `success`
+**Given** SSL-expiry results that warned, one a valid certificate's success and one an expired certificate's failure
+**When** their day is rolled up
+**Then** each counts as its own outcome, and the warning itself changes nothing in the day's aggregates
 
 **Given** rollups older than `ROLLUP_RETENTION_DAYS`, and raw partitions dropped by retention
 **When** the worker runs
 **Then** the old rollups are pruned and `uptime.rollup_refreshed` is emitted
 **And** rollups whose raw results were dropped remain
 
-### Story 5.11: Fill the 90-day uptime in the public payload
+### Story 5.12: Fill the 90-day uptime in the public payload
 
 As an integrator,
 I want each public service's last 90 days of uptime in the status payload,
@@ -1979,11 +2030,11 @@ So that I can draw uptime bars without credentials or date arithmetic.
 **When** both are fetched
 **Then** they are identical, and the Cucumber scenario asserts the 90-day shape through the public route
 
-### Story 5.12: Order the admin timeline by sequence, not the clock
+### Story 5.13: Order the admin timeline by sequence, not the clock
 
-As an operator,
-I want an incident's timeline in the order entries were written,
-So that a later update never sorts before an earlier one when the clock steps back.
+As the system,
+I want an incident's timeline ordered by when entries were written, not by the clock,
+So that an operator never sees a later update sorted before an earlier one when the clock steps back.
 
 **Actor:** system
 **Satisfies:** FR7 verification — "API tests prove updates appear in timeline order"; Epic 2 retrospective D-1, revisited here because monitors now write into drafts; AGENTS.md, the clock-skew pitfall
@@ -2006,7 +2057,7 @@ So that a later update never sorts before an earlier one when the clock steps ba
 **When** they run on a machine whose clock steps back
 **Then** none depends on `created_at` for order
 
-### Story 5.13: Order the public timeline by the same sequence
+### Story 5.14: Order the public timeline by the same sequence
 
 As an integrator,
 I want the public timeline in the same order as the admin one,
@@ -2014,21 +2065,21 @@ So that the two never disagree about what happened first.
 
 **Actor:** human — an integrator
 **Satisfies:** FR7 verification — "updates appear in timeline order", on the public surface; DOMAIN, Public status page ("oldest first")
-**Files:** `src/modules/status-page/database/public-status.repository.ts`, `src/shared/db/foreign-table-allowlist.spec.ts` (the new column on an already listed table)
+**Files:** `src/modules/status-page/database/public-status.repository.ts`. The allowlist needs no change: `incident_updates` is already listed, and its unit is the table
 **Verification layer:** integration (`src/modules/status-page/` suites)
 
 **Acceptance Criteria:**
 
 **Given** an incident whose entries' `created_at` and write order disagree
 **When** the public payload is fetched
-**Then** its timeline follows the sequence column, oldest first, as story 5.12's admin timeline does
+**Then** its timeline follows the sequence column, oldest first, as story 5.13's admin timeline does
 **And** draft-era entries are still left off
 
-### Story 5.14: Open a draft when a monitor breaches its threshold
+### Story 5.15: Open a draft when a monitor breaches its threshold
 
-As an operator,
+As the system,
 I want a draft incident proposed when a monitor fails too many times in a row,
-So that I confirm or dismiss a real outage rather than discover it late.
+So that an operator confirms or dismisses a real outage rather than discovering it late.
 
 **Actor:** system — an event handler in the `incident` module
 **Satisfies:** FR13 verification — "Worker tests simulate failure thresholds and assert draft incident creation only"; DOMAIN M2 step 5, the deduplication invariant, Incident (draft rules), and one proposal per failure episode (2026-10-09)
@@ -2070,6 +2121,15 @@ So that I confirm or dismiss a real outage rather than discover it late.
 **Then** the draft is not on the public page
 **And** it adds nothing to the service's status beyond what the monitor's own state already says, since a draft is excluded from status inputs
 
+**Given** a monitor with `failure_threshold` 3, checked by the test through `RecordCheckResultCommand` on the command bus
+**When** three failing results are recorded, then a fourth
+**Then** exactly one draft exists, created by this story's handler from the breach
+**And** nothing else happens to it: no confirm, no dismiss, no second draft, which is FR13's "draft incident creation only"
+
+**Given** an SSL-expiry monitor whose valid certificate warns
+**When** the warning is emitted
+**Then** no draft is created, closing the FR10 clause story 5.7 could not yet prove
+
 **Given** `monitor.recovered` for the draft's monitor
 **When** it is emitted
 **Then** the draft is unchanged: creation only, no automatic confirm or dismiss
@@ -2082,28 +2142,41 @@ So that I confirm or dismiss a real outage rather than discover it late.
 **When** it subscribes
 **Then** it reaches `monitor.threshold_breached` through `src/shared/events/`, never by importing `monitoring`
 
-### Story 5.15: Reconcile missed drafts each pass
+### Story 5.16: Reconcile missed drafts each pass
 
 As the worker,
 I want each pass to open the drafts a lost event never opened,
 So that a breach is proposed even if the handler failed.
 
 **Actor:** system — the worker entrypoint
-**Satisfies:** FR13 verification — "assert draft incident creation only"; DOMAIN M2 step 6 and one proposal per failure episode (2026-10-09)
+**Satisfies:** FR13 verification — "assert draft incident creation only"; DOMAIN M2 step 6, Monitor ("an edit never emits `monitor.threshold_breached`"), and one proposal per failure episode (2026-10-09)
 **Files:** `src/modules/monitoring/queries/list-monitors-at-threshold/list-monitors-at-threshold.handler.ts`, `src/modules/monitoring/database/monitor.repository.ts`, `src/worker.ts`
 **Verification layer:** integration (`src/modules/monitoring/draft-reconciliation.integration.test.ts`)
 
 **Acceptance Criteria:**
 
-**Given** an enabled monitor at or above its threshold, on an unarchived service, with no open draft and no unresolved incident it originated, because the draft handler failed
+**Given** the `monitoring` query
+**When** it selects monitors
+**Then** it returns the enabled monitors at or above their threshold on unarchived services, each with its current `failure_episode`, and reads only `monitors` and `services`
+**And** the incident-side conditions (no open draft, no unresolved incident it originated, no incident for the episode) are applied by story 5.15's command, so `monitoring` never reads `incidents`
+
+**Given** such a monitor with no draft, because the draft handler failed
 **When** the worker pass runs for its organization
-**Then** one draft is created through story 5.14's command, for the monitor's current `failure_episode`, which the query returns
+**Then** one draft is created through story 5.15's command, for the monitor's current episode
 **And** a second pass creates nothing
+
+**Given** an edit that lowered a monitor's threshold so it is now `failing`, which emits no `monitor.threshold_breached`
+**When** the next pass runs
+**Then** one draft is created for the episode the edit opened
 
 **Given** an operator dismissed the draft while the monitor is still failing
 **When** the next pass runs, and every pass after it until the monitor leaves `failing`
 **Then** no draft is reopened, so the human decision survives the worker
 **And** the monitor is still checked on schedule
+
+**Given** an operator confirmed the draft and later resolved the incident while the monitor is still failing
+**When** the next passes run
+**Then** no draft is reopened for that episode either
 
 **Given** monitors below their threshold, disabled, or on archived services
 **When** the pass runs
