@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-09-2026 03:51
+last_updated: 10-09-2026 04:22
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -169,7 +169,7 @@ action_items:
     action: "Item 3: a second app built while the first is open works or fails at
       boot, never a silent 500; settle deferred #25 with it (before acceptance)"
     owner: "dev loop"
-    status: open
+    status: done
     ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
   - id: "epic-9-retro-item-4-shared-test-helpers"
     epic: 9
