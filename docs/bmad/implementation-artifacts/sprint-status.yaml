@@ -84,7 +84,7 @@ development_status:
   epic-8: backlog
   epic-8-retrospective: optional
 
-  epic-9: in-progress
+  epic-9: done
   9-1-graphql-refuses-what-rest-refuses-services-and-groups: done
   9-2-the-anonymous-graphql-limit-holds-whatever-cookie-arrives: done
   9-3-graphql-refuses-what-rest-refuses-incidents: done
@@ -127,7 +127,7 @@ action_items:
     action: "Item 20: move createService, createGroup, declare and capturing into
       src/shared/testing/ (partly in story 9.11)"
     owner: "dev loop"
-    status: in-progress
+    status: done
   - epic: 3
     action: "Item 21: container smoke test in CI against the built image (Epic 8)"
     owner: "dev loop"
