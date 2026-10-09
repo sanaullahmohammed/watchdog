@@ -28,7 +28,7 @@ FR6: Incidents — Authorized v1 users can create incidents, assign affected ser
 FR7: Incident updates — Incident updates are append-only and visible on admin and public status surfaces. (Phase 2)
 FR8: Maintenance — Authorized v1 users can schedule maintenance windows and publish maintenance lifecycle events. (Phase 2)
 FR9: Maintenance auto-transitions — Maintenance windows automatically transition based on time. (Phase 2)
-FR10: Monitoring configs — Authorized v1 users can configure HTTP(S), TCP, keyword-match, and SSL-expiry checks. (Phase 5)
+FR10: Monitoring configs — Authorized v1 users can configure HTTP(S), TCP, keyword-match, and SSL-expiry checks. An SSL-expiry monitor warns operators once per certificate before it expires. (Phase 5)
 FR11: Monitoring worker — The `worker` entrypoint executes checks on configured intervals and persists results. (Phase 5)
 FR12: Check results storage — Check results are append-only and partitioned; daily uptime rollups are generated. (Phase 5)
 FR13: Draft auto-incidents — After N consecutive monitor failures, the system creates a draft incident requiring human confirmation. (Phase 5)

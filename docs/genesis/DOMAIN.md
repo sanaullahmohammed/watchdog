@@ -272,6 +272,33 @@ FKs:
 
 Tenant scoping: carries `org_id`.
 
+**v1 has no monitor delete.** Decided 2026-10-09 (owner). An operator stops a monitor by disabling it (`enabled: false`), and a disabled monitor contributes nothing to its service's status (see How monitor state is derived). Existing incidents stay under human control. `DeleteMonitorCommand` and `monitor.deleted` are deferred past v1. Its results are not kept forever either way: retention drops expired `check_results` partitions.
+
+**Editing a monitor can move its derived state.** Decided 2026-10-09 (owner). Changing `enabled` or `failure_threshold` can move a monitor's derived state without a check. When it does, the update emits `monitor.state_changed`, so status recomputes at once rather than at the next reconciliation pass. An edit never emits `monitor.threshold_breached`; the worker's draft reconciliation (Consecutive-failure to draft-incident rule, step 6) picks up a monitor an edit left at its threshold. Re-enabling a monitor resets `consecutive_failures` to `0` and `last_checked_at` to null, so it contributes nothing until its next check and is due at once.
+
+**SSL-expiry checks measure availability.** Decided 2026-10-09 (owner). An `ssl_expiry` check fails only when no certificate can be retrieved or the certificate is invalid: it fails trust validation, its hostname does not match, it has expired, or it is not yet valid. A certificate approaching expiry is valid, and the check succeeds, so an expiring certificate never lowers uptime, moves status or opens a draft.
+
+- Each result's `metadata` carries `certificateFingerprint`, the SHA-256 fingerprint of the leaf certificate, `certificateExpiresAt`, its not-after timestamp, and `daysRemaining`, the whole days from `checked_at` to it, rounded down. All three are null when no certificate was retrieved, never zero.
+- The monitor's `config.warnDays` sets the warning window. A check is inside it when `certificateExpiresAt - checked_at` is at most `warnDays` days, compared as timestamps, never as rounded days.
+- `monitor.ssl_expiry_warning` is emitted once per monitor per certificate, the certificate identified by its fingerprint, not its expiry, which two certificates can share. A first-ever check already inside the window warns. Later checks, worker restarts, a certificate that alternates with another, and retention dropping old results never repeat it. A renewed certificate is a new certificate, eligible for its own warning when it comes inside the window.
+- The deduplication marker is persisted, never held in worker memory: a row in `monitor_ssl_warnings` (below). The check's result and the marker are written in the same tenant transaction, the marker by `insert ... on conflict do nothing`, and the event is emitted after commit only when the insert created a row. As with every event (ARCHITECTURE section 5.1), a crash between commit and emit loses that warning rather than repeating it.
+
+### MonitorSslWarning
+
+Decided 2026-10-09 (owner). One row per monitor per certificate that has been warned about; the persisted marker for `monitor.ssl_expiry_warning`.
+
+| Field | Type | Constraints / Notes |
+|---|---:|---|
+| `org_id` | `text` | FK -> Better Auth `organization.id` |
+| `monitor_id` | `uuid` | FK -> `monitors.id`, tenant-scoped (`monitor_id`, `org_id`) |
+| `certificate_fingerprint` | `text` | SHA-256 of the leaf certificate |
+| `certificate_expires_at` | `timestamptz` | The warned certificate's not-after |
+| `warned_at` | `timestamptz` | Required |
+
+- Primary key (`org_id`, `monitor_id`, `certificate_fingerprint`), which makes the warning idempotent.
+- Tenant scoping: carries `org_id`; RLS enabled, forced, with the standard policy.
+- Not pruned by check-result retention, so the marker outlives the results that produced it.
+
 ---
 
 ### CheckResult
@@ -632,6 +659,7 @@ Tenant-scoped WatchDog tables:
 - `monitors`
 - `check_results`
 - `uptime_rollups`
+- `monitor_ssl_warnings`
 - `subscribers`
 - `notification_deliveries`
 
@@ -708,7 +736,7 @@ alter table services
 
 Two details make it work. `MATCH SIMPLE`, the default, leaves the constraint unenforced when any column is null, so a nullable reference such as an ungrouped service stays legal. And `on delete set null (service_group_id)` names the column to clear, because `org_id` is `NOT NULL` and a plain `SET NULL` would try to clear it too.
 
-This applies to every such relationship in this document — `incident_service_impacts` to `incidents` and `services`, `maintenance_services` to `maintenance` and `services`, `incidents.origin_monitor_id` to `monitors`, `check_results` and `uptime_rollups` to their monitors. `src/shared/db/tenant-rls-coverage.integration.test.ts` fails on any foreign key between two `org_id` tables that omits it.
+This applies to every such relationship in this document — `incident_service_impacts` to `incidents` and `services`, `maintenance_services` to `maintenance` and `services`, `incidents.origin_monitor_id` to `monitors`, `check_results`, `uptime_rollups` and `monitor_ssl_warnings` to their monitors. `src/shared/db/tenant-rls-coverage.integration.test.ts` fails on any foreign key between two `org_id` tables that omits it.
 
 ### Join table policy sketch
 
@@ -1040,7 +1068,7 @@ Visibility is judged from current rows at read time. Making a service private, o
 
 The second list is why a listed `critical` incident can never sit under an `operational` banner, whether it names no service, names services that are private, or names public ones whose own status has not caught up. The headline impact is the one the page prints beside the incident, so the banner agrees with what a reader sees. An incident the rule leaves off contributes nothing, so a private incident cannot raise the banner by the back door. A window reaches the banner only through the services it puts in `maintenance`.
 
-**Uptime is shaped now and filled in Epic 5.** `uptime.windowDays` is 90. `uptime.services` is empty until rollups exist, which is how an integrator tells "no data yet" from "100% uptime". Once they exist, each service carries one entry per day in the window, oldest first, so a renderer draws its bars without date arithmetic. A day the rollups have no row for carries `uptimeRatio: null` and `worstStatus: null`: no checks ran that day, because the monitor did not exist yet or the worker was down, and that is a gap rather than an outage. `worstStatus` is the rollup's `worst_status`, the three-level monitor scale (`operational`, `degraded`, `major_outage`) computed from `check_results` alone, and it is what colours a day's bar. The payload carried no such field until the Epic 3 retrospective added it (R-17), while the contract still had no integrator to break.
+**Uptime is shaped now and filled in Epic 5.** `uptime.windowDays` is 90. `uptime.services` is empty until rollups exist, which is how an integrator tells "no data yet" from "100% uptime". Once they exist, each service carries one entry per day in the window, oldest first, so a renderer draws its bars without date arithmetic. Decided 2026-10-09 (owner): `uptime.services` holds only the visible services with at least one rollup in the window. A visible service with none is left out of it and stays in the ordinary services list; its absence means no observations in the window, not 100% uptime, and not necessarily a disabled monitor. An included service carries all 90 days. A day the rollups have no row for carries `uptimeRatio: null` and `worstStatus: null`: no checks ran that day, because the monitor did not exist yet or the worker was down, and that is a gap rather than an outage. `worstStatus` is the rollup's `worst_status`, the three-level monitor scale (`operational`, `degraded`, `major_outage`) computed from `check_results` alone, and it is what colours a day's bar. The payload carried no such field until the Epic 3 retrospective added it (R-17), while the contract still had no integrator to break.
 
 This rule is written for the page; it is not yet applied everywhere these items are referenced publicly. `ARCHITECTURE.md` section 5.4 leaves the unimplemented public event gate abstract because its earlier draft-only sketch did not enforce this rule. Epic 4 builds that gate and must apply the full rule there too, including privacy-safe invalidation when public visibility changes.
 
@@ -1317,13 +1345,13 @@ An `*.updated` event announces a change, not an attempt. `UpdateIncidentCommand`
 |---|---|---:|---|
 | `monitor.created` | Monitor is created | No | Admin-only |
 | `monitor.updated` | Monitor configuration changes | No | Admin-only |
-| `monitor.deleted` | Monitor is deleted | No | Admin-only |
+| `monitor.deleted` | Monitor is deleted. Deferred past v1, which has no monitor delete (Monitor) | No | Admin-only |
 | `monitor.check_succeeded` | A check succeeds after execution | Optional | Admin-only |
 | `monitor.check_failed` | A check fails after execution | Optional | Admin-only |
 | `monitor.state_changed` | A monitor's derived state moves (Status model, How monitor state is derived) | Optional | Admin-only |
 | `monitor.recovered` | Monitor transitions from failing to healthy | Yes | Admin-only |
 | `monitor.threshold_breached` | Consecutive failure threshold is reached | Yes | Admin-only |
-| `monitor.ssl_expiry_warning` | SSL-expiry monitor reaches warning threshold | Yes | Admin-only |
+| `monitor.ssl_expiry_warning` | An SSL-expiry check first comes inside its warning window (Monitor, SSL-expiry checks) | Yes | Admin-only |
 | `uptime.rollup_refreshed` | Daily uptime rollup is refreshed | Optional | Admin-only |
 
 ### Notification events
