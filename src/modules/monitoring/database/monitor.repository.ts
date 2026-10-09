@@ -50,6 +50,19 @@ export default function monitorRepository({ monitorMapper }: Dependencies) {
     },
 
     /**
+     * Every monitor of a service. Names are not unique, so the order ends at
+     * `id`, and a page of them cannot swap two between requests.
+     */
+    async listByService(tx: TenantTransaction, serviceId: string) {
+      const rows = await tx.sql<MonitorModel[]>`
+        select * from monitors
+        where service_id = ${serviceId}
+        order by name asc, id asc
+      `;
+      return rows.map(monitorMapper.toDomain);
+    },
+
+    /**
      * The row, locked `for no key update`. A read-check-write is not serialized
      * by the transaction alone; this is what makes two concurrent edits queue.
      */
