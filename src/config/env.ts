@@ -2,6 +2,7 @@ import envSchema from 'env-schema';
 import { type Static, Type } from 'typebox';
 import { parseAllowedCidrs } from './allowed-cidrs';
 import { authEnvProperties } from './auth-env';
+import { checkResultsEnvProperties } from './check-results-env';
 
 enum NodeEnv {
   development = 'development',
@@ -27,6 +28,7 @@ const schema = Type.Object({
   // RLS, DBMate migrates as watchdog_owner through DBMATE_DATABASE_URL.
   // See ARCHITECTURE.md 6.1.
   ...authEnvProperties,
+  ...checkResultsEnvProperties,
   LOG_LEVEL: Type.Enum(LogLevel),
   NODE_ENV: Type.Enum(NodeEnv),
   HOST: Type.String({ default: 'localhost' }),
@@ -101,6 +103,7 @@ export default {
   },
   monitor: {
     allowedCidrs: monitorAllowedCidrs,
+    checkResultsRetentionDays: env.CHECK_RESULTS_RETENTION_DAYS,
   },
   worker: {
     heartbeatPath: env.WORKER_HEARTBEAT_PATH,
