@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-09-2026 05:54
+last_updated: 10-09-2026 10:19
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -73,6 +73,22 @@ development_status:
   epic-4-retrospective: optional
 
   epic-5: backlog
+  5-1-create-and-update-a-monitor: backlog
+  5-2-list-a-service-s-monitors: backlog
+  5-3-keep-check-results-in-monthly-partitions: backlog
+  5-4-http-and-keyword-checks-behind-the-target-guard: backlog
+  5-5-tcp-and-ssl-expiry-checks: backlog
+  5-6-record-a-check-result-and-count-consecutive-failures: backlog
+  5-7-warn-once-per-certificate-before-it-expires: backlog
+  5-8-find-and-run-the-checks-that-are-due: backlog
+  5-9-run-checks-on-the-worker-s-own-loop: backlog
+  5-10-monitor-state-moves-service-status: backlog
+  5-11-refresh-daily-uptime-rollups: backlog
+  5-12-fill-the-90-day-uptime-in-the-public-payload: backlog
+  5-13-order-the-admin-timeline-by-sequence-not-the-clock: backlog
+  5-14-order-the-public-timeline-by-the-same-sequence: backlog
+  5-15-open-a-draft-when-a-monitor-breaches-its-threshold: backlog
+  5-16-reconcile-missed-drafts-each-pass: backlog
   epic-5-retrospective: optional
 
   epic-6: backlog
@@ -137,7 +153,8 @@ action_items:
     owner: "dev loop"
     status: done
   - epic: 3
-    action: "Item 23: foreign-table allowlist test, before the next new foreign-table read; extend it in each later story"
+    action: "Item 23: foreign-table allowlist test, before the next new foreign-table
+      read; extend it in each later story"
     owner: "dev loop"
     status: open
   - epic: 3
