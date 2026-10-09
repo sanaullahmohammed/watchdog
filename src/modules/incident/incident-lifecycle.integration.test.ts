@@ -14,6 +14,8 @@ import {
   incidentUpdatedEvent,
   incidentUpdatePostedEvent,
 } from '@/shared/events/incident.events';
+import { capturingTypes } from '@/shared/testing/events';
+import { createService, declareIncident } from '@/shared/testing/fixtures';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /** Story 2.9 — move an incident through its lifecycle. */
@@ -28,17 +30,6 @@ let userAId = '';
 let userBId = '';
 let orgAId = '';
 let orgBId = '';
-
-async function declare(cookie: string, title: string) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/incidents',
-    headers: { cookie, origin: ORIGIN },
-    payload: { title, impact: 'major' },
-  });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
-}
 
 function transition(cookie: string, id: string, status: string) {
   return app.inject({
@@ -56,26 +47,6 @@ function patch(cookie: string, id: string, payload: object) {
     headers: { cookie, origin: ORIGIN },
     payload,
   });
-}
-
-async function createService(cookie: string, slug: string) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/services',
-    headers: { cookie, origin: ORIGIN },
-    payload: { name: slug, slug },
-  });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
-}
-
-async function capturing<T>(types: string[], run: () => Promise<T>) {
-  const seen: string[] = [];
-  for (const type of types) {
-    app.eventBus.on(type, () => seen.push(type));
-  }
-  const result = await run();
-  return { result, seen };
 }
 
 async function statusOf(orgId: string, id: string) {
@@ -128,9 +99,13 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
   });
 
   it('advances along a legal transition and announces the move', async () => {
-    const id = await declare(cookieA, 'Advancing');
+    const id = await declareIncident(app, cookieA, {
+      title: 'Advancing',
+      impact: 'major',
+    });
 
-    const { result, seen } = await capturing(
+    const { result, seen } = await capturingTypes(
+      app,
       [incidentStateChangedEvent.type],
       () => transition(cookieA, id, 'identified'),
     );
@@ -141,7 +116,10 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
   });
 
   it('rejects an illegal transition and writes nothing', async () => {
-    const id = await declare(cookieA, 'Illegal move');
+    const id = await declareIncident(app, cookieA, {
+      title: 'Illegal move',
+      impact: 'major',
+    });
 
     // investigating -> draft is not in DOMAIN's table.
     const response = await transition(cookieA, id, 'draft');
@@ -151,9 +129,13 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
   });
 
   it('sets resolved_at and announces incident.resolved for a public lifecycle', async () => {
-    const id = await declare(cookieA, 'Will resolve');
+    const id = await declareIncident(app, cookieA, {
+      title: 'Will resolve',
+      impact: 'major',
+    });
 
-    const { seen } = await capturing(
+    const { seen } = await capturingTypes(
+      app,
       [
         incidentStateChangedEvent.type,
         incidentResolvedEvent.type,
@@ -185,7 +167,8 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
       },
     );
 
-    const { seen } = await capturing(
+    const { seen } = await capturingTypes(
+      app,
       [
         incidentStateChangedEvent.type,
         incidentResolvedEvent.type,
@@ -228,7 +211,8 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
       },
     );
 
-    const confirming = await capturing(
+    const confirming = await capturingTypes(
+      app,
       [incidentStateChangedEvent.type, incidentConfirmedEvent.type],
       () => transition(cookieA, id, 'investigating'),
     );
@@ -238,8 +222,10 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
       incidentConfirmedEvent.type,
     ]);
 
-    const advancing = await capturing([incidentConfirmedEvent.type], () =>
-      transition(cookieA, id, 'identified'),
+    const advancing = await capturingTypes(
+      app,
+      [incidentConfirmedEvent.type],
+      () => transition(cookieA, id, 'identified'),
     );
     assert.deepEqual(
       advancing.seen,
@@ -249,7 +235,10 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
   });
 
   it('appends a timeline entry with each transition, attributed to whoever made it', async () => {
-    const id = await declare(cookieA, 'Timeline of moves');
+    const id = await declareIncident(app, cookieA, {
+      title: 'Timeline of moves',
+      impact: 'major',
+    });
 
     const worded = await app.inject({
       method: 'POST',
@@ -281,7 +270,10 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
   });
 
   it('writes no timeline entry for a refused transition', async () => {
-    const id = await declare(cookieA, 'Refused move');
+    const id = await declareIncident(app, cookieA, {
+      title: 'Refused move',
+      impact: 'major',
+    });
     const before = (await timelineOf(orgAId, id)).length;
 
     const refused = await transition(cookieA, id, 'draft');
@@ -298,7 +290,10 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
       posted.push(event.payload as { id: string; updateId: string }),
     );
 
-    const id = await declare(cookieA, 'Public move');
+    const id = await declareIncident(app, cookieA, {
+      title: 'Public move',
+      impact: 'major',
+    });
     const moved = await transition(cookieA, id, 'identified');
     assert.equal(moved.statusCode, 200, moved.body);
 
@@ -340,9 +335,13 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
   });
 
   it('treats an edit as incident.updated, distinct from a state change', async () => {
-    const id = await declare(cookieA, 'Original title');
+    const id = await declareIncident(app, cookieA, {
+      title: 'Original title',
+      impact: 'major',
+    });
 
-    const { result, seen } = await capturing(
+    const { result, seen } = await capturingTypes(
+      app,
       [incidentUpdatedEvent.type, incidentStateChangedEvent.type],
       () =>
         app.inject({
@@ -367,40 +366,59 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
   });
 
   it('says nothing when an edit changes nothing', async () => {
-    const id = await declare(cookieA, 'Unchanged');
-    const serviceId = await createService(cookieA, `${tag}-unchanged`);
+    const id = await declareIncident(app, cookieA, {
+      title: 'Unchanged',
+      impact: 'major',
+    });
+    const serviceId = await createService(app, cookieA, {
+      name: `${tag}-unchanged`,
+      slug: `${tag}-unchanged`,
+    });
     const affectedServices = [{ serviceId, impact: 'minor' }];
     await patch(cookieA, id, { title: 'Settled title', affectedServices });
 
     // The same values again, and the same cover in another order. Announcing
     // would trigger a recomputation and, from Epic 4, wake every subscriber
     // for nothing (Epic 2's D-3, decided 2026-09-23).
-    const { seen } = await capturing([incidentUpdatedEvent.type], async () => {
-      const repeat = await patch(cookieA, id, {
-        title: 'Settled title',
-        affectedServices,
-      });
-      assert.equal(repeat.statusCode, 200, repeat.body);
-    });
+    const { seen } = await capturingTypes(
+      app,
+      [incidentUpdatedEvent.type],
+      async () => {
+        const repeat = await patch(cookieA, id, {
+          title: 'Settled title',
+          affectedServices,
+        });
+        assert.equal(repeat.statusCode, 200, repeat.body);
+      },
+    );
     assert.deepEqual(seen, []);
 
     // And it still announces a change, so silence is not the only answer it
     // knows.
-    const moved = await capturing([incidentUpdatedEvent.type], () =>
+    const moved = await capturingTypes(app, [incidentUpdatedEvent.type], () =>
       patch(cookieA, id, { title: 'Moved on' }),
     );
     assert.deepEqual(moved.seen, [incidentUpdatedEvent.type]);
   });
 
   it('says something when only the cover changes', async () => {
-    const id = await declare(cookieA, 'Cover');
-    const serviceId = await createService(cookieA, `${tag}-cover`);
+    const id = await declareIncident(app, cookieA, {
+      title: 'Cover',
+      impact: 'major',
+    });
+    const serviceId = await createService(app, cookieA, {
+      name: `${tag}-cover`,
+      slug: `${tag}-cover`,
+    });
     await patch(cookieA, id, { affectedServices: [] });
 
-    const { seen } = await capturing([incidentUpdatedEvent.type], () =>
-      patch(cookieA, id, {
-        affectedServices: [{ serviceId, impact: 'major' }],
-      }),
+    const { seen } = await capturingTypes(
+      app,
+      [incidentUpdatedEvent.type],
+      () =>
+        patch(cookieA, id, {
+          affectedServices: [{ serviceId, impact: 'major' }],
+        }),
     );
     assert.deepEqual(seen, [incidentUpdatedEvent.type]);
   });
@@ -438,7 +456,10 @@ describe('Story 2.9: move an incident through its lifecycle', () => {
   });
 
   it('does not let another organization transition an incident', async () => {
-    const id = await declare(cookieA, 'Guarded');
+    const id = await declareIncident(app, cookieA, {
+      title: 'Guarded',
+      impact: 'major',
+    });
 
     const response = await transition(cookieB, id, 'identified');
 

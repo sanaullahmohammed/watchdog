@@ -4,6 +4,8 @@ import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
+import { createServiceGroup } from '@/shared/testing/fixtures';
+import { gql } from '@/shared/testing/graphql';
 import { signUpWithOrg, TEST_ORIGIN } from '@/shared/testing/tenant';
 
 /**
@@ -29,47 +31,12 @@ let cookieEmpty = '';
 let ownGroup: { id: string };
 let tiePair: { id: string }[] = [];
 
-async function createGroup(
-  cookie: string,
-  name: string,
-  slug: string,
-  displayOrder: number,
-): Promise<{ id: string }> {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/service-groups',
-    headers: { cookie, origin: TEST_ORIGIN },
-    payload: { name, slug, displayOrder },
-  });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body) as { id: string };
-}
-
 function rest(url: string, cookie?: string) {
   return app.inject({
     method: 'GET',
     url: `/api/v1${url}`,
     headers: cookie ? { cookie, origin: TEST_ORIGIN } : {},
   });
-}
-
-async function gql(query: string, cookie?: string, variables?: object) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/graphql',
-    headers: {
-      ...(cookie ? { cookie } : {}),
-      'content-type': 'application/json',
-    },
-    payload: { query, variables },
-  });
-  return {
-    statusCode: response.statusCode,
-    body: JSON.parse(response.body) as {
-      data: Record<string, unknown> | null;
-      errors?: { message: string; extensions?: { code?: string } }[];
-    },
-  };
 }
 
 const GROUP_FIELDS = 'id name slug displayOrder';
@@ -90,16 +57,42 @@ describe('Story 9.6: read service groups', () => {
     userIds.push(a.userId, b.userId, empty.userId);
 
     // Created in reverse of the expected order.
-    await createGroup(cookieA, 'Alpha', `${tag}-alpha`, 2);
-    await createGroup(cookieA, 'Charlie', `${tag}-charlie`, 1);
-    ownGroup = await createGroup(cookieA, 'Bravo', `${tag}-bravo`, 1);
+    await createServiceGroup(app, cookieA, {
+      name: 'Alpha',
+      slug: `${tag}-alpha`,
+      displayOrder: 2,
+    });
+    await createServiceGroup(app, cookieA, {
+      name: 'Charlie',
+      slug: `${tag}-charlie`,
+      displayOrder: 1,
+    });
+    ownGroup = {
+      id: await createServiceGroup(app, cookieA, {
+        name: 'Bravo',
+        slug: `${tag}-bravo`,
+        displayOrder: 1,
+      }),
+    };
 
     // Equal display order and name: only id settles them. Recreate until the
     // first inserted holds the larger id, which is the order a missing id sort
     // key would get wrong about half the time.
     for (let attempt = 0; attempt < 40; attempt++) {
-      const first = await createGroup(cookieA, 'Tie', `${tag}-tie-a`, 0);
-      const second = await createGroup(cookieA, 'Tie', `${tag}-tie-b`, 0);
+      const first = {
+        id: await createServiceGroup(app, cookieA, {
+          name: 'Tie',
+          slug: `${tag}-tie-a`,
+          displayOrder: 0,
+        }),
+      };
+      const second = {
+        id: await createServiceGroup(app, cookieA, {
+          name: 'Tie',
+          slug: `${tag}-tie-b`,
+          displayOrder: 0,
+        }),
+      };
       if (first.id > second.id) {
         tiePair = [first, second];
         break;
@@ -115,7 +108,11 @@ describe('Story 9.6: read service groups', () => {
     }
     assert.equal(tiePair.length, 2, 'could not build a descending id pair');
 
-    await createGroup(cookieB, 'Other org', `${tag}-other`, 0);
+    await createServiceGroup(app, cookieB, {
+      name: 'Other org',
+      slug: `${tag}-other`,
+      displayOrder: 0,
+    });
   });
 
   after(async () => {
@@ -150,7 +147,7 @@ describe('Story 9.6: read service groups', () => {
       'slug',
     ]);
 
-    const g = await gql(LIST, cookieA);
+    const g = await gql(app, LIST, { cookie: cookieA });
     assert.equal(g.statusCode, 200);
     assert.deepEqual(g.body.data?.serviceGroups, restBody);
   });
@@ -159,7 +156,7 @@ describe('Story 9.6: read service groups', () => {
     const r = await rest('/service-groups', cookieEmpty);
     assert.equal(r.statusCode, 200, r.body);
     assert.deepEqual(JSON.parse(r.body), []);
-    const g = await gql(LIST, cookieEmpty);
+    const g = await gql(app, LIST, { cookie: cookieEmpty });
     assert.deepEqual(g.body.data, { serviceGroups: [] });
   });
 
@@ -173,7 +170,10 @@ describe('Story 9.6: read service groups', () => {
       slug: `${tag}-bravo`,
       displayOrder: 1,
     });
-    const g = await gql(ONE, cookieA, { id: ownGroup.id });
+    const g = await gql(app, ONE, {
+      cookie: cookieA,
+      variables: { id: ownGroup.id },
+    });
     assert.deepEqual(g.body.data, { serviceGroup: restBody });
   });
 
@@ -183,7 +183,7 @@ describe('Story 9.6: read service groups', () => {
       const cookie = id === ownGroup.id ? cookieB : cookieA;
       const r = await rest(`/service-groups/${id}`, cookie);
       assert.equal(r.statusCode, 404, r.body);
-      const g = await gql(ONE, cookie, { id });
+      const g = await gql(app, ONE, { cookie, variables: { id } });
       assert.equal(g.statusCode, 404);
       assert.equal(g.body.data, null);
       assert.match(g.body.errors?.[0]?.message ?? '', /not found/);
@@ -193,7 +193,10 @@ describe('Story 9.6: read service groups', () => {
   it('refuses a malformed id', async () => {
     const r = await rest('/service-groups/not-a-uuid', cookieA);
     assert.equal(r.statusCode, 400, r.body);
-    const g = await gql(ONE, cookieA, { id: 'not-a-uuid' });
+    const g = await gql(app, ONE, {
+      cookie: cookieA,
+      variables: { id: 'not-a-uuid' },
+    });
     assert.equal(g.statusCode, 400);
     assert.equal(g.body.data, null);
     const message = g.body.errors?.[0]?.message ?? '';
@@ -212,7 +215,7 @@ describe('Story 9.6: read service groups', () => {
       [LIST, undefined],
       [ONE, { id: ownGroup.id }],
     ] as const) {
-      const g = await gql(query, undefined, variables);
+      const g = await gql(app, query, { variables });
       // mercurius answers 200 for an ErrorWithProps carrying no HTTP status.
       assert.equal(g.statusCode, 200);
       assert.equal(g.body.data, null);
@@ -222,7 +225,11 @@ describe('Story 9.6: read service groups', () => {
   });
 
   it('reads a group back after an edit, and 404s after a delete', async () => {
-    const { id } = await createGroup(cookieA, 'Edit me', `${tag}-edit`, 9);
+    const id = await createServiceGroup(app, cookieA, {
+      name: 'Edit me',
+      slug: `${tag}-edit`,
+      displayOrder: 9,
+    });
     const patch = await app.inject({
       method: 'PATCH',
       url: `/api/v1/service-groups/${id}`,
@@ -239,12 +246,12 @@ describe('Story 9.6: read service groups', () => {
 
     const r = await rest(`/service-groups/${id}`, cookieA);
     assert.deepEqual(JSON.parse(r.body), expected);
-    const g = await gql(ONE, cookieA, { id });
+    const g = await gql(app, ONE, { cookie: cookieA, variables: { id } });
     assert.deepEqual(g.body.data, { serviceGroup: expected });
 
     const list = JSON.parse((await rest('/service-groups', cookieA)).body);
     assert.deepEqual(list.at(-1), expected);
-    const gList = await gql(LIST, cookieA);
+    const gList = await gql(app, LIST, { cookie: cookieA });
     assert.deepEqual(gList.body.data?.serviceGroups, list);
 
     const del = await app.inject({
@@ -257,7 +264,7 @@ describe('Story 9.6: read service groups', () => {
       (await rest(`/service-groups/${id}`, cookieA)).statusCode,
       404,
     );
-    const gone = await gql(ONE, cookieA, { id });
+    const gone = await gql(app, ONE, { cookie: cookieA, variables: { id } });
     assert.equal(gone.statusCode, 404);
     assert.equal(gone.body.data, null);
     assert.match(gone.body.errors?.[0]?.message ?? '', /not found/);

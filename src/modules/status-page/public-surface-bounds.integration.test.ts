@@ -5,6 +5,8 @@ import type { FastifyInstance } from 'fastify';
 import { env } from '@/config';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
+import { createService } from '@/shared/testing/fixtures';
+import { gqlResponse } from '@/shared/testing/graphql';
 import { signUpWithOrg, TEST_ORIGIN } from '@/shared/testing/tenant';
 
 /**
@@ -38,14 +40,6 @@ const assertPublicHeaders = (headers: Record<string, unknown>) => {
   );
 };
 
-const gql = (query: string, headers: Record<string, string> = {}) =>
-  app.inject({
-    method: 'POST',
-    url: '/graphql',
-    headers: { 'content-type': 'application/json', ...headers },
-    payload: { query },
-  });
-
 const page = (alias: string) =>
   `${alias}: publicStatusPage(orgSlug: "${tag}") { overallStatus }`;
 
@@ -64,10 +58,10 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
   });
 
   it('serves one page per GraphQL operation, and refuses a second', async () => {
-    const one = await gql(`{ ${page('a')} }`);
+    const one = await gqlResponse(app, `{ ${page('a')} }`);
     assert.equal(one.statusCode, 200, one.body);
 
-    const two = await gql(`{ ${page('a')} ${page('b')} }`);
+    const two = await gqlResponse(app, `{ ${page('a')} ${page('b')} }`);
     assert.equal(two.statusCode, 400, two.body);
     assert.match(
       JSON.parse(two.body).errors[0].message,
@@ -75,7 +69,8 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
     );
 
     // The measurement behind R-5: one request, a hundred compositions.
-    const hundred = await gql(
+    const hundred = await gqlResponse(
+      app,
       `{ ${[...Array(100).keys()].map((n) => page(`a${n}`)).join(' ')} }`,
     );
     assert.equal(hundred.statusCode, 400, hundred.body.slice(0, 200));
@@ -114,13 +109,10 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
   it('answers a new tag once the page says something new', async () => {
     const before = (await fetchPage()).headers.etag;
 
-    const created = await app.inject({
-      method: 'POST',
-      url: '/api/v1/services',
-      headers: { cookie, origin: TEST_ORIGIN },
-      payload: { name: 'Checkout', slug: `${tag}-checkout` },
+    await createService(app, cookie, {
+      name: 'Checkout',
+      slug: `${tag}-checkout`,
     });
-    assert.ok(created.statusCode < 300, created.body);
     await app.eventBus.drain();
 
     assert.notEqual((await fetchPage()).headers.etag, before);
@@ -185,7 +177,8 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
 
   it('answers a junk cookie normally while under the limit', async () => {
     // The shared app, never flooded: its bucket holds a handful of requests.
-    const send = (query: string) => gql(query, { cookie: 'junk=cookie' });
+    const send = (query: string) =>
+      gqlResponse(app, query, { headers: { cookie: 'junk=cookie' } });
     const open = await send(`{ ${page('a')} }`);
     assert.equal(open.statusCode, 200, open.body);
     assert.equal(JSON.parse(open.body).errors, undefined, open.body);
@@ -233,12 +226,7 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
       );
 
       const anonymous = await flood(() =>
-        limited.inject({
-          method: 'POST',
-          url: '/graphql',
-          headers: { 'content-type': 'application/json' },
-          payload: { query: '{ __typename }' },
-        }),
+        gqlResponse(limited, '{ __typename }'),
       );
       assert.ok(anonymous.response, 'anonymous GraphQL was not rationed');
       // GraphQL's own shape: mercurius formats what a hook throws for its
@@ -274,16 +262,24 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
           payload: { query: '{ __typename }' },
         });
 
-      refused(await post('/graphql', { cookie: 'junk=cookie' }));
       refused(
-        await post('/graphql', {
-          cookie: 'better-auth.session_token=forged.not-a-signature',
+        await gqlResponse(limited, '{ __typename }', {
+          headers: { cookie: 'junk=cookie' },
+        }),
+      );
+      refused(
+        await gqlResponse(limited, '{ __typename }', {
+          headers: {
+            cookie: 'better-auth.session_token=forged.not-a-signature',
+          },
         }),
       );
 
       const signedOut = await signUpWithOrg(limited, `${tag}-out`);
       try {
-        const live = await post('/graphql', { cookie: signedOut.cookie });
+        const live = await gqlResponse(limited, '{ __typename }', {
+          headers: { cookie: signedOut.cookie },
+        });
         assert.notEqual(live.statusCode, 429, 'a live session is exempt');
         const out = await limited.inject({
           method: 'POST',
@@ -292,7 +288,11 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
           payload: {},
         });
         assert.equal(out.statusCode, 200, out.body);
-        refused(await post('/graphql', { cookie: signedOut.cookie }));
+        refused(
+          await gqlResponse(limited, '{ __typename }', {
+            headers: { cookie: signedOut.cookie },
+          }),
+        );
       } finally {
         await sql`delete from "organization" where "id" = ${signedOut.orgId}`;
         await sql`delete from "user" where "id" = ${signedOut.userId}`;
@@ -312,11 +312,8 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
 
       // An operator's request carries a session, and is not rationed with them,
       // although both buckets above are now spent.
-      const operator = await limited.inject({
-        method: 'POST',
-        url: '/graphql',
-        headers: { 'content-type': 'application/json', cookie },
-        payload: { query: '{ services { id } }' },
+      const operator = await gqlResponse(limited, '{ services { id } }', {
+        cookie,
       });
       assert.notEqual(operator.statusCode, 429, operator.body);
     } finally {

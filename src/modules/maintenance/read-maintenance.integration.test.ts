@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { createService } from '@/shared/testing/fixtures';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /** Story 2.13 — read maintenance windows. */
@@ -68,13 +69,10 @@ describe('Story 2.13: read maintenance windows', () => {
       orgId: orgBId,
     } = await signUpWithOrg(app, `${tag}-b`));
 
-    const svc = await app.inject({
-      method: 'POST',
-      url: '/api/v1/services',
-      headers: { cookie: cookieA, origin: ORIGIN },
-      payload: { name: `${tag}-svc`, slug: `${tag}-svc` },
+    serviceAId = await createService(app, cookieA, {
+      name: `${tag}-svc`,
+      slug: `${tag}-svc`,
     });
-    serviceAId = JSON.parse(svc.body).id;
 
     scheduledId = await schedule(cookieA, `${tag}-scheduled`, [serviceAId]);
 

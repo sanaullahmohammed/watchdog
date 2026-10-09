@@ -7,6 +7,7 @@ import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentUpdatePostedEvent } from '@/shared/events/incident.events';
+import { declareIncident } from '@/shared/testing/fixtures';
 import { captureCookie } from '@/shared/testing/tenant';
 
 /** Story 2.10 — post an incident update. */
@@ -19,16 +20,6 @@ let app: FastifyInstance;
 let cookie = '';
 let userId = '';
 let orgId = '';
-
-async function declare(title: string) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/incidents',
-    headers: { cookie, origin: ORIGIN },
-    payload: { title, impact: 'major' },
-  });
-  return JSON.parse(response.body).id as string;
-}
 
 function postUpdate(incidentId: string, message: string) {
   return app.inject({
@@ -70,7 +61,10 @@ describe('Story 2.10: post an incident update', () => {
   });
 
   it('appends an update carrying the incident status at the time of writing', async () => {
-    const incidentId = await declare('Timeline');
+    const incidentId = await declareIncident(app, cookie, {
+      title: 'Timeline',
+      impact: 'major',
+    });
 
     const captured: unknown[] = [];
     app.eventBus.on(incidentUpdatePostedEvent.type, (e) => captured.push(e));
@@ -119,7 +113,10 @@ describe('Story 2.10: post an incident update', () => {
   });
 
   it('refuses an edit to an existing update', async () => {
-    const incidentId = await declare('Immutable');
+    const incidentId = await declareIncident(app, cookie, {
+      title: 'Immutable',
+      impact: 'major',
+    });
     await postUpdate(incidentId, 'original wording');
 
     // The declaration wrote an entry too, so the whole timeline is compared
@@ -153,7 +150,10 @@ describe('Story 2.10: post an incident update', () => {
   });
 
   it('refuses a delete of an existing update', async () => {
-    const incidentId = await declare('Undeletable');
+    const incidentId = await declareIncident(app, cookie, {
+      title: 'Undeletable',
+      impact: 'major',
+    });
     await postUpdate(incidentId, 'permanent');
 
     const count = async () =>

@@ -7,6 +7,8 @@ import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { maintenanceStartedEvent } from '@/shared/events/maintenance.events';
+import { createService, declareIncident } from '@/shared/testing/fixtures';
+import { gql } from '@/shared/testing/graphql';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /** Story 2.18 — serve resolved status through the service queries. */
@@ -24,10 +26,6 @@ type ServiceBody = { slug: string; lastKnownStatus: string } & Record<
   string,
   unknown
 >;
-type GraphQLBody<T> = {
-  data: T | null;
-  errors?: { message: string; extensions?: { code?: string } }[];
-};
 
 let app: FastifyInstance;
 let recomputer: Recomputer;
@@ -50,36 +48,6 @@ function api(
     headers: { cookie, origin: ORIGIN },
     payload,
   });
-}
-
-async function gql<T>(
-  cookie: string | undefined,
-  query: string,
-  variables?: object,
-): Promise<GraphQLBody<T>> {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/graphql',
-    headers: cookie ? { cookie } : {},
-    payload: { query, variables },
-  });
-  return JSON.parse(response.body);
-}
-
-async function createService(cookie: string, slug: string) {
-  const response = await api(cookie, 'POST', '/services', { name: slug, slug });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
-}
-
-async function declare(cookie: string, serviceId: string, impact: string) {
-  const response = await api(cookie, 'POST', '/incidents', {
-    title: `${impact} trouble`,
-    impact,
-    affectedServices: [{ serviceId, impact }],
-  });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
 }
 
 /**
@@ -156,16 +124,36 @@ describe('Story 2.18: serve resolved status through the service queries', () => 
   });
 
   it('lists each service with the status its precedence condition resolves to', async () => {
-    await createService(cookieA, `${tag}-quiet`);
-    const incident = await createService(cookieA, `${tag}-incident`);
-    const maintained = await createService(cookieA, `${tag}-maintained`);
-    const overridden = await createService(cookieA, `${tag}-overridden`);
+    await createService(app, cookieA, {
+      name: `${tag}-quiet`,
+      slug: `${tag}-quiet`,
+    });
+    const incident = await createService(app, cookieA, {
+      name: `${tag}-incident`,
+      slug: `${tag}-incident`,
+    });
+    const maintained = await createService(app, cookieA, {
+      name: `${tag}-maintained`,
+      slug: `${tag}-maintained`,
+    });
+    const overridden = await createService(app, cookieA, {
+      name: `${tag}-overridden`,
+      slug: `${tag}-overridden`,
+    });
 
-    await declare(cookieA, incident, 'major');
+    await declareIncident(app, cookieA, {
+      title: 'major trouble',
+      impact: 'major',
+      affectedServices: [{ serviceId: incident, impact: 'major' }],
+    });
     await openWindow(orgAId, maintained);
     // The override has to beat a live critical incident, not merely stand in
     // for an absence of inputs.
-    await declare(cookieA, overridden, 'critical');
+    await declareIncident(app, cookieA, {
+      title: 'critical trouble',
+      impact: 'critical',
+      affectedServices: [{ serviceId: overridden, impact: 'critical' }],
+    });
     await api(cookieA, 'PUT', `/services/${overridden}/status-override`, {
       status: 'degraded',
     });
@@ -182,7 +170,7 @@ describe('Story 2.18: serve resolved status through the service queries', () => 
 
   it('serves the stored status rather than recomputing it per request', async () => {
     const slug = `${tag}-stored`;
-    const id = await createService(cookieA, slug);
+    const id = await createService(app, cookieA, { name: slug, slug });
 
     // Nothing about this service's inputs says major_outage. Writing it
     // directly makes the stored value and a recomputation disagree, so what
@@ -195,11 +183,13 @@ describe('Story 2.18: serve resolved status through the service queries', () => 
 
     assert.equal((await restRead(cookieA, id)).lastKnownStatus, 'major_outage');
     assert.equal((await listedStatuses(cookieA)).get(slug), 'major_outage');
-    const graph = await gql<{ service: { lastKnownStatus: string } }>(
-      cookieA,
-      'query ($id: ID!) { service(id: $id) { lastKnownStatus } }',
-      { id },
-    );
+    const graph = (
+      await gql<{ service: { lastKnownStatus: string } }>(
+        app,
+        'query ($id: ID!) { service(id: $id) { lastKnownStatus } }',
+        { cookie: cookieA, variables: { id } },
+      )
+    ).body;
     assert.equal(graph.data?.service.lastKnownStatus, 'major_outage');
 
     // Only the recomputation handler corrects it.
@@ -208,10 +198,17 @@ describe('Story 2.18: serve resolved status through the service queries', () => 
   });
 
   it('reflects an incident opening and resolving on the next read, with nothing to invalidate', async () => {
-    const id = await createService(cookieA, `${tag}-lifecycle`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-lifecycle`,
+      slug: `${tag}-lifecycle`,
+    });
     assert.equal((await restRead(cookieA, id)).lastKnownStatus, 'operational');
 
-    const incidentId = await declare(cookieA, id, 'critical');
+    const incidentId = await declareIncident(app, cookieA, {
+      title: 'critical trouble',
+      impact: 'critical',
+      affectedServices: [{ serviceId: id, impact: 'critical' }],
+    });
     await settle();
     assert.equal((await restRead(cookieA, id)).lastKnownStatus, 'major_outage');
 
@@ -227,29 +224,41 @@ describe('Story 2.18: serve resolved status through the service queries', () => 
   });
 
   it('returns identical services over REST and GraphQL', async () => {
-    const id = await createService(cookieA, `${tag}-parity`);
-    await declare(cookieA, id, 'minor');
+    const id = await createService(app, cookieA, {
+      name: `${tag}-parity`,
+      slug: `${tag}-parity`,
+    });
+    await declareIncident(app, cookieA, {
+      title: 'minor trouble',
+      impact: 'minor',
+      affectedServices: [{ serviceId: id, impact: 'minor' }],
+    });
     await settle();
 
     const rest = await restRead(cookieA, id);
     assert.equal(rest.lastKnownStatus, 'degraded');
-    const one = await gql<{ service: ServiceBody }>(
-      cookieA,
-      `query ($id: ID!) { service(id: $id) { ${SERVICE_FIELDS} } }`,
-      { id },
-    );
+    const one = (
+      await gql<{ service: ServiceBody }>(
+        app,
+        `query ($id: ID!) { service(id: $id) { ${SERVICE_FIELDS} } }`,
+        { cookie: cookieA, variables: { id } },
+      )
+    ).body;
     assert.deepEqual(one.data?.service, rest);
 
-    const many = await gql<{ services: ServiceBody[] }>(
-      cookieA,
-      `{ services { ${SERVICE_FIELDS} } }`,
-    );
+    const many = (
+      await gql<{ services: ServiceBody[] }>(
+        app,
+        `{ services { ${SERVICE_FIELDS} } }`,
+        { cookie: cookieA },
+      )
+    ).body;
     assert.deepEqual(many.data?.services, await restList(cookieA));
   });
 
   it('reads one service by id, archived included, and nothing across organizations', async () => {
     const slug = `${tag}-single`;
-    const id = await createService(cookieA, slug);
+    const id = await createService(app, cookieA, { name: slug, slug });
     assert.equal((await restRead(cookieA, id)).slug, slug);
 
     const archive = await api(cookieA, 'POST', `/services/${id}/archive`);
@@ -265,17 +274,21 @@ describe('Story 2.18: serve resolved status through the service queries', () => 
     const missing = await api(cookieA, 'GET', `/services/${randomUUID()}`);
     assert.equal(missing.statusCode, 404, missing.body);
 
-    const foreignGraph = await gql(
-      cookieB,
-      'query ($id: ID!) { service(id: $id) { id } }',
-      { id },
-    );
+    const foreignGraph = (
+      await gql(app, 'query ($id: ID!) { service(id: $id) { id } }', {
+        cookie: cookieB,
+        variables: { id },
+      })
+    ).body;
     assert.equal(foreignGraph.data, null);
     assert.ok((foreignGraph.errors ?? []).length > 0);
   });
 
   it('refuses an unauthenticated read over both surfaces', async () => {
-    const id = await createService(cookieA, `${tag}-guarded`);
+    const id = await createService(app, cookieA, {
+      name: `${tag}-guarded`,
+      slug: `${tag}-guarded`,
+    });
 
     const rest = await app.inject({
       method: 'GET',
@@ -283,11 +296,11 @@ describe('Story 2.18: serve resolved status through the service queries', () => 
     });
     assert.equal(rest.statusCode, 401, rest.body);
 
-    const graph = await gql(
-      undefined,
-      'query ($id: ID!) { service(id: $id) { id } }',
-      { id },
-    );
+    const graph = (
+      await gql(app, 'query ($id: ID!) { service(id: $id) { id } }', {
+        variables: { id },
+      })
+    ).body;
     assert.equal(graph.errors?.[0]?.extensions?.code, 'UNAUTHENTICATED');
   });
 });

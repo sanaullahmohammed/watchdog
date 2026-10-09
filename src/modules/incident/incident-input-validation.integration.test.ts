@@ -6,6 +6,7 @@ import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import * as events from '@/shared/events/incident.events';
+import { type GraphqlResult, gql } from '@/shared/testing/graphql';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /**
@@ -40,25 +41,7 @@ function api(method: 'GET' | 'POST' | 'PATCH', url: string, payload?: object) {
   });
 }
 
-async function gql(query: string, variables?: object) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/graphql',
-    headers: { cookie, 'content-type': 'application/json' },
-    payload: { query, variables },
-  });
-  return {
-    statusCode: response.statusCode,
-    body: JSON.parse(response.body) as {
-      data: unknown;
-      errors?: { message: string }[];
-    },
-  };
-}
-
-type Result = Awaited<ReturnType<typeof gql>>;
-
-function messagesOf(result: Result) {
+function messagesOf(result: GraphqlResult) {
   assert.ok(result.statusCode < 500, `answered ${result.statusCode}`);
   const messages = (result.body.errors ?? []).map((e) => e.message).join(' | ');
   assert.notEqual(messages, '', 'expected an error');
@@ -97,7 +80,7 @@ async function rows() {
  * `graphql-type` and matches GraphQL's own enum error instead.
  */
 async function refused(
-  run: () => Promise<Result>,
+  run: () => Promise<GraphqlResult>,
   match: RegExp | 'handler',
   ...fields: string[]
 ) {
@@ -123,29 +106,33 @@ async function refused(
 
 const createIncident = (input: object) =>
   gql(
+    app,
     `mutation ($input: CreateIncidentPayload!) { createIncident(input: $input) }`,
-    { input },
+    { cookie, variables: { input } },
   );
 const updateIncident = (id: string, input: object) =>
   gql(
+    app,
     `mutation ($id: ID!, $input: UpdateIncidentPayload!) {
        updateIncident(id: $id, input: $input)
      }`,
-    { id, input },
+    { cookie, variables: { id, input } },
   );
 const transitionIncident = (id: string, input: object) =>
   gql(
+    app,
     `mutation ($id: ID!, $input: TransitionIncidentPayload!) {
        transitionIncident(id: $id, input: $input)
      }`,
-    { id, input },
+    { cookie, variables: { id, input } },
   );
 const postUpdate = (id: string, input: object) =>
   gql(
+    app,
     `mutation ($id: ID!, $input: PostIncidentUpdatePayload!) {
        postIncidentUpdate(id: $id, input: $input)
      }`,
-    { id, input },
+    { cookie, variables: { id, input } },
   );
 
 const validCreate = { title: 'Valid', impact: 'minor' };
@@ -302,7 +289,10 @@ describe('Story 9.3: GraphQL refuses what REST refuses, incidents', () => {
 
   it('refuses a malformed id on the incidentTimeline query over GraphQL as REST does', async () => {
     const query = 'query ($id: ID!) { incidentTimeline(id: $id) { id } }';
-    const result = await gql(query, { id: NOT_A_UUID });
+    const result = await gql(app, query, {
+      cookie,
+      variables: { id: NOT_A_UUID },
+    });
     assert.equal(result.statusCode, 400, JSON.stringify(result.body));
     assert.equal(result.body.data, null);
     assert.equal(result.body.errors?.length, 1);
@@ -316,9 +306,15 @@ describe('Story 9.3: GraphQL refuses what REST refuses, incidents', () => {
       JSON.parse(rest.body).subErrors.map((e: { path: string }) => e.path),
       ['/id'],
     );
-    const unknown = await gql(query, { id: randomUUID() });
+    const unknown = await gql(app, query, {
+      cookie,
+      variables: { id: randomUUID() },
+    });
     assert.equal(unknown.statusCode, 404, JSON.stringify(unknown.body));
-    const found = await gql(query, { id: incidentId });
+    const found = await gql(app, query, {
+      cookie,
+      variables: { id: incidentId },
+    });
     assert.equal(found.statusCode, 200, JSON.stringify(found.body));
     const timeline = (found.body.data as { incidentTimeline: unknown[] })
       .incidentTimeline;

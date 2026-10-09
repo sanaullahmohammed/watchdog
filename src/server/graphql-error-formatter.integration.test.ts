@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
+import { gqlResponse } from '@/shared/testing/graphql';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /**
@@ -23,16 +24,6 @@ const logLines: string[] = [];
 
 const PAGE_QUERY =
   'query ($slug: ID!) { publicStatusPage(orgSlug: $slug) { overallStatus } }';
-
-async function gql(query: string, variables?: object, headers = {}) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/graphql',
-    headers: { 'content-type': 'application/json', ...headers },
-    payload: { query, variables },
-  });
-  return { statusCode: response.statusCode, body: response.body };
-}
 
 /** Makes the page's first read fail the way a lost database would. */
 async function withBrokenPage<T>(run: () => Promise<T>): Promise<T> {
@@ -79,7 +70,9 @@ describe('GraphQL errors, masked the way REST masks them (retrospective R-6)', (
   });
 
   it('masks an unexpected failure and logs the original under the id it returns', async () => {
-    const result = await withBrokenPage(() => gql(PAGE_QUERY, { slug: tag }));
+    const result = await withBrokenPage(() =>
+      gqlResponse(app, PAGE_QUERY, { variables: { slug: tag } }),
+    );
 
     assert.equal(result.statusCode, 500, result.body);
     const body = JSON.parse(result.body);
@@ -126,7 +119,9 @@ describe('GraphQL errors, masked the way REST masks them (retrospective R-6)', (
   });
 
   it("passes the application's own exceptions through", async () => {
-    const result = await gql(PAGE_QUERY, { slug: `${tag}-nobody` });
+    const result = await gqlResponse(app, PAGE_QUERY, {
+      variables: { slug: `${tag}-nobody` },
+    });
 
     assert.equal(result.statusCode, 404, result.body);
     assert.deepEqual(
@@ -142,7 +137,7 @@ describe('GraphQL errors, masked the way REST masks them (retrospective R-6)', (
 
   it("passes a resolver's own GraphQL error through, extensions and all", async () => {
     // How every authenticated resolver refuses an anonymous caller.
-    const result = await gql('query { services { id } }');
+    const result = await gqlResponse(app, 'query { services { id } }');
 
     assert.deepEqual(
       JSON.parse(result.body).errors.map(
@@ -156,9 +151,10 @@ describe('GraphQL errors, masked the way REST masks them (retrospective R-6)', (
   });
 
   it("passes GraphQL's own errors about the query through", async () => {
-    const result = await gql(
+    const result = await gqlResponse(
+      app,
       'query ($slug: ID!) { publicStatusPage(orgSlug: $slug) { nope } }',
-      { slug: tag },
+      { variables: { slug: tag } },
     );
 
     assert.equal(result.statusCode, 400, result.body);
@@ -173,7 +169,7 @@ describe('GraphQL errors, masked the way REST masks them (retrospective R-6)', (
     // Postgres refuses. The driver's own PostgresError reaches the real
     // GraphQL error path, with no dependence on a product bug. It is
     // non-null, because mercurius answers 500 only when `data` is null.
-    const result = await gql('query { dbErrorProbe }');
+    const result = await gqlResponse(app, 'query { dbErrorProbe }');
 
     assert.equal(result.statusCode, 500, result.body);
     assert.ok(!result.body.includes('invalid input syntax'), result.body);

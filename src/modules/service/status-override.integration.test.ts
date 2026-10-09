@@ -9,6 +9,8 @@ import {
   serviceManualOverrideClearedEvent,
   serviceManualOverrideSetEvent,
 } from '@/shared/events/service.events';
+import { capturing } from '@/shared/testing/events';
+import { createService } from '@/shared/testing/fixtures';
 import { captureCookie } from '@/shared/testing/tenant';
 
 /** Story 2.6 — manual status override. */
@@ -21,17 +23,6 @@ let app: FastifyInstance;
 let cookie = '';
 let userId = '';
 let orgId = '';
-
-async function createService(slug: string) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/services',
-    headers: { cookie, origin: ORIGIN },
-    payload: { name: slug, slug },
-  });
-  assert.equal(response.statusCode, 201, response.body);
-  return JSON.parse(response.body).id as string;
-}
 
 function setOverride(id: string, status: string) {
   return app.inject({
@@ -57,13 +48,6 @@ async function overrideOf(id: string) {
     `;
     return rows[0]?.manual_status_override ?? null;
   });
-}
-
-async function capturing<T>(type: string, run: () => Promise<T>) {
-  const captured: unknown[] = [];
-  app.eventBus.on(type, (event) => captured.push(event));
-  const result = await run();
-  return { result, captured };
 }
 
 describe('Story 2.6: manual status override', () => {
@@ -97,9 +81,13 @@ describe('Story 2.6: manual status override', () => {
   });
 
   it('pins a status from the ladder and emits manual_override_set', async () => {
-    const id = await createService(`${tag}-pinned`);
+    const id = await createService(app, cookie, {
+      name: `${tag}-pinned`,
+      slug: `${tag}-pinned`,
+    });
 
     const { result, captured } = await capturing(
+      app,
       serviceManualOverrideSetEvent.type,
       () => setOverride(id, 'major_outage'),
     );
@@ -111,7 +99,10 @@ describe('Story 2.6: manual status override', () => {
   });
 
   it('rejects a status outside the ladder at the API', async () => {
-    const id = await createService(`${tag}-bogus`);
+    const id = await createService(app, cookie, {
+      name: `${tag}-bogus`,
+      slug: `${tag}-bogus`,
+    });
 
     const response = await setOverride(id, 'on_fire');
 
@@ -120,7 +111,10 @@ describe('Story 2.6: manual status override', () => {
   });
 
   it('rejects a status outside the ladder at the database too', async () => {
-    const id = await createService(`${tag}-constraint`);
+    const id = await createService(app, cookie, {
+      name: `${tag}-constraint`,
+      slug: `${tag}-constraint`,
+    });
 
     // The API schema is one guard; the CHECK constraint is the one that holds
     // when something writes without going through it.
@@ -135,10 +129,14 @@ describe('Story 2.6: manual status override', () => {
   });
 
   it('returns the service to computed status and emits manual_override_cleared', async () => {
-    const id = await createService(`${tag}-released`);
+    const id = await createService(app, cookie, {
+      name: `${tag}-released`,
+      slug: `${tag}-released`,
+    });
     await setOverride(id, 'degraded');
 
     const { result, captured } = await capturing(
+      app,
       serviceManualOverrideClearedEvent.type,
       () => clearOverride(id),
     );
@@ -150,9 +148,13 @@ describe('Story 2.6: manual status override', () => {
   });
 
   it('is a no-op when clearing a service that carries no override', async () => {
-    const id = await createService(`${tag}-untouched`);
+    const id = await createService(app, cookie, {
+      name: `${tag}-untouched`,
+      slug: `${tag}-untouched`,
+    });
 
     const { result, captured } = await capturing(
+      app,
       serviceManualOverrideClearedEvent.type,
       () => clearOverride(id),
     );
@@ -166,10 +168,14 @@ describe('Story 2.6: manual status override', () => {
   });
 
   it('is a no-op when setting the status the override already holds', async () => {
-    const id = await createService(`${tag}-repeat`);
+    const id = await createService(app, cookie, {
+      name: `${tag}-repeat`,
+      slug: `${tag}-repeat`,
+    });
     await setOverride(id, 'maintenance');
 
     const { result, captured } = await capturing(
+      app,
       serviceManualOverrideSetEvent.type,
       () => setOverride(id, 'maintenance'),
     );
@@ -179,7 +185,10 @@ describe('Story 2.6: manual status override', () => {
   });
 
   it('accepts an override on an archived service without resurfacing it', async () => {
-    const id = await createService(`${tag}-retired`);
+    const id = await createService(app, cookie, {
+      name: `${tag}-retired`,
+      slug: `${tag}-retired`,
+    });
     await app.inject({
       method: 'POST',
       url: `/api/v1/services/${id}/archive`,

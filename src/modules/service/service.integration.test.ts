@@ -11,6 +11,7 @@ import {
   serviceCreatedEvent,
   serviceUpdatedEvent,
 } from '@/shared/events/service.events';
+import { capturing } from '@/shared/testing/events';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /**
@@ -32,21 +33,13 @@ let userBId = '';
 let orgAId = '';
 let orgBId = '';
 
-function createService(cookie: string, payload: Record<string, unknown>) {
+function postService(cookie: string, payload: Record<string, unknown>) {
   return app.inject({
     method: 'POST',
     url: '/api/v1/services',
     headers: { cookie, origin: ORIGIN },
     payload,
   });
-}
-
-/** Captures events of one type emitted while `run` executes. */
-async function capturing<T>(type: string, run: () => Promise<T>) {
-  const captured: unknown[] = [];
-  app.eventBus.on(type, (event) => captured.push(event));
-  const result = await run();
-  return { result, captured };
 }
 
 describe('Story 2.2: create and update a service', () => {
@@ -106,14 +99,17 @@ describe('Story 2.2: create and update a service', () => {
   });
 
   it('persists a service scoped to the organization and emits service.created', async () => {
-    const { result, captured } = await capturing(serviceCreatedEvent.type, () =>
-      createService(cookieA, {
-        name: 'Checkout API',
-        slug: `${tag}-checkout`,
-        description: 'Takes the money',
-        isPublic: true,
-        displayOrder: 3,
-      }),
+    const { result, captured } = await capturing(
+      app,
+      serviceCreatedEvent.type,
+      () =>
+        postService(cookieA, {
+          name: 'Checkout API',
+          slug: `${tag}-checkout`,
+          description: 'Takes the money',
+          isPublic: true,
+          displayOrder: 3,
+        }),
     );
 
     assert.equal(result.statusCode, 201, result.body);
@@ -138,19 +134,22 @@ describe('Story 2.2: create and update a service', () => {
   });
 
   it('updates a service and emits service.updated', async () => {
-    const created = await createService(cookieA, {
+    const created = await postService(cookieA, {
       name: 'Search',
       slug: `${tag}-search`,
     });
     const { id } = JSON.parse(created.body);
 
-    const { result, captured } = await capturing(serviceUpdatedEvent.type, () =>
-      app.inject({
-        method: 'PATCH',
-        url: `/api/v1/services/${id}`,
-        headers: { cookie: cookieA, origin: ORIGIN },
-        payload: { name: 'Search API', isPublic: false, displayOrder: 9 },
-      }),
+    const { result, captured } = await capturing(
+      app,
+      serviceUpdatedEvent.type,
+      () =>
+        app.inject({
+          method: 'PATCH',
+          url: `/api/v1/services/${id}`,
+          headers: { cookie: cookieA, origin: ORIGIN },
+          payload: { name: 'Search API', isPublic: false, displayOrder: 9 },
+        }),
     );
 
     assert.equal(result.statusCode, 200, result.body);
@@ -170,7 +169,7 @@ describe('Story 2.2: create and update a service', () => {
   });
 
   it('does not let another organization update a service', async () => {
-    const created = await createService(cookieA, {
+    const created = await postService(cookieA, {
       name: 'Billing',
       slug: `${tag}-billing`,
     });
@@ -202,13 +201,13 @@ describe('Story 2.2: create and update a service', () => {
   it('rejects a duplicate slug, while leaving it free for other organizations', async () => {
     const slug = `${tag}-shared-slug`;
 
-    const first = await createService(cookieA, { name: 'First', slug });
+    const first = await postService(cookieA, { name: 'First', slug });
     assert.equal(first.statusCode, 201, first.body);
 
-    const duplicate = await createService(cookieA, { name: 'Second', slug });
+    const duplicate = await postService(cookieA, { name: 'Second', slug });
     assert.equal(duplicate.statusCode, 409, duplicate.body);
 
-    const otherOrg = await createService(cookieB, { name: 'Theirs', slug });
+    const otherOrg = await postService(cookieB, { name: 'Theirs', slug });
     assert.equal(
       otherOrg.statusCode,
       201,
@@ -219,7 +218,7 @@ describe('Story 2.2: create and update a service', () => {
   it('keeps an archived service holding its slug', async () => {
     const slug = `${tag}-retired`;
 
-    const created = await createService(cookieA, { name: 'Retired', slug });
+    const created = await postService(cookieA, { name: 'Retired', slug });
     assert.equal(created.statusCode, 201, created.body);
     const { id } = JSON.parse(created.body);
 
@@ -229,7 +228,7 @@ describe('Story 2.2: create and update a service', () => {
       await tx`update services set archived_at = now() where id = ${id}`;
     });
 
-    const reuse = await createService(cookieA, { name: 'Replacement', slug });
+    const reuse = await postService(cookieA, { name: 'Replacement', slug });
 
     assert.equal(
       reuse.statusCode,

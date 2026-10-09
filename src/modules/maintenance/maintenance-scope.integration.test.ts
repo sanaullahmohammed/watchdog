@@ -6,6 +6,7 @@ import type { MaintenanceStatus } from '@/modules/maintenance/domain/maintenance
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { createService } from '@/shared/testing/fixtures';
 import { captureCookie } from '@/shared/testing/tenant';
 
 /**
@@ -93,11 +94,10 @@ describe('Maintenance edit and delete scope (Epic 2 retrospective, R-8)', () => 
       payload: { name: tag, slug: tag },
     });
     orgId = JSON.parse(org.body).id;
-    const service = await api('POST', '/services', {
+    serviceId = await createService(app, cookie, {
       name: `${tag}-svc`,
       slug: `${tag}-svc`,
     });
-    serviceId = JSON.parse(service.body).id;
   });
 
   after(async () => {

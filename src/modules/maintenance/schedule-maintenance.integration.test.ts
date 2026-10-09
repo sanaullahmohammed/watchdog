@@ -9,6 +9,8 @@ import {
   maintenanceCreatedEvent,
   maintenanceUpdatedEvent,
 } from '@/shared/events/maintenance.events';
+import { capturing } from '@/shared/testing/events';
+import { createService } from '@/shared/testing/fixtures';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /** Story 2.12 — schedule a maintenance window. */
@@ -27,16 +29,6 @@ let orgBId = '';
 let serviceAId = '';
 let serviceBId = '';
 
-async function createService(cookie: string, slug: string) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/services',
-    headers: { cookie, origin: ORIGIN },
-    payload: { name: slug, slug },
-  });
-  return JSON.parse(response.body).id as string;
-}
-
 function schedule(cookie: string, payload: Record<string, unknown>) {
   return app.inject({
     method: 'POST',
@@ -48,13 +40,6 @@ function schedule(cookie: string, payload: Record<string, unknown>) {
 
 const startAt = new Date(Date.now() + hour).toISOString();
 const endAt = new Date(Date.now() + 2 * hour).toISOString();
-
-async function capturing<T>(type: string, run: () => Promise<T>) {
-  const captured: unknown[] = [];
-  app.eventBus.on(type, (event) => captured.push(event));
-  const result = await run();
-  return { result, captured };
-}
 
 describe('Story 2.12: schedule a maintenance window', () => {
   before(async () => {
@@ -70,8 +55,14 @@ describe('Story 2.12: schedule a maintenance window', () => {
       userId: userBId,
       orgId: orgBId,
     } = await signUpWithOrg(app, `${tag}-b`));
-    serviceAId = await createService(cookieA, `${tag}-svc-a`);
-    serviceBId = await createService(cookieB, `${tag}-svc-b`);
+    serviceAId = await createService(app, cookieA, {
+      name: `${tag}-svc-a`,
+      slug: `${tag}-svc-a`,
+    });
+    serviceBId = await createService(app, cookieB, {
+      name: `${tag}-svc-b`,
+      slug: `${tag}-svc-b`,
+    });
   });
 
   after(async () => {
@@ -83,6 +74,7 @@ describe('Story 2.12: schedule a maintenance window', () => {
 
   it('persists a window as scheduled and emits maintenance.created', async () => {
     const { result, captured } = await capturing(
+      app,
       maintenanceCreatedEvent.type,
       () =>
         schedule(cookieA, {
@@ -173,6 +165,7 @@ describe('Story 2.12: schedule a maintenance window', () => {
     const newEnd = new Date(Date.now() + 3 * hour).toISOString();
 
     const { result, captured } = await capturing(
+      app,
       maintenanceUpdatedEvent.type,
       () =>
         app.inject({
@@ -207,6 +200,7 @@ describe('Story 2.12: schedule a maintenance window', () => {
     // recomputation and, from Epic 4, wake every subscriber for nothing
     // (Epic 2's D-3, decided 2026-09-23).
     const { result, captured } = await capturing(
+      app,
       maintenanceUpdatedEvent.type,
       () =>
         app.inject({
