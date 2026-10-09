@@ -115,6 +115,7 @@ Lifecycle aggregate for service-impacting incidents.
 | `resolved_at` | `timestamptz null` | Set when resolved |
 | `created_by_user_id` | `text null` | Ref -> Better Auth user; null for system-created draft |
 | `origin_monitor_id` | `uuid null` | FK -> `monitors.id`; set for monitor-born draft incidents |
+| `origin_failure_episode` | `integer null` | The originating monitor's `failure_episode` when the draft was opened; set with `origin_monitor_id`, null otherwise |
 | `source` | `text` | CHECK: `manual`, `monitoring`, `ai_assisted` |
 | `created_at` | `timestamptz` | Required |
 | `updated_at` | `timestamptz` | Required |
@@ -138,6 +139,19 @@ where status = 'draft';
 - The partial unique index is the authoritative guard against duplicate open draft incidents for the same monitor.
 - Command handlers may keep an app-level fast path to avoid work before insert, but correctness comes from the index and unique-violation handling.
 - If a confirmed monitoring incident remains unresolved, the application may additionally suppress creating another draft for the same monitor; that is a product rule layered above the draft index.
+
+One proposal per failure episode. Decided 2026-10-09 (owner):
+
+```sql
+create unique index incidents_monitor_episode_uk
+on incidents (org_id, origin_monitor_id, origin_failure_episode)
+where origin_failure_episode is not null;
+```
+
+- A monitor's failure episode runs from the moment its derived state enters `failing` until it leaves it. Monitoring numbers episodes in `monitors.failure_episode` (Monitor).
+- At most one incident is ever opened per monitor per episode, whatever then happens to it. Dismissing the draft acknowledges the current episode: monitoring continues, the monitor's state still reaches service status, and no worker pass reopens a draft for that episode. Confirming and resolving it while the monitor still fails is a human decision the same way.
+- The next episode, after the monitor has left `failing` and entered it again, is eligible for its own draft.
+- Episodes are compared by number, never by timestamp, so a clock that steps back cannot reopen an acknowledged episode.
 
 Related join table:
 
@@ -261,6 +275,7 @@ Synthetic check configuration.
 | `failure_threshold` | `integer` | Consecutive failures before draft incident |
 | `config` | `jsonb` | Type-specific config |
 | `consecutive_failures` | `integer` | Cached counter maintained by worker |
+| `failure_episode` | `integer` | Not null, default `0`. Incremented each time the monitor's derived state enters `failing`, by a check or by an edit; never reset, so re-enabling a monitor does not reuse an episode. Decided 2026-10-09 (owner); see Incident, one proposal per failure episode |
 | `last_checked_at` | `timestamptz null` | Worker-maintained |
 | `created_at` | `timestamptz` | Required |
 | `updated_at` | `timestamptz` | Required |
@@ -494,6 +509,7 @@ erDiagram
     timestamptz resolved_at
     text created_by_user_id FK
     uuid origin_monitor_id FK
+    integer origin_failure_episode
     text source
     timestamptz created_at
     timestamptz updated_at
@@ -552,6 +568,7 @@ erDiagram
     integer failure_threshold
     jsonb config
     integer consecutive_failures
+    integer failure_episode
     timestamptz last_checked_at
     timestamptz created_at
     timestamptz updated_at
@@ -1238,11 +1255,11 @@ Monitor execution flow:
 
 1. The worker selects due enabled monitors by joining `monitors` to active services and filtering `services.archived_at IS NULL` (ARCHITECTURE section 6.0.1).
 2. It executes the synthetic check, subject to ARCHITECTURE section 6.5.
-3. In one tenant transaction it appends a `check_results` row, locks the monitor row (`for no key update`), and updates `consecutive_failures` (success resets it to `0`, failure adds `1`) and `last_checked_at`.
-4. After commit it emits `monitor.check_succeeded` or `monitor.check_failed`. If the monitor's derived state moved, it also emits `monitor.state_changed`. If the state became `failing` it emits `monitor.threshold_breached`, and if it went from `failing` to `healthy`, `monitor.recovered`.
-5. The `incident` module handles `monitor.threshold_breached` through `src/shared/events/` and creates the draft: `source: monitoring`, `origin_monitor_id` set, impact `critical`, the monitor's service affected at `critical`. It emits `incident.draft_created`. Monitoring never writes `incidents`.
-6. Events are one-shot, so the worker pass reconciles drafts as it reconciles status: a monitor at or above its threshold with no open draft, and no unresolved confirmed incident it originated, gets one through the same incident command. The partial unique index makes both paths idempotent, and a unique violation means "already exists".
-7. A human confirms, edits, or dismisses the draft.
+3. In one tenant transaction it appends a `check_results` row, locks the monitor row (`for no key update`), and updates `consecutive_failures` (success resets it to `0`, failure adds `1`) and `last_checked_at`. If the derived state enters `failing`, it increments `failure_episode` in the same transaction.
+4. After commit it emits `monitor.check_succeeded` or `monitor.check_failed`. If the monitor's derived state moved, it also emits `monitor.state_changed`. If the state became `failing` it emits `monitor.threshold_breached`, carrying the new `failure_episode`, and if it went from `failing` to `healthy`, `monitor.recovered`.
+5. The `incident` module handles `monitor.threshold_breached` through `src/shared/events/` and creates the draft: `source: monitoring`, `origin_monitor_id` and `origin_failure_episode` set, impact `critical`, the monitor's service affected at `critical`. It emits `incident.draft_created`. Monitoring never writes `incidents`.
+6. Events are one-shot, so the worker pass reconciles drafts as it reconciles status: a monitor at or above its threshold, with no open draft, no unresolved confirmed incident it originated, and no incident at all for its current `failure_episode`, gets one through the same incident command. The partial unique indexes make both paths idempotent, and a unique violation means "already exists". A dismissed draft therefore stays dismissed for the rest of its episode.
+7. A human confirms, edits, or dismisses the draft. Dismissing acknowledges the current failure episode (Incident, one proposal per failure episode).
 
 Sketch:
 
@@ -1254,12 +1271,14 @@ async function recordCheckResult(orgId: string, result: CheckResult): Promise<vo
     const monitor = await monitors.getForUpdate(tx, result.monitorId);
     const consecutiveFailures =
       result.status === 'success' ? 0 : monitor.consecutiveFailures + 1;
-    await monitors.recordCheck(tx, monitor.id, consecutiveFailures, result.checkedAt);
-    return {
-      monitor,
-      before: monitorStateOf(monitor),
-      after: monitorStateOf({ ...monitor, consecutiveFailures }),
-    };
+    const before = monitorStateOf(monitor);
+    const after = monitorStateOf({ ...monitor, consecutiveFailures });
+    const failureEpisode =
+      after === 'failing' && before !== 'failing'
+        ? monitor.failureEpisode + 1
+        : monitor.failureEpisode;
+    await monitors.recordCheck(tx, monitor.id, consecutiveFailures, failureEpisode, result.checkedAt);
+    return { monitor: { ...monitor, failureEpisode }, before, after };
   });
 
   // after commit
@@ -1273,8 +1292,10 @@ async function recordCheckResult(orgId: string, result: CheckResult): Promise<vo
 async function createDraftFromMonitor(event: ThresholdBreached): Promise<void> {
   const created = await withTenantTransaction(event.orgId, tx =>
     incidents.insertDraftIfAbsent(tx, {
-      // insert ... on conflict (org_id, origin_monitor_id) where status = 'draft' do nothing
+      // insert ... on conflict do nothing: incidents_monitor_draft_uk and
+      // incidents_monitor_episode_uk both make a repeat "already exists"
       originMonitorId: event.monitorId,
+      originFailureEpisode: event.failureEpisode,
       serviceId: event.serviceId,
       title: `Monitor failure: ${event.monitorName}`,
       impact: 'critical',
@@ -1285,7 +1306,7 @@ async function createDraftFromMonitor(event: ThresholdBreached): Promise<void> {
 }
 ```
 
-The partial unique index on `(org_id, origin_monitor_id) where status = 'draft'` is the authoritative duplicate-draft guard; an app-level look-up first is an optional fast path.
+The partial unique indexes on `(org_id, origin_monitor_id) where status = 'draft'` and on `(org_id, origin_monitor_id, origin_failure_episode)` are the authoritative guards, against a duplicate open draft and against reopening an acknowledged episode; an app-level look-up first is an optional fast path.
 
 ---
 
