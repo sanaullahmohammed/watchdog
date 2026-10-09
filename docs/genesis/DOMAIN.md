@@ -1042,7 +1042,7 @@ The second list is why a listed `critical` incident can never sit under an `oper
 
 **Uptime is shaped now and filled in Epic 5.** `uptime.windowDays` is 90. `uptime.services` is empty until rollups exist, which is how an integrator tells "no data yet" from "100% uptime". Once they exist, each service carries one entry per day in the window, oldest first, so a renderer draws its bars without date arithmetic. A day the rollups have no row for carries `uptimeRatio: null` and `worstStatus: null`: no checks ran that day, because the monitor did not exist yet or the worker was down, and that is a gap rather than an outage. `worstStatus` is the rollup's `worst_status`, the three-level monitor scale (`operational`, `degraded`, `major_outage`) computed from `check_results` alone, and it is what colours a day's bar. The payload carried no such field until the Epic 3 retrospective added it (R-17), while the contract still had no integrator to break.
 
-This rule is written for the page; it is not yet applied everywhere these items are referenced publicly. The public event gate sketched in `ARCHITECTURE.md` section 5.4 checks only the draft status, so an event about an incident this rule leaves off would pass it. Epic 4 builds that gate and must apply this rule there too.
+This rule is written for the page; it is not yet applied everywhere these items are referenced publicly. `ARCHITECTURE.md` section 5.4 leaves the unimplemented public event gate abstract because its earlier draft-only sketch did not enforce this rule. Epic 4 builds that gate and must apply the full rule there too, including privacy-safe invalidation when public visibility changes.
 
 ---
 
@@ -1289,7 +1289,7 @@ Payloads are illustrative and versionable. Visibility is authoritative for publi
 | Event name | Emitted when | Bridge to LISTEN/NOTIFY | Visibility |
 |---|---|---:|---|
 | `incident.created` | Human-created incident is created directly | Yes | Public, draft-gated |
-| `incident.draft_created` | Monitoring creates a draft incident | Yes | Admin-only |
+| `incident.draft_created` | Incident module creates a monitor-triggered draft | Yes | Admin-only |
 | `incident.confirmed` | Draft incident is confirmed | Yes | Public |
 | `incident.updated` | Incident title, impact, affected services, or metadata changes | Yes | Public, draft-gated |
 | `incident.update_posted` | Append-only incident update is created | Yes | Public, draft-gated |
