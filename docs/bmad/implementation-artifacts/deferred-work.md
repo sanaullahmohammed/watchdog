@@ -56,10 +56,6 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: `affectedServices` has no `maxItems`, so a very long list is validated in full before refusal; the message is capped at ten fields but the work is not.
   evidence: Story 9.3 Review Triage Log #15; bounded by the body limit, pre-existing on both surfaces.
   target: Epic 8 (default).
-- source_spec: `spec-9-3-graphql-incident-validation.md`
-  summary: Timeline order (`created_at` from `clock_timestamp()`, then `id`) assumes the database clock never steps back. On the owner's Docker Desktop on WSL2 it steps back by up to 1.4 s several times a minute, so incident timeline tests fail intermittently (about 1 full run in 10) with a later entry sorted before the declaration. Decide whether to record it as an AGENTS.md pitfall, make the tests tolerate it, or order entries by something monotonic.
-  evidence: Story 9.3 verification. A tight `clock_timestamp()` loop in the postgres container saw 4 backward steps in 120 s, worst 1.411 s, and `journalctl` logs "Time jumped backwards" every ~27 s. Failures seen: `incident-concurrency` "makes a posted update wait…" and "never reopens a resolved incident…", `incident-lifecycle` "appends a timeline entry with each transition…". All three show a later status sorted before `investigating`; no timeline write or ordering code changed in this story. The owner decided on 2026-10-08 to record it as an AGENTS.md pitfall and rerun failing tests, not to fix the clock. The separate timeline sequence column (retro D-1) has its own Epic 5 trigger.
-  target: Closes with Epic 9 retro action item 7.
 
 ## From Story 9.4 (2026-10-07)
 
