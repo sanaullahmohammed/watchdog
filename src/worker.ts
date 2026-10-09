@@ -2,6 +2,10 @@ import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { env } from '@/config';
 import { transitionDueMaintenanceCommand } from '@/modules/maintenance/commands/transition-due-maintenance/transition-due-maintenance.handler';
 import {
+  type MaintainCheckResultPartitionsCommandResult,
+  maintainCheckResultPartitionsCommand,
+} from '@/modules/monitoring/commands/maintain-check-result-partitions/maintain-check-result-partitions.handler';
+import {
   type RecomputeServiceStatusCommandResult,
   recomputeServiceStatusCommand,
 } from '@/modules/service/commands/recompute-service-status/recompute-service-status.event-handler';
@@ -36,9 +40,10 @@ const MAINTENANCE_LOOP = 'maintenance';
  * A pass that did no work rejects, so the loop does not count it as completed
  * and the healthcheck can see a worker cut off from its database. No work means
  * discovery failed, or at least one organization was visited and every one
- * failed. A pass over no organizations, or where some succeed, resolves. The
- * rejection carries no cause: a nested database error would escape log
- * redaction.
+ * failed. A pass over no organizations, or where some succeed, resolves. A pass
+ * also rejects when check result partition maintenance failed, after the
+ * organization work has run. Every rejection carries no cause: a nested
+ * database error would escape log redaction.
  */
 export async function runWorkerPass(
   app: FastifyInstance,
@@ -46,7 +51,12 @@ export async function runWorkerPass(
   // Tests pass their own organizations. A pass reconciles every service of
   // every tenant it visits, so an unscoped one reaches into whatever another
   // test file is asserting at that moment. The worker never passes this.
-  options: { orgIds?: readonly string[] } = {},
+  options: {
+    orgIds?: readonly string[];
+    // Partition maintenance is global DDL. A scoped pass skips it unless a
+    // test asks, because the suites share one database. The worker passes neither.
+    maintainPartitions?: boolean;
+  } = {},
 ): Promise<void> {
   let orgIds: readonly string[];
   try {
@@ -102,8 +112,31 @@ export async function runWorkerPass(
     }
   }
 
+  // After the organization loop, so the rollup step (Story 5.11) can go before
+  // it: a day is rolled up before its raw rows are dropped. ARCHITECTURE.md 6.1.
+  let maintenanceFailed = false;
+  if (options.orgIds === undefined || options.maintainPartitions === true) {
+    try {
+      const result =
+        await app.commandBus.execute<MaintainCheckResultPartitionsCommandResult>(
+          maintainCheckResultPartitionsCommand({
+            retentionDays: env.monitor.checkResultsRetentionDays,
+          }),
+        );
+      if (result.created > 0 || result.dropped > 0) {
+        logger.info(result, 'check result partitions maintained');
+      }
+    } catch (error) {
+      maintenanceFailed = true;
+      logger.error({ err: error }, 'check result partition maintenance failed');
+    }
+  }
+
   if (orgIds.length > 0 && failed === orgIds.length) {
     throw new Error(`every organization failed (${orgIds.length})`);
+  }
+  if (maintenanceFailed) {
+    throw new Error('check result partition maintenance failed');
   }
 }
 

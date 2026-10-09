@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
+import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { TEST_ORIGIN } from '@/shared/testing/tenant';
 
@@ -124,4 +125,18 @@ export async function setMonitorCheckState(
     `;
     assert.equal(rows.length, 1, `monitor ${monitorId} not found`);
   });
+}
+
+/**
+ * Creates the `check_results` partitions from `from` (default: this month)
+ * through the current month + 2. Safe under concurrent files: the function
+ * takes an advisory lock and skips a partition that exists.
+ */
+export async function createCheckResultPartitions(from?: Date | string) {
+  const fromDate =
+    from instanceof Date ? from.toISOString().slice(0, 10) : (from ?? null);
+  const rows = await sql<{ created: number }[]>`
+    select public.create_check_result_partitions(${fromDate}::date) as created
+  `;
+  return rows[0].created;
 }

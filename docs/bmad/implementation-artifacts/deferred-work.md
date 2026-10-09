@@ -210,3 +210,10 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: Story 5.2's two new reads, `monitors(serviceId)` and `GET /api/v1/services/:serviceId/monitors`, join the 9.1 `urn:uuid:` entry: `urn:uuid:<uuid>` passes `assertUuid` and the params schema, and Postgres refusing it answers a masked 500 rather than a 400.
   evidence: Review Triage Log E1/E5/B2; the slice checks `serviceId` with the same `format: 'uuid'` the 9.1 entry describes (`typebox-guard.ts:78`, ajv-formats). Settle it with that entry.
   target: Epic 8 (default).
+
+## From Story 5.3 (2026-10-09)
+
+- source_spec: `spec-5-3-keep-check-results-in-monthly-partitions.md`
+  summary: `docker compose up -d` also starts the `worker` service against the same database the integration suites use, and its unscoped passes interfere with them, now including partition drops with 30-day retention.
+  evidence: Review Triage Log E9. docker-compose.yml defines `worker` with no profile; AGENTS.md says `test:integration` needs `docker compose up -d`. Unverified as a failure: this session ran only `postgres`. Settle by running the suites with the full compose stack up.
+  target: Test infrastructure (owner).
