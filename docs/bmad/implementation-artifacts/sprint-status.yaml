@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-08-2026 16:18
+last_updated: 10-09-2026 04:56
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -84,7 +84,7 @@ development_status:
   epic-8: backlog
   epic-8-retrospective: optional
 
-  epic-9: in-progress
+  epic-9: done
   9-1-graphql-refuses-what-rest-refuses-services-and-groups: done
   9-2-the-anonymous-graphql-limit-holds-whatever-cookie-arrives: done
   9-3-graphql-refuses-what-rest-refuses-incidents: done
@@ -127,7 +127,7 @@ action_items:
     action: "Item 20: move createService, createGroup, declare and capturing into
       src/shared/testing/ (partly in story 9.11)"
     owner: "dev loop"
-    status: in-progress
+    status: done
   - epic: 3
     action: "Item 21: container smoke test in CI against the built image (Epic 8)"
     owner: "dev loop"
@@ -162,21 +162,21 @@ action_items:
       or every org fails), tested against the real runWorkerPass; worker shutdown
       always ends the pool (before acceptance)"
     owner: "dev loop"
-    status: open
+    status: done
     ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
   - id: "epic-9-retro-item-3-second-app-instance-works-or-fails-boot"
     epic: 9
     action: "Item 3: a second app built while the first is open works or fails at
       boot, never a silent 500; settle deferred #25 with it (before acceptance)"
     owner: "dev loop"
-    status: open
+    status: done
     ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
   - id: "epic-9-retro-item-4-shared-test-helpers"
     epic: 9
     action: "Item 4: finish Epic 3 item 20, move every local createService, createGroup,
       declare, capturing and gql copy onto src/shared/testing/ (before acceptance)"
     owner: "dev loop"
-    status: open
+    status: done
     ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
   - id: "epic-9-retro-item-5-shared-helper-story-constraint"
     epic: 9
