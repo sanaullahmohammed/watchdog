@@ -294,7 +294,13 @@ Tenant scoping: carries `org_id`.
 **SSL-expiry checks measure availability.** Decided 2026-10-09 (owner). An `ssl_expiry` check fails only when no certificate can be retrieved or the certificate is invalid: it fails trust validation, its hostname does not match, it has expired, or it is not yet valid. A certificate approaching expiry is valid, and the check succeeds, so an expiring certificate never lowers uptime, moves status or opens a draft.
 
 - Each result's `metadata` carries `certificateFingerprint`, the SHA-256 fingerprint of the leaf certificate, `certificateExpiresAt`, its not-after timestamp, and `daysRemaining`, the whole days from `checked_at` to it, rounded down. All three are null when no certificate was retrieved, never zero.
-- The monitor's `config.warnDays` sets the warning window. A check is inside it when `certificateExpiresAt - checked_at` is at most `warnDays` days, compared as timestamps, never as rounded days.
+- The monitor's `config.warnDays` sets the warning window. A check is inside it when `certificateExpiresAt - checked_at` is at most `warnDays` days, compared as timestamps, never as rounded days. An expired certificate is inside it, since its remaining time is negative.
+- The warning depends on the expiry condition alone, independent of whether the check succeeded. Decided 2026-10-09 (owner):
+  - An expired certificate: a failed check, plus one warning if that certificate has not already warned.
+  - An untrusted certificate inside the window: a failed check, plus one warning.
+  - An untrusted certificate outside the window: a failed check only. Untrusted does not mean expiring.
+  - No certificate retrieved: a failed check, and no warning.
+  - A certificate that warned and later expires: no second warning.
 - `monitor.ssl_expiry_warning` is emitted once per monitor per certificate, the certificate identified by its fingerprint, not its expiry, which two certificates can share. A first-ever check already inside the window warns. Later checks, worker restarts, a certificate that alternates with another, and retention dropping old results never repeat it. A renewed certificate is a new certificate, eligible for its own warning when it comes inside the window.
 - The deduplication marker is persisted, never held in worker memory: a row in `monitor_ssl_warnings` (below). The check's result and the marker are written in the same tenant transaction, the marker by `insert ... on conflict do nothing`, and the event is emitted after commit only when the insert created a row. As with every event (ARCHITECTURE section 5.1), a crash between commit and emit loses that warning rather than repeating it.
 
@@ -385,6 +391,26 @@ Implementation:
 - Rollups use a deliberate 3-level monitor-observed scale: `operational`, `degraded`, `major_outage`.
 - `worst_status` is computed solely from `check_results`. It is intentionally distinct from incident-declared effective service status and must not fold incidents or maintenance into the rollup.
 - A day with no checks produces no row at all: the upsert aggregates `check_results` grouped by day. The public page says so explicitly rather than omitting the day; see Public status page.
+
+**Which days a refresh covers.** Decided 2026-10-09 (owner).
+
+- Days are UTC days: results are grouped by `checked_at` truncated to its UTC date, never the session's time zone.
+- Each worker pass refreshes today and yesterday for every organization. Yesterday is refreshed again because a check records its `checked_at` when the attempt starts and commits up to its timeout later, so a result for yesterday can land after midnight.
+- Missed days are caught up while their raw results are still retained. Each organization's `uptime_rollup_progress.refreshed_through` is the latest closed UTC day refreshed after it ended. A pass refreshes every closed day after it, oldest first, up to yesterday, then advances it. With no progress row, catch-up starts at the organization's oldest retained result.
+- Catch-up runs before partition maintenance in the same pass, so a day is rolled up before retention can drop its raw results. A day that was still not rolled up when retention dropped it is lost; the worker logs the range rather than writing a row it cannot compute.
+- A refresh that leaves a day's aggregates unchanged leaves its row unchanged.
+
+### UptimeRollupProgress
+
+Decided 2026-10-09 (owner). How far each organization's rollups are complete; the watermark for catch-up.
+
+| Field | Type | Constraints / Notes |
+|---|---:|---|
+| `org_id` | `text` | PK; FK -> Better Auth `organization.id` |
+| `refreshed_through` | `date` | Latest closed UTC day refreshed after it ended |
+| `updated_at` | `timestamptz` | Required |
+
+Tenant scoping: carries `org_id`; RLS enabled, forced, with the standard policy.
 
 ---
 
@@ -676,6 +702,7 @@ Tenant-scoped WatchDog tables:
 - `monitors`
 - `check_results`
 - `uptime_rollups`
+- `uptime_rollup_progress`
 - `monitor_ssl_warnings`
 - `subscribers`
 - `notification_deliveries`
