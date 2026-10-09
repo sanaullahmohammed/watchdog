@@ -219,7 +219,8 @@ Binding on step 3. Each was settled deliberately; none is a default.
 5. **An untraceable story is a signal.** A story mapping to no verification line is either out of scope or evidence ROADMAP missed something. Surface it rather than writing it.
 6. **RLS in the acceptance criteria.** Any story creating a table carrying `org_id` states RLS enabled, `FORCE`d, and a policy as acceptance criteria. The structural test reports a hole after it is dug; the criterion prevents digging it.
 7. **Name the files and the layer.** Every story names the paths it touches and whether it is proven by unit, integration or E2E tests.
-8. **Per-story definition of done.** `pnpm run check`, `pnpm run test`, `pnpm run test:integration` and `pnpm run auth:schema:check` all pass; any emitted event exists in the DOMAIN catalog; REST and GraphQL parity for the slice.
+8. **Per-story definition of done.** `pnpm run check`, `pnpm run test`, `pnpm run test:integration`, `pnpm run test:e2e` and `pnpm run auth:schema:check` all pass, and `pnpm run test` passes again with `.env` moved aside, because CI's unit job has none; any emitted event exists in the DOMAIN catalog; REST and GraphQL parity for the slice. *Amended after the Epic 9 retrospective (P1):* the no-`.env` run and `test:e2e` match what CI runs.
+9. **Shared test helpers.** A story's tests build fixtures, capture events and send GraphQL through `src/shared/testing/` (`fixtures.ts`, `events.ts`, `graphql.ts`, `tenant.ts`). A helper a story needs that is not there yet goes there, not into the test file. Epics 3 and 9 each ended with the same helpers copied across a dozen suites (Epic 9 retrospective, AV-2).
 
 ## Epic 1: Tenanted access
 
@@ -1334,7 +1335,9 @@ So that `api`, `worker` and the seed exit cleanly instead of being forced to.
 
 As an operator,
 I want the worker's healthcheck to fail when passes stop completing,
-So that a stuck worker is restarted rather than reported healthy.
+So that a stuck worker is reported unhealthy rather than healthy.
+
+*Corrected after the Epic 9 retrospective (AV-5a).* The story said a stuck worker "is restarted". Plain Docker Compose marks an unhealthy container and does not restart it, and ROADMAP has no deployment target, so acting on the status belongs to whatever orchestrator a deployment uses.
 
 **Actor:** human
 **Satisfies:** ARCHITECTURE section 8 — "the check fails once completion is overdue"; NFR29 verification — "Each healthcheck fails when its process stops doing its work". Audit F-08.
