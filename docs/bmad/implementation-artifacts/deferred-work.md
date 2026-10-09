@@ -162,10 +162,6 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: The REST-versus-GraphQL row comparison covers service create only; service update and service-group create and update are not compared, though REST's null coercion can store different values there.
   evidence: Review Triage Log #8; `service-input-validation.integration.test.ts` "stores the same columns over REST and GraphQL" creates only. Settle it with the 9.1 REST null coercion entry.
   target: Epic 8 (default).
-- source_spec: `spec-epic-9-retro-1c-incident-timeline-read-ids.md`
-  summary: Nothing fails when a new id-taking GraphQL `Query` field ships without a malformed-id case, so its handler can skip `assertUuid` and answer a masked 500 again. The retro's DR-1 Prevention proposes 9.11's registry pattern applied to `Query` fields.
-  evidence: Review Triage Log #2; every id-taking read has a hand-written malformed-id test today, but no test enumerates `Query` fields the way 9.11's registry enumerates mutations.
-  target: Before the next id-taking GraphQL `Query` field is added.
 
 ## From Epic 9 retro item 2 (2026-10-08)
 
@@ -207,3 +203,10 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: A U+0000 character in a string field (a monitor's name or keyword, a service's name) reaches Postgres, which rejects it in `text` and `jsonb`; the unmapped error is masked as a 500 instead of a 400. Unverified for monitors; the class is pre-existing for every slice.
   evidence: Review Triage Log, loop-1 E11 and pass-2 E5. Settle by sending `"name": "a\u0000b"` to `POST /api/v1/monitors` and reading the status.
   target: Same cross-cutting story as the REST options entry.
+
+## From Story 5.2 (2026-10-09)
+
+- source_spec: `spec-5-2-list-a-services-monitors.md`
+  summary: Story 5.2's two new reads, `monitors(serviceId)` and `GET /api/v1/services/:serviceId/monitors`, join the 9.1 `urn:uuid:` entry: `urn:uuid:<uuid>` passes `assertUuid` and the params schema, and Postgres refusing it answers a masked 500 rather than a 400.
+  evidence: Review Triage Log E1/E5/B2; the slice checks `serviceId` with the same `format: 'uuid'` the 9.1 entry describes (`typebox-guard.ts:78`, ajv-formats). Settle it with that entry.
+  target: Epic 8 (default).
