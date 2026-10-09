@@ -267,16 +267,16 @@ Synthetic check configuration.
 | `org_id` | `text` | FK -> Better Auth `organization.id` |
 | `service_id` | `uuid` | FK -> `services.id` |
 | `type` | `text` | CHECK: `http`, `tcp`, `keyword`, `ssl_expiry` |
-| `name` | `text` | Required |
-| `target` | `text` | URL, host:port, hostname, etc. Validated at configuration against ARCHITECTURE section 6.5; the connect-time check there is the guard. |
-| `interval_seconds` | `integer` | Required |
-| `timeout_seconds` | `integer` | Required |
-| `enabled` | `boolean` | Required |
-| `failure_threshold` | `integer` | Consecutive failures before draft incident |
-| `config` | `jsonb` | Type-specific config |
-| `consecutive_failures` | `integer` | Cached counter maintained by worker |
+| `name` | `text` | Required, 1-120 characters |
+| `target` | `text` | 1-2048 characters. By type: `http` and `keyword`, an absolute `http:` or `https:` URL with no userinfo; `tcp`, `host:port` with the port 1-65535; `ssl_expiry`, `host` or `host:port` (443 when the port is omitted, at check time). IPv6 hosts are bracketed everywhere. Validated at configuration against ARCHITECTURE section 6.5; the connect-time check there is the guard. |
+| `interval_seconds` | `integer` | Required, 30-86400, default 60 |
+| `timeout_seconds` | `integer` | Required, 1-60, default 10, and below `interval_seconds` |
+| `enabled` | `boolean` | Required, default true |
+| `failure_threshold` | `integer` | Consecutive failures before draft incident, 1-20, default 3 |
+| `config` | `jsonb` | Type-specific config, default `{}`. `keyword` needs `keyword` (1-256 characters, at least one non-space character); `ssl_expiry` needs `warnDays` (whole number, 1-365); a key belonging to another type is refused. An update replaces the stored object whole. |
+| `consecutive_failures` | `integer` | Cached counter maintained by worker; not null, default `0` |
 | `failure_episode` | `integer` | Not null, default `0`. Incremented each time the monitor's derived state enters `failing`, by a check or by an edit; never reset, so re-enabling a monitor does not reuse an episode. Decided 2026-10-09 (owner); see Incident, one proposal per failure episode |
-| `last_checked_at` | `timestamptz null` | Worker-maintained |
+| `last_checked_at` | `timestamptz null` | Worker-maintained; null until the first check, and a never-checked monitor contributes nothing to status |
 | `created_at` | `timestamptz` | Required |
 | `updated_at` | `timestamptz` | Required |
 
@@ -286,6 +286,8 @@ FKs:
 - `service_id` -> `services.id`
 
 Tenant scoping: carries `org_id`.
+
+**A monitor may be created on an archived service.** Story 5.8's due query skips it until the service is restored.
 
 **v1 has no monitor delete.** Decided 2026-10-09 (owner). An operator stops a monitor by disabling it (`enabled: false`), and a disabled monitor contributes nothing to its service's status (see How monitor state is derived). Existing incidents stay under human control. `DeleteMonitorCommand` and `monitor.deleted` are deferred past v1. Its results are not kept forever either way: retention drops expired `check_results` partitions.
 
@@ -1299,7 +1301,8 @@ async function recordCheckResult(orgId: string, result: CheckResult): Promise<vo
     const consecutiveFailures =
       result.status === 'success' ? 0 : monitor.consecutiveFailures + 1;
     const before = monitorStateOf(monitor);
-    const after = monitorStateOf({ ...monitor, consecutiveFailures });
+    // The check just ran, so the monitor is no longer never-checked.
+    const after = monitorStateOf({ ...monitor, consecutiveFailures, lastCheckedAt: result.checkedAt });
     const failureEpisode =
       after === 'failing' && before !== 'failing'
         ? monitor.failureEpisode + 1
@@ -1375,7 +1378,7 @@ Payloads are illustrative and versionable. Visibility is authoritative for publi
 
 `incident.created` is public only when the incident-status check finds `status != 'draft'`. That admits direct human-created incidents immediately and suppresses monitor-born drafts. The same gate covers `incident.updated` and `incident.update_posted`, which is what keeps an edit to a draft, or a note posted to one, from reaching a public subscriber: an action taken while an incident is a draft announces itself to admin surfaces only. Decided 2026-09-23 with the rule above, closing Epic 2's D-4.
 
-An `*.updated` event announces a change, not an attempt. `UpdateIncidentCommand` and `UpdateMaintenanceCommand` compare the row as it was against the row as it is, and the cover it had against the cover it has, and emit nothing when they match: a no-op edit would otherwise trigger a status recomputation and wake every public subscriber. Neither command serializes that read against a concurrent edit, so two edits arriving together may both announce; neither can stay silent about a change it made. Decided 2026-09-23, closing Epic 2's D-3.
+An `*.updated` event announces a change, not an attempt. `UpdateIncidentCommand` and `UpdateMaintenanceCommand` compare the row as it was against the row as it is, and the cover it had against the cover it has, and emit nothing when they match: a no-op edit would otherwise trigger a status recomputation and wake every public subscriber. Neither command serializes that read against a concurrent edit, so two edits arriving together may both announce; neither can stay silent about a change it made. `UpdateMonitorCommand` does the same comparison under the row lock (`for no key update`), so concurrent edits do not both announce. Decided 2026-09-23, closing Epic 2's D-3.
 
 ### Maintenance events
 

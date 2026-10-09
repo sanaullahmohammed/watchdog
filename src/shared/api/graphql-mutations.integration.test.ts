@@ -6,6 +6,7 @@ import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import {
+  createMonitor,
   createService,
   createServiceGroup,
   declareIncident,
@@ -297,6 +298,44 @@ const registry: Record<string, Entry> = {
     valid: async () => ({ id: await scheduleMaintenance(app, cookie) }),
     returns: 'true',
     ...BAD_ID,
+  },
+  createMonitor: {
+    query: `mutation ($input: CreateMonitorPayload!) { createMonitor(input: $input) }`,
+    valid: async () => ({
+      input: {
+        serviceId: await createService(app, cookie),
+        type: 'http',
+        name: `${tag}-m`,
+        target: 'https://203.0.113.10/health',
+      },
+    }),
+    returns: 'new-id',
+    table: 'monitors',
+    invalid: async () => ({
+      input: {
+        serviceId: await createService(app, cookie),
+        type: 'http',
+        name: `${tag}-m`,
+        target: 'https://203.0.113.10/health',
+        intervalSeconds: 29,
+      },
+    }),
+    field: 'intervalSeconds',
+    snapshot: count('monitors'),
+  },
+  updateMonitor: {
+    query: `mutation ($id: ID!, $input: UpdateMonitorPayload!) { updateMonitor(id: $id, input: $input) }`,
+    valid: async () => ({
+      id: await createMonitor(app, cookie, await createService(app, cookie)),
+      input: { name: 'Renamed' },
+    }),
+    returns: 'same-id',
+    invalid: async () => ({
+      id: await createMonitor(app, cookie, await createService(app, cookie)),
+      input: { failureThreshold: 0 },
+    }),
+    field: 'failureThreshold',
+    snapshot: rowOf('monitors'),
   },
 };
 
