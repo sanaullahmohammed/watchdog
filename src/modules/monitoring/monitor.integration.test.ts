@@ -129,6 +129,7 @@ describe('Story 5.1: create and update a monitor', () => {
         'monitor/check_failed',
         'monitor/threshold_breached',
         'monitor/recovered',
+        'monitor/ssl_expiry_warning',
       ].sort(),
     );
   });

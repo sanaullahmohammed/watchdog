@@ -213,3 +213,10 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: `docker compose up -d` also starts the `worker` service against the same database the integration suites use, and its unscoped passes interfere with them, now including partition drops with 30-day retention.
   evidence: Review Triage Log E9. docker-compose.yml defines `worker` with no profile; AGENTS.md says `test:integration` needs `docker compose up -d`. Unverified as a failure: this session ran only `postgres`. Settle by running the suites with the full compose stack up.
   target: Test infrastructure (owner).
+
+## From Story 5.6 (2026-10-16)
+
+- source_spec: `spec-5-6-record-a-check-result-and-count-consecutive-failures.md`
+  summary: Recording a check result can deadlock with an organization delete. The record takes the monitor's row lock, then the foreign key's `for key share` on `"organization"`; the delete takes the organization row, then cascades into `monitors`. Postgres aborts one after 1 s, so either the org delete fails once or one result for a dying organization is lost. The fix reverses 5.6's frozen lock-first order or locks a Better Auth row from monitoring. The 5.6 Code Map's "no deadlock path" is wrong for this case.
+  evidence: Review Triage Log B3; the migration's own note at `db/migrations/20261009130000_create_check_results.sql:84`. Deferred by the owner at the start of Story 5.7 (2026-10-16). Settle with a concurrency test racing an org delete against `recordCheckResultCommand`.
+  target: Epic 8 (default).
