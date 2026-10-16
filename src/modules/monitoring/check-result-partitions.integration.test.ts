@@ -9,9 +9,12 @@ import {
   type MaintainCheckResultPartitionsCommandResult,
   maintainCheckResultPartitionsCommand,
 } from '@/modules/monitoring/commands/maintain-check-result-partitions/maintain-check-result-partitions.handler';
+import { recordCheckResultCommand } from '@/modules/monitoring/commands/record-check-result/record-check-result.handler';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { monitorSslExpiryWarningEvent } from '@/shared/events/monitor.events';
+import { capturing } from '@/shared/testing/events';
 import {
   createCheckResultPartitions,
   createMonitor,
@@ -52,6 +55,7 @@ const nameOf = (date: Date) =>
 
 let app: FastifyInstance;
 let owner: postgres.Sql;
+let cookie = '';
 let orgId = '';
 let otherOrgId = '';
 let serviceId = '';
@@ -92,6 +96,7 @@ describe('Story 5.3: check_results partitions', () => {
     await app.ready();
     const org = await signUpWithOrg(app, tag);
     orgId = org.orgId;
+    cookie = org.cookie;
     otherOrgId = (await signUpWithOrg(app, `${tag}-b`)).orgId;
     serviceId = await createService(app, org.cookie);
     monitorId = await createMonitor(app, org.cookie, serviceId);
@@ -251,6 +256,39 @@ describe('Story 5.3: check_results partitions', () => {
   it('drops only expired partitions, one of which held a row', async () => {
     await createCheckResultPartitions(monthStart(-13));
     await insertRow(new Date(monthStart(-13).getTime() + 5 * DAY));
+    const sslMonitorId = await createMonitor(app, cookie, serviceId, {
+      type: 'ssl_expiry',
+      target: '203.0.113.10',
+      config: { warnDays: 14 },
+    });
+    const recordSsl = (checkedAt: Date, fingerprint = 'AA:PART') =>
+      app.commandBus.execute(
+        recordCheckResultCommand({
+          orgId,
+          monitorId: sslMonitorId,
+          outcome: {
+            status: 'success',
+            checkedAt,
+            latencyMs: 5,
+            errorCode: null,
+            errorMessage: null,
+            metadata: {
+              certificateFingerprint: fingerprint,
+              certificateExpiresAt: new Date(
+                checkedAt.getTime() + DAY,
+              ).toISOString(),
+              daysRemaining: 1,
+            },
+          },
+        }),
+      );
+    const early = await capturing(
+      app,
+      monitorSslExpiryWarningEvent.type as string,
+      () => recordSsl(new Date(monthStart(-13).getTime() + 5 * DAY)),
+    );
+    await app.eventBus.drain();
+    assert.equal(early.captured.length, 1);
     const cutoff = monthStart(-11).getTime() + 14 * DAY;
     const retentionDays = Math.ceil((dbNow.getTime() - cutoff) / DAY);
 
@@ -263,6 +301,50 @@ describe('Story 5.3: check_results partitions', () => {
     assert.equal(await partitionExists(-12), false);
     assert.equal(await partitionExists(-11), true);
     assert.equal(await partitionExists(0), true);
+
+    const gone = await withTenantTransaction(
+      orgId,
+      ({ sql: tx }) =>
+        tx<{ n: number }[]>`
+          select count(*)::int as n from check_results
+          where monitor_id = ${sslMonitorId}
+        `,
+    );
+    assert.equal(gone[0].n, 0);
+
+    const late = await capturing(
+      app,
+      monitorSslExpiryWarningEvent.type as string,
+      () => recordSsl(new Date()),
+    );
+    await app.eventBus.drain();
+    assert.equal(late.captured.length, 0);
+    const kept = await withTenantTransaction(
+      orgId,
+      ({ sql: tx }) =>
+        tx<{ n: number }[]>`
+          select count(*)::int as n from check_results
+          where monitor_id = ${sslMonitorId}
+        `,
+    );
+    assert.equal(kept[0].n, 1);
+    const control = await capturing(
+      app,
+      monitorSslExpiryWarningEvent.type as string,
+      () => recordSsl(new Date(), 'AA:OTHER'),
+    );
+    await app.eventBus.drain();
+    assert.equal(control.captured.length, 1);
+    const markerRows = await withTenantTransaction(
+      orgId,
+      ({ sql: tx }) =>
+        tx<{ n: number }[]>`
+          select count(*)::int as n from monitor_ssl_warnings
+          where monitor_id = ${sslMonitorId}
+            and certificate_fingerprint = 'AA:PART'
+        `,
+    );
+    assert.equal(markerRows[0].n, 1);
   });
 
   it('does not hold check_results while creation waits on another lock', async () => {

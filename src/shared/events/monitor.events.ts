@@ -64,3 +64,17 @@ export const monitorThresholdBreachedEvent = monitorEventCreator<
 export const monitorRecoveredEvent = monitorEventCreator<
   MonitorEventPayload & { failureEpisode: number }
 >('recovered');
+
+/**
+ * A certificate inside the monitor's `warnDays` window was seen for the first
+ * time. Emitted at most once per monitor per fingerprint, right after the
+ * check event; a crash between commit and emit loses it (DOMAIN).
+ * `certificateExpiresAt` is an ISO string. This story delivers it in-process
+ * only; DOMAIN's catalog bridges it to LISTEN/NOTIFY in Epic 4.
+ */
+export const monitorSslExpiryWarningEvent = monitorEventCreator<
+  MonitorEventPayload & {
+    certificateFingerprint: string;
+    certificateExpiresAt: string;
+  }
+>('ssl_expiry_warning');

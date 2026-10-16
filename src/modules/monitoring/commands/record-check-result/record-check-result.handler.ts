@@ -3,11 +3,13 @@ import {
   type CheckOutcome,
   truncateMessage,
 } from '@/modules/monitoring/checks/check-outcome';
+import { sslWarningOf } from '@/modules/monitoring/domain/ssl-warning';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import {
   monitorCheckFailedEvent,
   monitorCheckSucceededEvent,
   monitorRecoveredEvent,
+  monitorSslExpiryWarningEvent,
   monitorStateChangedEvent,
   monitorThresholdBreachedEvent,
 } from '@/shared/events/monitor.events';
@@ -34,6 +36,7 @@ export const recordCheckResultCommand =
 export default function makeRecordCheckResult({
   monitorRepository,
   checkResultRepository,
+  monitorSslWarningRepository,
   monitorDomain,
   commandBus,
   eventBus,
@@ -68,6 +71,18 @@ export default function makeRecordCheckResult({
           metadata: outcome.metadata,
         });
 
+        const candidate = sslWarningOf(current, outcome);
+        const warning =
+          candidate !== null &&
+          (await monitorSslWarningRepository.insertIfAbsent(tx, {
+            orgId,
+            monitorId,
+            fingerprint: candidate.fingerprint,
+            expiresAt: candidate.expiresAt,
+          }))
+            ? candidate
+            : null;
+
         const applied = monitorDomain.applyCheck(
           current,
           outcome.status,
@@ -80,10 +95,10 @@ export default function makeRecordCheckResult({
             lastCheckedAt: outcome.checkedAt,
           });
         }
-        return { resultId, current, ...applied };
+        return { resultId, current, warning, ...applied };
       });
 
-      const { current, monitor, before, after } = result;
+      const { current, monitor, before, after, warning } = result;
       const base = {
         orgId,
         monitorId,
@@ -100,6 +115,16 @@ export default function makeRecordCheckResult({
               errorCode: outcome.errorCode,
             }),
       );
+
+      if (warning) {
+        eventBus.emit(
+          monitorSslExpiryWarningEvent({
+            ...base,
+            certificateFingerprint: warning.fingerprint,
+            certificateExpiresAt: warning.expiresAt.toISOString(),
+          }),
+        );
+      }
 
       if (before !== after) {
         eventBus.emit(
