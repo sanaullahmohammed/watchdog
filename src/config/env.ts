@@ -55,6 +55,12 @@ const schema = Type.Object({
   // are loopback, private or otherwise blocked. Empty by default. ARCHITECTURE
   // 6.5.
   MONITOR_ALLOWED_CIDRS: Type.String({ default: '' }),
+  // How many monitor checks one process runs at once. ARCHITECTURE 6.0.1.
+  MONITOR_CHECK_CONCURRENCY: Type.Integer({
+    default: 10,
+    minimum: 1,
+    maximum: 1000,
+  }),
 });
 
 const env = envSchema<Static<typeof schema>>({
@@ -103,6 +109,7 @@ export default {
   },
   monitor: {
     allowedCidrs: monitorAllowedCidrs,
+    checkConcurrency: env.MONITOR_CHECK_CONCURRENCY,
     checkResultsRetentionDays: env.CHECK_RESULTS_RETENTION_DAYS,
   },
   worker: {

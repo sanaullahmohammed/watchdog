@@ -100,6 +100,32 @@ export function createMonitor(
   });
 }
 
+async function post(
+  app: FastifyInstance,
+  cookie: string,
+  serviceId: string,
+  action: 'archive' | 'restore',
+) {
+  const response = await app.inject({
+    method: 'POST',
+    url: `/api/v1/services/${serviceId}/${action}`,
+    headers: { cookie, origin: TEST_ORIGIN },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+}
+
+export const archiveService = (
+  app: FastifyInstance,
+  cookie: string,
+  serviceId: string,
+) => post(app, cookie, serviceId, 'archive');
+
+export const restoreService = (
+  app: FastifyInstance,
+  cookie: string,
+  serviceId: string,
+) => post(app, cookie, serviceId, 'restore');
+
 /**
  * Writes a monitor's check counters directly, for tests that need arbitrary
  * counters; a real check goes through `RecordCheckResultCommand`.
