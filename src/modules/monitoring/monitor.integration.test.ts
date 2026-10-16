@@ -121,7 +121,15 @@ describe('Story 5.1: create and update a monitor', () => {
     }
     assert.deepEqual(
       registered.sort(),
-      ['monitor/created', 'monitor/state_changed', 'monitor/updated'].sort(),
+      [
+        'monitor/created',
+        'monitor/state_changed',
+        'monitor/updated',
+        'monitor/check_succeeded',
+        'monitor/check_failed',
+        'monitor/threshold_breached',
+        'monitor/recovered',
+      ].sort(),
     );
   });
 

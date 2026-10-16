@@ -91,5 +91,27 @@ export default function monitorRepository({ monitorMapper }: Dependencies) {
         where id = ${monitor.id}
       `;
     },
+
+    /**
+     * Writes the three columns a check changes, on a row the caller has
+     * locked. `updated_at` marks configuration edits and is left alone.
+     */
+    async recordCheck(
+      tx: TenantTransaction,
+      id: string,
+      state: {
+        consecutiveFailures: number;
+        failureEpisode: number;
+        lastCheckedAt: Date;
+      },
+    ) {
+      await tx.sql`
+        update monitors set
+          consecutive_failures = ${state.consecutiveFailures},
+          failure_episode = ${state.failureEpisode},
+          last_checked_at = ${state.lastCheckedAt}
+        where id = ${id}
+      `;
+    },
   };
 }

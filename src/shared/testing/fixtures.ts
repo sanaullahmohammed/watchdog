@@ -101,9 +101,9 @@ export function createMonitor(
 }
 
 /**
- * Writes a monitor's check counters directly, standing in for a check until
- * story 5.6 records them. `lastCheckedAt` defaults to now, so the monitor
- * counts as checked.
+ * Writes a monitor's check counters directly, for tests that need arbitrary
+ * counters; a real check goes through `RecordCheckResultCommand`.
+ * `lastCheckedAt` defaults to now, so the monitor counts as checked.
  */
 export async function setMonitorCheckState(
   orgId: string,
