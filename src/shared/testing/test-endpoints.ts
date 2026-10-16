@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import {
   createServer,
@@ -6,8 +7,14 @@ import {
   type ServerResponse,
 } from 'node:http';
 import { createServer as createSecureServer } from 'node:https';
-import type { AddressInfo } from 'node:net';
+import {
+  type AddressInfo,
+  connect,
+  createServer as createTcpServer,
+  type Socket,
+} from 'node:net';
 import { join } from 'node:path';
+import { createServer as createTlsServer } from 'node:tls';
 
 /**
  * One local HTTP server on 127.0.0.1 for check suites, counting what reaches
@@ -147,4 +154,142 @@ export async function startTestEndpoints(): Promise<TestEndpoints> {
         server.closeAllConnections();
       }),
   };
+}
+
+export interface LocalServer {
+  readonly port: number;
+  /** Server-side SNI of each TLS connection (`false` when none was sent). */
+  readonly servernames: (string | false)[];
+  /** TCP connections accepted. */
+  connections(): number;
+  close(): Promise<void>;
+}
+
+/** A TLS server on 127.0.0.1 presenting the given certificate. */
+export async function startTlsServer(credentials: {
+  certPem: string;
+  keyPem: string;
+}): Promise<LocalServer> {
+  let connections = 0;
+  const servernames: (string | false)[] = [];
+  const sockets = new Set<Socket>();
+  // The client may destroy the socket before the server's handshake finishes,
+  // so the name is read from the ClientHello, which always arrives.
+  const server = createTlsServer(
+    {
+      cert: credentials.certPem,
+      key: credentials.keyPem,
+      SNICallback: (name, done) => {
+        servernames[servernames.length - 1] = name;
+        done(null, undefined);
+      },
+    },
+    (socket) => {
+      socket.on('error', () => {});
+      socket.end();
+    },
+  );
+  server.on('connection', (socket) => {
+    connections += 1;
+    servernames.push(false);
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    port: (server.address() as AddressInfo).port,
+    servernames,
+    connections: () => connections,
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+/** A TCP server that accepts connections and never sends a byte. */
+export async function startSilentTcpServer(): Promise<LocalServer> {
+  let connections = 0;
+  const sockets = new Set<Socket>();
+  const server = createTcpServer((socket) => {
+    sockets.add(socket);
+    socket.on('error', () => {});
+    socket.on('close', () => sockets.delete(socket));
+  });
+  server.on('connection', () => {
+    connections += 1;
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    port: (server.address() as AddressInfo).port,
+    servernames: [],
+    connections: () => connections,
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+const UNANSWERED_CHILD = `
+const net = require('node:net');
+const fs = require('node:fs');
+const server = net.createServer();
+server.listen({ port: 0, host: '127.0.0.1', backlog: 1 }, () => {
+  fs.writeSync(1, String(server.address().port) + '\\n');
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120000);
+  process.exit(0);
+});
+`;
+
+/**
+ * A port whose TCP handshake never completes. A child process listens with a
+ * backlog of 1 and then blocks its event loop, so it never accepts; once the
+ * kernel's accept queue is full, Linux drops further SYNs and a client waits
+ * for its own deadline. Linux only. The child exits by itself after 120 s.
+ */
+export async function startUnansweredTcpPort(): Promise<{
+  readonly port: number;
+  close(): Promise<void>;
+}> {
+  const child = spawn(process.execPath, ['-e', UNANSWERED_CHILD], {
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  const port = await new Promise<number>((resolve, reject) => {
+    let text = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      text += chunk.toString();
+      if (text.includes('\n')) resolve(Number(text.trim()));
+    });
+    child.once('error', reject);
+    child.once('exit', () => reject(new Error('port holder exited early')));
+  });
+
+  const fillers: Socket[] = [];
+  for (let i = 0; i < 20; i += 1) {
+    const socket = connect({ host: '127.0.0.1', port });
+    socket.on('error', () => {});
+    fillers.push(socket);
+    const connected = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), 300);
+      socket.once('connect', () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+    if (!connected) {
+      return {
+        port,
+        close: async () => {
+          for (const filler of fillers) filler.destroy();
+          child.kill('SIGKILL');
+        },
+      };
+    }
+  }
+  for (const filler of fillers) filler.destroy();
+  child.kill('SIGKILL');
+  throw new Error('the accept queue never filled');
 }
