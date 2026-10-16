@@ -7,6 +7,7 @@ import {
   classifyAddress,
   type HostLookup,
   parseTarget,
+  refusalReason,
 } from './target-safety';
 
 const never: HostLookup = async () => {
@@ -352,5 +353,37 @@ describe('parseAllowedCidrs', () => {
         /MONITOR_ALLOWED_CIDRS.*invalid entry/,
       );
     }
+  });
+});
+
+describe('refusalReason', () => {
+  const none = parseAllowedCidrs('');
+  it('names the reason for every blocked class, mapped forms included', () => {
+    const cases: Array<[string, string]> = [
+      ['127.0.0.1', 'loopback'],
+      ['::ffff:127.0.0.1', 'loopback'],
+      ['::ffff:7f00:1', 'loopback'],
+      ['10.0.0.1', 'private'],
+      ['::ffff:10.0.0.1', 'private'],
+      ['169.254.169.254', 'link-local'],
+      ['0.0.0.0', 'unspecified'],
+      ['224.0.0.1', 'multicast'],
+      ['::1', 'loopback'],
+    ];
+    for (const [address, reason] of cases) {
+      assert.equal(refusalReason(address, none), reason, address);
+    }
+  });
+
+  it('is null for a public address', () => {
+    assert.equal(refusalReason('93.184.216.34', none), null);
+    assert.equal(refusalReason('::ffff:93.184.216.34', none), null);
+  });
+
+  it('is null inside an allowed range, mapped or not, and only there', () => {
+    const allowed = parseAllowedCidrs('127.0.0.0/8');
+    assert.equal(refusalReason('127.0.0.5', allowed), null);
+    assert.equal(refusalReason('::ffff:127.0.0.5', allowed), null);
+    assert.equal(refusalReason('10.0.0.1', allowed), 'private');
   });
 });

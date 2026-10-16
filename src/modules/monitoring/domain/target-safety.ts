@@ -251,11 +251,31 @@ function allowedList(ranges: readonly AllowedCidr[]): BlockList {
 }
 
 /**
+ * The one refusal rule, for configure time and connect time alike: the reason
+ * an address is blocked once the allowed ranges are applied, or null. An
+ * IPv4-mapped IPv6 address is its IPv4 address on both sides.
+ */
+export function refusalReason(
+  address: string,
+  allowedRanges: readonly AllowedCidr[],
+): string | null {
+  const reason = classifyAddress(address);
+  if (reason === null) return null;
+  const { address: normal, family } = normalise(address);
+  return allowedList(allowedRanges).check(
+    normal,
+    family === 4 ? 'ipv4' : 'ipv6',
+  )
+    ? null
+    : reason;
+}
+
+/**
  * Resolves with the system's DNS servers through a `Resolver`, whose queries
  * can be cancelled. `dns.lookup` cannot: it holds a libuv threadpool thread
  * until the OS resolver gives up, however early the caller stops waiting.
  */
-const defaultLookup: HostLookup = async (host, signal) => {
+export const defaultLookup: HostLookup = async (host, signal) => {
   const resolver = new Resolver({ timeout: LOOKUP_TIMEOUT_MS, tries: 1 });
   signal.addEventListener('abort', () => resolver.cancel(), { once: true });
   const [v4, v6] = await Promise.allSettled([
@@ -314,16 +334,11 @@ export async function assertTargetAllowed(
   options: TargetCheckOptions = {},
 ): Promise<void> {
   const { host } = parseTarget(type, target);
-  const allowed = allowedList(options.allowedRanges ?? []);
-
-  const isAllowed = (address: string) => {
-    const { address: normal, family } = normalise(address);
-    return allowed.check(normal, family === 4 ? 'ipv4' : 'ipv6');
-  };
+  const ranges = options.allowedRanges ?? [];
 
   const check = (address: string, resolved: boolean) => {
-    const reason = classifyAddress(address);
-    if (reason && !isAllowed(address)) {
+    const reason = refusalReason(address, ranges);
+    if (reason) {
       refuse(
         resolved
           ? `host ${host} resolves to a ${reason} address, which monitors may not check unless it is listed in MONITOR_ALLOWED_CIDRS`
@@ -334,7 +349,7 @@ export async function assertTargetAllowed(
 
   if (host === 'localhost' || host.endsWith('.localhost')) {
     for (const address of ['127.0.0.1', '::1']) {
-      if (classifyAddress(address) && !isAllowed(address)) {
+      if (refusalReason(address, ranges)) {
         refuse(
           `host ${host} is a loopback name, which monitors may not check unless 127.0.0.1 and ::1 are listed in MONITOR_ALLOWED_CIDRS`,
         );

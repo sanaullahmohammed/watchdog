@@ -192,10 +192,6 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 ## From Story 5.1 (2026-10-09)
 
 - source_spec: `spec-5-1-create-and-update-a-monitor.md`
-  summary: No test proves `MONITOR_ALLOWED_CIDRS` reaches `config.monitor.allowedCidrs`, or that an invalid entry stops `api` and `worker` at boot. Tests assign the config object directly and unit-test the parser alone.
-  evidence: Review Triage Log, loop-1 V3 and pass-2 V2; `grep -rln MONITOR_ALLOWED src tests`. The spawned-process pattern is `src/worker-health.integration.test.ts:293`.
-  target: Story 5.4, which wires the connect-time guard to the same setting.
-- source_spec: `spec-5-1-create-and-update-a-monitor.md`
   summary: REST bodies go through Fastify's default ajv options, so unknown keys are silently stripped (a PATCH carrying `type`, a misspelled `config` key) and `null` is coerced (`enabled: null` becomes `false`), where GraphQL and the handler's schema check refuse the same input. Every slice behaves this way.
   evidence: Review Triage Log, loop-1 E1/E2/B11/E3; `src/server/build-app.ts:36-40` sets only `keywords`, leaving `removeAdditional` and `coerceTypes` at Fastify's defaults.
   target: A cross-cutting story; changing the global options affects every REST route.

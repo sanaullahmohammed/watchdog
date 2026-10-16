@@ -17,6 +17,11 @@ export const MONITOR_LIMITS = {
   warnDays: { min: 1, max: 365 },
 } as const;
 
+/** Fixed in code, not configuration (owner decision, 2026-10-09). */
+export const MAX_REDIRECTS = 5;
+export const KEYWORD_BODY_CAP_BYTES = 1_048_576;
+export const ERROR_MESSAGE_MAX = 512;
+
 export const MONITOR_DEFAULT_ENABLED = true;
 
 /**
