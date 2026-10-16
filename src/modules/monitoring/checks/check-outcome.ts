@@ -14,6 +14,10 @@ export const CHECK_ERROR_CODES = [
   'connection_error',
   'http_status',
   'keyword_missing',
+  'certificate_untrusted',
+  'certificate_hostname_mismatch',
+  'certificate_expired',
+  'certificate_not_yet_valid',
 ] as const;
 
 export type CheckErrorCode = (typeof CHECK_ERROR_CODES)[number];
@@ -27,6 +31,17 @@ export interface HttpCheckMetadata {
 
 export interface KeywordCheckMetadata extends HttpCheckMetadata {
   bytesRead: number;
+}
+
+export type TcpCheckMetadata = Record<string, never>;
+
+export interface SslExpiryCheckMetadata {
+  /** SHA-256 of the leaf's DER, uppercase colon-separated hex. */
+  certificateFingerprint: string | null;
+  /** The leaf's not-after, ISO 8601 UTC. */
+  certificateExpiresAt: string | null;
+  /** Whole days, floored; negative once expired. */
+  daysRemaining: number | null;
 }
 
 export type CheckOutcome<M = HttpCheckMetadata> =

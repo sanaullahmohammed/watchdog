@@ -104,6 +104,17 @@ export async function guardTarget(
         : 'the target is not a valid http or https URL',
     );
   }
+  return guardHost(host, options);
+}
+
+/**
+ * Resolves and classifies an already-parsed host, then pins the lookup to the
+ * addresses that passed. Same errors as `guardTarget`.
+ */
+export async function guardHost(
+  host: string,
+  options: GuardOptions,
+): Promise<GuardedTarget> {
   const literal =
     isIP(host) !== 0 || host === 'localhost' || host.endsWith('.localhost');
   const addresses = await resolveAddresses(
@@ -137,4 +148,26 @@ export async function guardTarget(
     }
   };
   return { addresses, lookup };
+}
+
+/**
+ * A tcp or ssl_expiry target as the configure-time parser reads it, so the two
+ * times cannot disagree. `ssl_expiry` defaults to port 443. Throws a
+ * `target_refused` `CheckError` for a target the parser refuses.
+ */
+export function parseCheckTarget(
+  type: 'tcp' | 'ssl_expiry',
+  target: string,
+): { host: string; port: number } {
+  try {
+    const { host, port } = parseTarget(type, target);
+    return { host, port: port ?? 443 };
+  } catch {
+    throw new CheckError(
+      'target_refused',
+      type === 'tcp'
+        ? 'the target is not a valid host:port'
+        : 'the target is not a valid host or host:port',
+    );
+  }
 }
