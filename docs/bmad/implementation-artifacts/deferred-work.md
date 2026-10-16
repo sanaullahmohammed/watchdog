@@ -220,3 +220,15 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: Recording a check result can deadlock with an organization delete. The record takes the monitor's row lock, then the foreign key's `for key share` on `"organization"`; the delete takes the organization row, then cascades into `monitors`. Postgres aborts one after 1 s, so either the org delete fails once or one result for a dying organization is lost. The fix reverses 5.6's frozen lock-first order or locks a Better Auth row from monitoring. The 5.6 Code Map's "no deadlock path" is wrong for this case.
   evidence: Review Triage Log B3; the migration's own note at `db/migrations/20261009130000_create_check_results.sql:84`. Deferred by the owner at the start of Story 5.7 (2026-10-16). Settle with a concurrency test racing an org delete against `recordCheckResultCommand`.
   target: Epic 8 (default).
+
+## From Story 5.8 (2026-10-16)
+
+- source_spec: `spec-5-8-find-and-run-the-checks-that-are-due.md`
+  summary: The process-wide check limiter admits first-in-first-out, so if the worker runs organizations' check passes concurrently, one organization with many due monitors can hold the queue and delay every other organization's checks. ARCHITECTURE 6.0.1 gives the cap's purpose as protecting everyone else.
+  evidence: Review Triage Log B6/E7. Unverified: it depends on whether 5.9 runs organizations concurrently or in turn. Settle when 5.9 wires the loop; if concurrent, interleave organizations in the limiter or cap per organization.
+  target: Story 5.9.
+
+- source_spec: `spec-5-8-find-and-run-the-checks-that-are-due.md`
+  summary: `RunDueMonitorChecksCommand` claims nothing, so two overlapping passes for one organization (a second worker replica, or a manual run during a pass) check every due monitor twice and count failures twice toward the threshold.
+  evidence: Review Triage Log B7/E2. 5.9's "never overlaps itself" rule covers one process only, and genesis does not say whether more than one worker may run. Settle in 5.9 by stating the single-worker assumption in ARCHITECTURE, or claim due rows (`for no key update skip locked`, or an org-scoped advisory lock).
+  target: Story 5.9.

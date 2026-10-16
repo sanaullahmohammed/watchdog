@@ -26,6 +26,7 @@ import { createServer as createTlsServer } from 'node:tls';
  *   /redirect-to?url= 302 to the given URL
  *   /stall            200 headers, then a body that never arrives
  *   /delayed-body?delay=ms  200 headers, the body after the delay
+ *   /hold?delay=ms    200 after the delay; only /hold counts toward peakInFlight()
  *   /slow-chain/<n>?delay=ms  waits, then 302 to /slow-chain/<n-1>; 0 answers 200
  *   /body?size=&keyword=&at=  `size` bytes of 'a' with the keyword written at
  *                     byte offset `at`
@@ -43,6 +44,8 @@ export interface TestEndpoints {
   readonly requests: string[];
   /** TCP connections accepted. */
   readonly connections: () => number;
+  /** Most /hold requests in flight at once since the last reset. */
+  readonly peakInFlight: () => number;
   reset(): void;
   close(): Promise<void>;
 }
@@ -56,6 +59,11 @@ function handle(request: IncomingMessage, response: ServerResponse): void {
     response.writeHead(503).end('unavailable');
   } else if (path === '/silent') {
     // Never answered; closed with the server.
+  } else if (path === '/hold') {
+    setTimeout(
+      () => response.writeHead(200).end('held'),
+      Number(url.searchParams.get('delay') ?? 0),
+    );
   } else if (path === '/stall') {
     response.writeHead(200).flushHeaders();
   } else if (path === '/delayed-body') {
@@ -107,7 +115,16 @@ export async function startTestEndpoints(): Promise<TestEndpoints> {
   const requests: string[] = [];
   const headers: IncomingMessage['headers'][] = [];
   let connections = 0;
+  let inFlight = 0;
+  let peak = 0;
   const server: Server = createServer((request, response) => {
+    if (request.url?.split('?')[0] === '/hold') {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      response.on('close', () => {
+        inFlight -= 1;
+      });
+    }
     requests.push(request.url ?? '');
     headers.push(request.headers);
     handle(request, response);
@@ -141,7 +158,9 @@ export async function startTestEndpoints(): Promise<TestEndpoints> {
     headers,
     requests,
     connections: () => connections,
+    peakInFlight: () => peak,
     reset() {
+      peak = 0;
       requests.length = 0;
       headers.length = 0;
       connections = 0;
