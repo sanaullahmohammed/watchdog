@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-16-2026 22:43
+last_updated: 10-16-2026 23:29
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -80,8 +80,8 @@ development_status:
   5-5-tcp-and-ssl-expiry-checks: done
   5-6-record-a-check-result-and-count-consecutive-failures: done
   5-7-warn-once-per-certificate-before-it-expires: done
-  5-8-find-and-run-the-checks-that-are-due: review
-  5-9-run-checks-on-the-worker-s-own-loop: backlog
+  5-8-find-and-run-the-checks-that-are-due: done
+  5-9-run-checks-on-the-worker-s-own-loop: review
   5-10-monitor-state-moves-service-status: backlog
   5-11-refresh-daily-uptime-rollups: backlog
   5-12-fill-the-90-day-uptime-in-the-public-payload: backlog

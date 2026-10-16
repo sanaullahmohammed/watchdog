@@ -152,7 +152,7 @@ WatchDog builds one Docker image and runs two commands from it:
 | `api` | Fastify HTTP server | REST API, GraphQL API, Swagger, Better Auth plugin, public status page reads, public SSE, admin GraphQL subscriptions, Postgres `LISTEN` subscriber for client fanout. |
 | `worker` | Worker process | Synthetic monitor scheduler/executor, maintenance state transitions, uptime rollup refresh, check-result partition maintenance, old rollup pruning, email dispatch, background notification workflows, Postgres `LISTEN` subscriber for worker-side cross-process reactions when needed. |
 
-**Shutdown.** Decided 2026-10-09 (owner). On SIGTERM or SIGINT, `api` and `worker` stop taking new work, finish in-flight work and event handlers, and close their database pools before terminating. The API's `graceful-server` exits the process after those steps, and that is permitted; a forced exit must never substitute for cleanup. The worker needs no exit, because once its loops stop and its pools close nothing keeps the process alive. Section 6.0 gives the worker's order and section 7 the pools. The wording does not prove the behaviour: tests of the real entrypoints' shutdown paths are still owed (`deferred-work.md`).
+**Shutdown.** Decided 2026-10-09 (owner). On SIGTERM or SIGINT, `api` and `worker` stop taking new work, finish in-flight work and event handlers, and close their database pools before terminating. The API's `graceful-server` exits the process after those steps, and that is permitted; a forced exit must never substitute for cleanup. The worker needs no exit, because once its loops stop and its pools close nothing keeps the process alive. Section 6.0 gives the worker's order and section 7 the pools. The worker's shutdown path is tested against the real worker in a child process; the api's is still owed (`deferred-work.md`).
 
 The image is shared so dependency graph, configuration, migrations, and module code remain identical. Runtime behavior is selected by command, for example:
 
@@ -503,6 +503,10 @@ Decided 2026-10-06 (DEC-MON M7, `docs/bmad/planning-artifacts/sprint-change-prop
 - Each tick enumerates tenants as above. Per organization, a monitor is due when it is enabled, its service is not archived, and `last_checked_at + interval_seconds` has passed; a monitor never checked is due.
 - Checks run under a process-wide concurrency cap set in `src/config`, so one organization with many monitors cannot exhaust the connection pool or the network for everyone else.
 - A check that exceeds its timeout is recorded as a failure whose error code says so.
+- The cap admits checks round-robin by organization, first in first out within one, so an organization with many due checks cannot hold the queue.
+- On shutdown, checks still waiting for a slot are not started and stay due for the next worker; checks already running finish.
+- The deployment's stop grace period must exceed the longest check timeout (60 s) plus recording. The Compose stack sets 90 s.
+- One worker process runs per database. The Docker Compose stack runs one. The due query claims nothing, so two workers would check the same due monitors twice. Claiming rows is not designed yet.
 
 ### 6.1 Role provisioning
 

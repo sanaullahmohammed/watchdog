@@ -3,6 +3,7 @@ import { type Static, Type } from 'typebox';
 import { parseAllowedCidrs } from './allowed-cidrs';
 import { authEnvProperties } from './auth-env';
 import { checkResultsEnvProperties } from './check-results-env';
+import { assertWorkerIntervals } from './worker-intervals';
 
 enum NodeEnv {
   development = 'development',
@@ -47,9 +48,21 @@ const schema = Type.Object({
     // A zero or negative interval would spin setInterval as a tight loop.
     // Fail at boot naming the variable rather than clamp it silently.
     minimum: 1_000,
+    // Above Node's largest setInterval delay the timer fires every 1 ms.
+    maximum: 2_147_483_647,
+  }),
+  // How often the monitor loop looks for due checks. The maximum is the
+  // largest delay Node's setInterval honours; above it the timer fires every
+  // 1 ms.
+  WORKER_MONITOR_INTERVAL_MS: Type.Number({
+    default: 10_000,
+    minimum: 1_000,
+    maximum: 2_147_483_647,
   }),
   // How long a worker loop may go without completing a pass before the
-  // healthcheck fails. Four maintenance intervals by default.
+  // healthcheck fails. Four maintenance intervals by default. It must cover
+  // the longest expected pass: for the monitor loop, the interval plus about
+  // ceil(due checks / MONITOR_CHECK_CONCURRENCY) x the slowest timeoutSeconds.
   WORKER_PASS_OVERDUE_MS: Type.Number({ default: 120_000, minimum: 1_000 }),
   // Comma-separated CIDR ranges a monitor target may resolve into although they
   // are loopback, private or otherwise blocked. Empty by default. ARCHITECTURE
@@ -68,15 +81,7 @@ const env = envSchema<Static<typeof schema>>({
   schema,
 });
 
-// env-schema cannot express a cross-field rule. Time since the last completion
-// reaches about one interval plus the pass's duration, so a pass may take up to
-// the threshold minus the interval before the check fails it; at or below the
-// interval that allowance is nothing.
-if (env.WORKER_PASS_OVERDUE_MS <= env.WORKER_MAINTENANCE_INTERVAL_MS) {
-  throw new Error(
-    `WORKER_PASS_OVERDUE_MS (${env.WORKER_PASS_OVERDUE_MS}) must be greater than WORKER_MAINTENANCE_INTERVAL_MS (${env.WORKER_MAINTENANCE_INTERVAL_MS})`,
-  );
-}
+assertWorkerIntervals(env);
 
 // An invalid entry fails boot, naming it.
 const monitorAllowedCidrs = parseAllowedCidrs(env.MONITOR_ALLOWED_CIDRS);
@@ -116,6 +121,7 @@ export default {
     heartbeatPath: env.WORKER_HEARTBEAT_PATH,
     heartbeatMaxAgeMs: env.WORKER_HEARTBEAT_MAX_AGE_MS,
     maintenanceIntervalMs: env.WORKER_MAINTENANCE_INTERVAL_MS,
+    monitorIntervalMs: env.WORKER_MONITOR_INTERVAL_MS,
     passOverdueMs: env.WORKER_PASS_OVERDUE_MS,
   },
 };

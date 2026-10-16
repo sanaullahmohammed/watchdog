@@ -78,6 +78,9 @@ services:
   worker:
     <<: *watchdog-image
     command: ['node', 'dist/index.js', 'worker']
+    # A check may run for up to 60 s (MONITOR_LIMITS.timeoutSeconds.max) and
+    # shutdown waits for it; Docker's default 10 s would kill the worker first.
+    stop_grace_period: 90s
     environment:
       NODE_ENV: development
       LOG_LEVEL: ${LOG_LEVEL:-info}

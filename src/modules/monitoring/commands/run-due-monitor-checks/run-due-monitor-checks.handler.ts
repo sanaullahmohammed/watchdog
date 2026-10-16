@@ -37,7 +37,7 @@ export default function makeRunDueMonitorChecks({
 
       const settled = await Promise.allSettled(
         due.map((monitor) =>
-          checkLimiter.run(async () => {
+          checkLimiter.run(orgId, async () => {
             const outcome = await runCheck(monitor);
             await commandBus.execute(
               recordCheckResultCommand({

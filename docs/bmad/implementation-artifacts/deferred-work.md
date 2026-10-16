@@ -100,13 +100,6 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   evidence: Story 9.9 Review Triage Log #7. A meaningful test spawns the api, starts a slow event handler, sends SIGTERM and checks the handler's database work completed.
   target: Epic 8 (boot and container checks, audit F-11).
 
-## From Story 9.10 (2026-10-07)
-
-- source_spec: `spec-9-10-worker-health.md`
-  summary: `startWorker`'s health wiring (record path, loop names, heartbeat timer) is checked only by hand; no test starts the real worker and runs its healthcheck. Add a seam (an injected pass or `orgIds`) so a test can start it without an unscoped pass.
-  evidence: Story 9.10 Review Triage Log #11; AGENTS.md forbids unscoped worker passes in integration tests. Epic 5 adds the monitor-check loop to this worker. Close it together with the retro item 2 shutdown entry, which needs the same seam.
-  target: Epic 5.
-
 ## From Story 9.12 (2026-10-08)
 
 - source_spec: `spec-9-12-public-cors.md`
@@ -166,17 +159,9 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 ## From Epic 9 retro item 2 (2026-10-08)
 
 - source_spec: `spec-epic-9-retro-2-worker-health-idle-passes.md`
-  summary: No test runs the real worker's `shutdown`, so the DR-4 fix could be unwired (`shutdown` calling `app.close()` and `closeDbConnection()` directly again) and nothing would fail; `closeWorker` is tested only as a helper. Close it together with the 9.10 `startWorker` health-wiring entry, which needs the same seam to start the real worker.
-  evidence: Review Triage Log #5; `closeWorker` is referenced only by `src/worker-health.integration.test.ts`, and the only test that starts the worker (`runtime-role.integration.test.ts:122-133`) exits before `shutdown` is registered.
-  target: Epic 5.
-- source_spec: `spec-epic-9-retro-2-worker-health-idle-passes.md`
   summary: The api lists `closeDbConnection` unguarded in graceful-server's `closePromises` with `syncClose: true`, so a rejection there skips the remaining steps and the exit, the gap the worker's `closeWorker` now closes.
   evidence: Review Triage Log #12; `src/api.ts:34`, and the comment above it at `:19-23` describes the skip. Pre-existing.
   target: The next change to `src/api.ts`; Epic 8 (default) otherwise.
-- source_spec: `spec-epic-9-retro-2-worker-health-idle-passes.md`
-  summary: `src/worker-health.ts:149` logs a failed heartbeat write as `{ error }`, which pino prints as `{}`, so the reason is lost. Use `{ err: error }`, as `src/worker.ts` now does.
-  evidence: Review Triage Log #6; `fastify({ logger: true }).log.error({ error: new Error('boom') }, 'x')` prints `"error":{}`. Pre-existing, and the spec ruled `worker-health.ts` out of this change.
-  target: Epic 5.
 
 ## From Epic 9 retro item 4 (2026-10-09)
 
@@ -221,14 +206,14 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   evidence: Review Triage Log B3; the migration's own note at `db/migrations/20261009130000_create_check_results.sql:84`. Deferred by the owner at the start of Story 5.7 (2026-10-16). Settle with a concurrency test racing an org delete against `recordCheckResultCommand`.
   target: Epic 8 (default).
 
-## From Story 5.8 (2026-10-16)
+## From Story 5.9 (2026-10-16)
 
-- source_spec: `spec-5-8-find-and-run-the-checks-that-are-due.md`
-  summary: The process-wide check limiter admits first-in-first-out, so if the worker runs organizations' check passes concurrently, one organization with many due monitors can hold the queue and delay every other organization's checks. ARCHITECTURE 6.0.1 gives the cap's purpose as protecting everyone else.
-  evidence: Review Triage Log B6/E7. Unverified: it depends on whether 5.9 runs organizations concurrently or in turn. Settle when 5.9 wires the loop; if concurrent, interleave organizations in the limiter or cap per organization.
-  target: Story 5.9.
+- source_spec: `spec-5-9-run-checks-on-the-worker-s-own-loop.md`
+  summary: The monitor loop gates a whole pass, so one organization's slow check delays every organization's next pass by up to its timeout (at most 60 s). Lifting that means relaxing "never overlaps itself" per organization, which is the owner's call.
+  evidence: Review Triage Log B1/V-o1; `startLoop` single-flights `runMonitorPass`, which awaits every organization.
+  target: Owner decision (Epic 8 by default).
 
-- source_spec: `spec-5-8-find-and-run-the-checks-that-are-due.md`
-  summary: `RunDueMonitorChecksCommand` claims nothing, so two overlapping passes for one organization (a second worker replica, or a manual run during a pass) check every due monitor twice and count failures twice toward the threshold.
-  evidence: Review Triage Log B7/E2. 5.9's "never overlaps itself" rule covers one process only, and genesis does not say whether more than one worker may run. Settle in 5.9 by stating the single-worker assumption in ARCHITECTURE, or claim due rows (`for no key update skip locked`, or an org-scoped advisory lock).
-  target: Story 5.9.
+- source_spec: `spec-5-9-run-checks-on-the-worker-s-own-loop.md`
+  summary: The real worker's SIGTERM path is now tested, but shutdown's use of `closeWorker` (the pool still ends when `app.close()` fails, DR-4) is proven only by the `closeWorker` unit-level test. Shutdown calling `app.close()` and `closeDbConnection()` directly would pass every happy-path test. Settling it needs a fault-injection seam in `startWorker`.
+  evidence: Review of Story 5.9; the retro item 2 shutdown entry, removed with this story, had this half still open.
+  target: Epic 8 (default).

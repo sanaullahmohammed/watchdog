@@ -357,4 +357,51 @@ describe('Story 5.8: find and run the checks that are due', () => {
     assert.deepEqual(await run(mine.orgId), { checked: 1 });
     assert.equal((await results(theirs.orgId, other)).length, 0);
   });
+
+  it('keys the limiter by organization, so a small organization is not queued behind a large one', async () => {
+    const a = await newOrg();
+    const b = await newOrg();
+    const aIds: string[] = [];
+    for (const n of [1, 2, 3]) {
+      aIds.push(
+        await make(a, { target: `${endpoints.origin}/hold?delay=300&m=a${n}` }),
+      );
+    }
+    const bId = await make(b, {
+      target: `${endpoints.origin}/hold?delay=300&m=b1`,
+    });
+    config.monitor.checkConcurrency = 1;
+    endpoints.reset();
+    try {
+      const first = run(a.orgId);
+      let firstFailure: unknown;
+      first.catch((error: unknown) => {
+        firstFailure = error;
+      });
+      // B starts only once A holds the one slot, so A's other two checks are
+      // already queued when B's arrives. FIFO would run B last.
+      const deadline = Date.now() + 10_000;
+      while (endpoints.requests.length < 1) {
+        if (firstFailure !== undefined) throw firstFailure;
+        if (Date.now() > deadline) {
+          throw new Error(
+            "timed out waiting for organization A's first request",
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const second = run(b.orgId);
+      await Promise.all([first, second]);
+    } finally {
+      config.monitor.checkConcurrency = savedConcurrency;
+    }
+    // Arrival order at the endpoint, not a clock.
+    const order = endpoints.requests.map((url) => url.split('m=')[1]);
+    assert.equal(order.length, 4);
+    assert.equal(order[1], 'b1');
+    assert.equal((await results(b.orgId, bId)).length, 1);
+    for (const id of aIds) {
+      assert.equal((await results(a.orgId, id)).length, 1);
+    }
+  });
 });
