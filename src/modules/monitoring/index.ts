@@ -1,3 +1,4 @@
+import type checkResultRepository from '@/modules/monitoring/database/check-result.repository';
 import type checkResultPartitionRepository from '@/modules/monitoring/database/check-result-partition.repository';
 import type monitorRepository from '@/modules/monitoring/database/monitor.repository';
 import type monitorDomain from '@/modules/monitoring/domain/monitor.domain';
@@ -9,6 +10,7 @@ declare global {
     checkResultPartitionRepository: ReturnType<
       typeof checkResultPartitionRepository
     >;
+    checkResultRepository: ReturnType<typeof checkResultRepository>;
     monitorMapper: ReturnType<typeof monitorMapper>;
     monitorRepository: ReturnType<typeof monitorRepository>;
     monitorDomain: ReturnType<typeof monitorDomain>;

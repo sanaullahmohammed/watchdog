@@ -38,3 +38,29 @@ export const monitorStateChangedEvent = monitorEventCreator<
     failureEpisode: number;
   }
 >('state_changed');
+
+/** A check finished and succeeded. `checkedAt` is an ISO string. */
+export const monitorCheckSucceededEvent = monitorEventCreator<
+  MonitorEventPayload & { checkedAt: string }
+>('check_succeeded');
+
+/** A check finished and failed, with the adapter's `errorCode`. */
+export const monitorCheckFailedEvent = monitorEventCreator<
+  MonitorEventPayload & { checkedAt: string; errorCode: string }
+>('check_failed');
+
+/**
+ * The monitor entered `failing`. `failureEpisode` is the new episode, which
+ * the incident module keys a draft on.
+ */
+export const monitorThresholdBreachedEvent = monitorEventCreator<
+  MonitorEventPayload & { failureEpisode: number }
+>('threshold_breached');
+
+/**
+ * The monitor moved from `failing` to `healthy`. `failureEpisode` is the
+ * episode that ended.
+ */
+export const monitorRecoveredEvent = monitorEventCreator<
+  MonitorEventPayload & { failureEpisode: number }
+>('recovered');

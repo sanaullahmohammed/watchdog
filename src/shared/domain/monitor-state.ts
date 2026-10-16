@@ -30,3 +30,16 @@ export function monitorStateOf(
     ? 'failing'
     : 'degraded';
 }
+
+/**
+ * The failure episode after a move from `before` to `after`: one more when the
+ * monitor enters `failing`, otherwise unchanged. Never reset. Shared by checks
+ * and edits so the two cannot disagree.
+ */
+export function failureEpisodeAfter(
+  before: MonitorDerivedState | null,
+  after: MonitorDerivedState | null,
+  episode: number,
+): number {
+  return after === 'failing' && before !== 'failing' ? episode + 1 : episode;
+}

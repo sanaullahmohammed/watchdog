@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { monitorStateOf } from '@/shared/domain/monitor-state';
+import {
+  failureEpisodeAfter,
+  monitorStateOf,
+} from '@/shared/domain/monitor-state';
 import type { MonitorDerivedState } from '@/shared/domain/status-inputs';
 import { InvalidMonitorInputError } from './monitor.errors';
 import type {
@@ -101,6 +104,14 @@ export interface UpdateOutcome {
   after: MonitorDerivedState | null;
 }
 
+export interface CheckApplied {
+  monitor: MonitorEntity;
+  /** False for a disabled monitor, whose counters the result leaves alone. */
+  counted: boolean;
+  before: MonitorDerivedState | null;
+  after: MonitorDerivedState | null;
+}
+
 export default function monitorDomain() {
   return {
     createMonitor: (
@@ -134,6 +145,38 @@ export default function monitorDomain() {
     },
 
     /**
+     * Applies one check result to the locked row. A disabled monitor is
+     * returned unchanged with both states null: its result is stored by the
+     * caller, but its counters, `last_checked_at` and episode stand.
+     * Otherwise failures reset on success and grow on failure,
+     * `lastCheckedAt` takes the result's time (the last write wins), and the
+     * episode grows when the state enters `failing`.
+     */
+    applyCheck: (
+      current: MonitorEntity,
+      status: 'success' | 'failure',
+      checkedAt: Date,
+    ): CheckApplied => {
+      if (!current.enabled) {
+        return { monitor: current, counted: false, before: null, after: null };
+      }
+      const next: MonitorEntity = {
+        ...current,
+        consecutiveFailures:
+          status === 'success' ? 0 : current.consecutiveFailures + 1,
+        lastCheckedAt: checkedAt,
+      };
+      const before = monitorStateOf(current);
+      const after = monitorStateOf(next);
+      next.failureEpisode = failureEpisodeAfter(
+        before,
+        after,
+        current.failureEpisode,
+      );
+      return { monitor: next, counted: true, before, after };
+    },
+
+    /**
      * Applies a patch to the locked row and works out what it did to derived
      * state. An absent key is left alone and `config` replaces the stored
      * object whole. Re-enabling resets the counters first, then both states
@@ -164,9 +207,11 @@ export default function monitorDomain() {
 
       const before = monitorStateOf(current);
       const after = monitorStateOf(next);
-      if (after === 'failing' && before !== 'failing') {
-        next.failureEpisode = current.failureEpisode + 1;
-      }
+      next.failureEpisode = failureEpisodeAfter(
+        before,
+        after,
+        current.failureEpisode,
+      );
 
       // `*.updated` announces a change, never an attempt: a patch that restates
       // the stored values writes and emits nothing.

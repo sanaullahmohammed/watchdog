@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { monitorStateOf } from './monitor-state';
+import { failureEpisodeAfter, monitorStateOf } from './monitor-state';
 
 const CHECKED = new Date('2026-10-09T12:00:00Z');
 const base = {
@@ -60,5 +60,27 @@ describe('monitorStateOf (DOMAIN M1)', () => {
         null,
       );
     }
+  });
+});
+
+describe('failureEpisodeAfter', () => {
+  it('adds one when entering failing', () => {
+    assert.equal(failureEpisodeAfter('degraded', 'failing', 1), 2);
+    assert.equal(failureEpisodeAfter('healthy', 'failing', 0), 1);
+  });
+
+  it('adds one from null to failing', () => {
+    assert.equal(failureEpisodeAfter(null, 'failing', 4), 5);
+  });
+
+  it('is unchanged while staying in failing', () => {
+    assert.equal(failureEpisodeAfter('failing', 'failing', 2), 2);
+  });
+
+  it('is unchanged when leaving failing or not reaching it', () => {
+    assert.equal(failureEpisodeAfter('failing', 'healthy', 2), 2);
+    assert.equal(failureEpisodeAfter('failing', null, 2), 2);
+    assert.equal(failureEpisodeAfter('healthy', 'degraded', 2), 2);
+    assert.equal(failureEpisodeAfter(null, 'healthy', 0), 0);
   });
 });
