@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +6,7 @@ import { after, before, describe, it } from 'node:test';
 import type { FastifyBaseLogger } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql, { closeDbConnection } from '@/shared/db/postgres';
+import { runHealthcheck as runHealthcheckProcess } from '@/shared/testing/worker-process';
 import { createWorkerHealth } from '@/worker-health';
 import { closeWorker, runWorkerPass, startLoop } from './worker';
 
@@ -23,7 +23,6 @@ import { closeWorker, runWorkerPass, startLoop } from './worker';
  * healthcheck, and closeWorker is shown to end the pool when app.close() fails.
  */
 
-const REPO_ROOT = join(__dirname, '..');
 const OVERDUE_MS = 20_000;
 const CHILD_INTERVAL_MS = 1_000;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -52,39 +51,14 @@ after(async () => {
 });
 
 function runHealthcheck(path: string, overrides: Record<string, string> = {}) {
-  return new Promise<{ code: number | null; output: string }>(
-    (resolve, reject) => {
-      const child = spawn(
-        process.execPath,
-        ['--import', 'tsx', 'src/healthcheck.ts'],
-        {
-          cwd: REPO_ROOT,
-          env: {
-            ...process.env,
-            WORKER_HEARTBEAT_PATH: path,
-            WORKER_PASS_OVERDUE_MS: String(OVERDUE_MS),
-            WORKER_MAINTENANCE_INTERVAL_MS: String(CHILD_INTERVAL_MS),
-            ...overrides,
-          },
-        },
-      );
-      let output = '';
-      child.stdout.on('data', (chunk) => {
-        output += chunk;
-      });
-      child.stderr.on('data', (chunk) => {
-        output += chunk;
-      });
-      const timer = setTimeout(() => {
-        child.kill('SIGKILL');
-        reject(new Error(`healthcheck did not exit:\n${output}`));
-      }, 60_000);
-      child.on('exit', (code) => {
-        clearTimeout(timer);
-        resolve({ code, output });
-      });
-    },
-  );
+  return runHealthcheckProcess({
+    ...process.env,
+    WORKER_HEARTBEAT_PATH: path,
+    WORKER_PASS_OVERDUE_MS: String(OVERDUE_MS),
+    WORKER_MAINTENANCE_INTERVAL_MS: String(CHILD_INTERVAL_MS),
+    WORKER_MONITOR_INTERVAL_MS: String(CHILD_INTERVAL_MS),
+    ...overrides,
+  });
 }
 
 function setup(name: string) {
@@ -316,13 +290,13 @@ describe(
       assert.throws(
         () =>
           startLoop({
-            name: 'monitor',
+            name: 'rollup',
             pass: async () => {},
             intervalMs: 100,
             health,
             logger: quietLogger,
           }),
-        /monitor/,
+        /rollup/,
       );
     });
   },

@@ -1,10 +1,16 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { env } from '@/config';
 import { transitionDueMaintenanceCommand } from '@/modules/maintenance/commands/transition-due-maintenance/transition-due-maintenance.handler';
+import { LimiterClosedError } from '@/modules/monitoring/checks/check-limiter';
+import { checkLimiter } from '@/modules/monitoring/checks/process-check-limiter';
 import {
   type MaintainCheckResultPartitionsCommandResult,
   maintainCheckResultPartitionsCommand,
 } from '@/modules/monitoring/commands/maintain-check-result-partitions/maintain-check-result-partitions.handler';
+import {
+  type RunDueMonitorChecksCommandResult,
+  runDueMonitorChecksCommand,
+} from '@/modules/monitoring/commands/run-due-monitor-checks/run-due-monitor-checks.handler';
 import {
   type RecomputeServiceStatusCommandResult,
   recomputeServiceStatusCommand,
@@ -18,12 +24,13 @@ import { createWorkerHealth, type WorkerHealth } from '@/worker-health';
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const MAINTENANCE_LOOP = 'maintenance';
+const MONITOR_LOOP = 'monitor';
 
 /**
- * Background entrypoint. ROADMAP phase 5 fills this in with the monitor
- * scheduler, maintenance transitions, uptime rollups, partition maintenance and
- * email dispatch. Today it exists so the two-entrypoint topology is real and
- * testable: one image, two commands, separate processes that share no memory.
+ * Background entrypoint. Two loops share the process: maintenance (window
+ * transitions, service status reconciliation, partition maintenance) and the
+ * monitor loop (due checks). Later stories add uptime rollups and email
+ * dispatch. One image, two commands, separate processes that share no memory.
  */
 /**
  * One pass across every tenant: the work that is due, then reconciliation.
@@ -141,6 +148,73 @@ export async function runWorkerPass(
 }
 
 /**
+ * One monitor pass: every organization's due checks, all at once. The
+ * process-wide limiter caps the checks running and admits them round-robin by
+ * organization, so within a pass one organization cannot hold the queue. The
+ * loop never overlaps itself, so the next pass still waits for this pass's
+ * slowest check (deferred-work, "From Story 5.9").
+ *
+ * Failure semantics match runWorkerPass: a failed organization is logged, and
+ * the pass rejects, with no cause, when discovery failed or every visited
+ * organization failed. It never maintains partitions or reconciles.
+ */
+export async function runMonitorPass(
+  app: FastifyInstance,
+  logger: FastifyBaseLogger,
+  // Tests pass their own organizations. The worker never passes this.
+  options: { orgIds?: readonly string[] } = {},
+): Promise<void> {
+  let orgIds: readonly string[];
+  try {
+    orgIds = options.orgIds ?? (await listOrganizationIds());
+  } catch (error) {
+    logger.error({ err: error }, 'tenant discovery failed; skipping this pass');
+    throw new Error('tenant discovery failed');
+  }
+
+  const settled = await Promise.allSettled(
+    orgIds.map((orgId) =>
+      app.commandBus.execute<RunDueMonitorChecksCommandResult>(
+        runDueMonitorChecksCommand({ orgId }),
+      ),
+    ),
+  );
+
+  let failed = 0;
+  settled.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      if (isLimiterClosed(result.reason)) {
+        // Shutdown dropped checks that never started. They stay due for the
+        // next worker, so this is not a failure.
+        logger.info(
+          { orgId: orgIds[index] },
+          'checks not started; worker is shutting down',
+        );
+        return;
+      }
+      failed += 1;
+      logger.error(
+        { orgId: orgIds[index], err: result.reason },
+        'monitor pass failed for organization',
+      );
+    }
+  });
+
+  if (orgIds.length > 0 && failed === orgIds.length) {
+    throw new Error(`every organization failed (${orgIds.length})`);
+  }
+}
+
+function isLimiterClosed(reason: unknown): boolean {
+  if (reason instanceof LimiterClosedError) return true;
+  return (
+    reason instanceof AggregateError &&
+    reason.errors.length > 0 &&
+    reason.errors.every((inner) => inner instanceof LimiterClosedError)
+  );
+}
+
+/**
  * The closing steps of shutdown. Never rejects: a failed app.close() is logged
  * and the pool is still ended, so the process can exit.
  */
@@ -215,7 +289,10 @@ export function startLoop(options: {
   };
 }
 
-export async function startWorker() {
+export async function startWorker(
+  // Only the test seam passes this; src/index.ts passes nothing.
+  options: { orgIds?: readonly string[] } = {},
+) {
   // The worker builds the same instance the api does, without listening. That
   // is what registers the command handlers in the DI container; the dependency
   // graph is identical across both entrypoints by design.
@@ -238,7 +315,7 @@ export async function startWorker() {
 
   const health = createWorkerHealth({
     path: env.worker.heartbeatPath,
-    loops: [MAINTENANCE_LOOP],
+    loops: [MAINTENANCE_LOOP, MONITOR_LOOP],
     logger,
   });
   health.write();
@@ -249,8 +326,15 @@ export async function startWorker() {
 
   const maintenance = startLoop({
     name: MAINTENANCE_LOOP,
-    pass: () => runWorkerPass(app, logger),
+    pass: () => runWorkerPass(app, logger, { orgIds: options.orgIds }),
     intervalMs: env.worker.maintenanceIntervalMs,
+    health,
+    logger,
+  });
+  const monitor = startLoop({
+    name: MONITOR_LOOP,
+    pass: () => runMonitorPass(app, logger, { orgIds: options.orgIds }),
+    intervalMs: env.worker.monitorIntervalMs,
     health,
     logger,
   });
@@ -265,14 +349,26 @@ export async function startWorker() {
     shuttingDown = true;
     logger.info({ signal }, 'Worker is shutting down');
     maintenance.stop();
+    monitor.stop();
+    // Stop taking new work: checks still waiting for a slot are dropped and
+    // stay due for the next worker; checks already running finish.
+    checkLimiter.close();
 
     // Finish the pass in flight, then close. app.close() drains the event bus,
     // so the recomputations a just-committed transition triggered are not cut
     // off by the pool closing underneath them.
-    if (maintenance.inFlight) {
-      logger.info('waiting for the maintenance pass in flight');
-      await maintenance.inFlight.catch(() => undefined);
+    const inFlight = [
+      ['maintenance', maintenance.inFlight],
+      ['monitor', monitor.inFlight],
+    ] as const;
+    for (const [name, pending] of inFlight) {
+      if (pending) {
+        logger.info(`waiting for the ${name} pass in flight`);
+      }
     }
+    await Promise.all(
+      inFlight.map(([, pending]) => pending?.catch(() => undefined)),
+    );
     clearInterval(heartbeat);
 
     await closeWorker(app, logger);

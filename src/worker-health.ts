@@ -146,7 +146,7 @@ export function createWorkerHealth(options: {
       writeFileSync(temporary, JSON.stringify(record));
       renameSync(temporary, path);
     } catch (error) {
-      logger.error({ error }, 'Failed to write worker heartbeat');
+      logger.error({ err: error }, 'Failed to write worker heartbeat');
     }
   }
 

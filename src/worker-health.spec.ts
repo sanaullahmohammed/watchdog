@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { assessWorkerHealth } from './worker-health';
+import { assessWorkerHealth, createWorkerHealth } from './worker-health';
 
 const NOW = Date.parse('2026-01-01T00:10:00.000Z');
 const limits = { overdueMs: 120_000, maxAgeMs: 60_000 };
@@ -150,5 +153,30 @@ describe('assessWorkerHealth', () => {
       assert.equal(result.healthy, false);
       assert.match(result.reason, /maintenance/);
     }
+  });
+});
+
+describe('createWorkerHealth', () => {
+  it('logs a failed write under err, never error', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'watchdog-health-spec-'));
+    const logged: Array<Record<string, unknown>> = [];
+    const health = createWorkerHealth({
+      path: join(directory, 'missing', 'heartbeat'),
+      loops: ['maintenance'],
+      logger: {
+        error(object) {
+          logged.push(object as Record<string, unknown>);
+        },
+      },
+    });
+    try {
+      health.write();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+    assert.equal(logged.length, 1);
+    assert.ok(logged[0].err instanceof Error);
+    assert.match((logged[0].err as Error).message, /ENOENT/);
+    assert.equal('error' in logged[0], false);
   });
 });
