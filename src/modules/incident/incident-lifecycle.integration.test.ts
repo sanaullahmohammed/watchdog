@@ -70,7 +70,7 @@ async function timelineOf(orgId: string, id: string) {
     >`
       select status, message, created_by_user_id from incident_updates
       where incident_id = ${id}
-      order by created_at, id
+      order by sequence
     `),
   ]);
 }

@@ -64,7 +64,7 @@ async function timelineStatuses(id: string) {
       await tx<{ status: IncidentStatus }[]>`
         select status from incident_updates
         where incident_id = ${id}
-        order by created_at, id
+        order by sequence
       `
     ).map((row) => row.status),
   );
@@ -219,6 +219,17 @@ describe('Concurrent writes to one incident (Epic 2 retrospective, R-2 and R-3)'
       await tx`update incidents set status = 'identified' where id = ${id}`;
       signalLocked();
       await released;
+      // An entry whose clock is an hour ahead, written only once the post is
+      // blocked on the lock. Numbered under the lock, it must still read
+      // before the post that waited for it.
+      await tx`
+        insert into incident_updates (
+          org_id, incident_id, status, message, created_at
+        )
+        values (
+          ${orgId}, ${id}, 'identified', 'held', now() + interval '1 hour'
+        )
+      `;
     });
     await locked;
 
@@ -249,6 +260,19 @@ describe('Concurrent writes to one incident (Epic 2 retrospective, R-2 and R-3)'
       (await timelineStatuses(id)).at(-1),
       'identified',
       'it records the status the transition committed',
+    );
+    const timeline = await app.inject({
+      method: 'GET',
+      url: `/api/v1/incidents/${id}/updates`,
+      headers: { cookie, origin: ORIGIN },
+    });
+    assert.equal(timeline.statusCode, 200, timeline.body);
+    assert.deepEqual(
+      (JSON.parse(timeline.body) as { message: string }[])
+        .slice(-2)
+        .map((e) => e.message),
+      ['held', 'Posted while a move was in flight'],
+      'the order follows the lock, not the clock',
     );
   });
 });

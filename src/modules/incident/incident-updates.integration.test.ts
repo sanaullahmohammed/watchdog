@@ -89,7 +89,7 @@ describe('Story 2.10: post an incident update', () => {
       >`
         select status, message, created_by_user_id from incident_updates
         where incident_id = ${incidentId}
-        order by created_at, id
+        order by sequence
       `;
     });
 
@@ -127,7 +127,7 @@ describe('Story 2.10: post an incident update', () => {
           await tx<{ message: string }[]>`
             select message from incident_updates
             where incident_id = ${incidentId}
-            order by created_at, id
+            order by sequence
           `
         ).map((row) => row.message),
       );
@@ -184,13 +184,17 @@ describe('Story 2.10: post an incident update', () => {
     // quietly making the timeline mutable again.
     const grants = await sql<{ privilege_type: string }[]>`
       select privilege_type from information_schema.role_table_grants
-      where table_name = 'incident_updates' and grantee = 'watchdog_app'
+      where table_schema = 'public' and table_name = 'incident_updates'
+        and grantee = 'watchdog_app'
       order by privilege_type
     `;
 
     const held = grants.map((g) => g.privilege_type);
     assert.ok(held.includes('SELECT'));
-    assert.ok(held.includes('INSERT'));
+    assert.ok(
+      !held.includes('INSERT'),
+      'INSERT is column-level, so sequence cannot be chosen',
+    );
     assert.ok(
       !held.includes('UPDATE'),
       'append-only: UPDATE must not be granted',
@@ -198,6 +202,110 @@ describe('Story 2.10: post an incident update', () => {
     assert.ok(
       !held.includes('DELETE'),
       'append-only: DELETE must not be granted',
+    );
+
+    const columns = await sql<{ column_name: string }[]>`
+      select column_name from information_schema.column_privileges
+      where table_schema = 'public' and table_name = 'incident_updates'
+        and grantee = 'watchdog_app' and privilege_type = 'INSERT'
+      order by column_name
+    `;
+    assert.deepEqual(
+      columns.map((c) => c.column_name),
+      [
+        'created_at',
+        'created_by_user_id',
+        'id',
+        'incident_id',
+        'message',
+        'org_id',
+        'status',
+      ],
+    );
+    const all = await sql<{ column_name: string }[]>`
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'incident_updates'
+        and column_name <> 'sequence'
+      order by column_name
+    `;
+    assert.deepEqual(
+      columns.map((c) => c.column_name),
+      all.map((c) => c.column_name),
+      'every column but sequence has an insert grant',
+    );
+    const [priv] = await sql<{ usage: boolean; sel: boolean }[]>`
+      select
+        has_sequence_privilege('watchdog_app', pg_get_serial_sequence('incident_updates', 'sequence'), 'USAGE') as usage,
+        has_sequence_privilege('watchdog_app', pg_get_serial_sequence('incident_updates', 'sequence'), 'SELECT') as sel
+    `;
+    assert.equal(priv.usage, false);
+    assert.equal(priv.sel, false);
+  });
+
+  it('numbers entries with a generated identity the runtime role cannot set', async () => {
+    const [column] = await sql<
+      {
+        is_identity: string;
+        identity_generation: string;
+        is_nullable: string;
+      }[]
+    >`
+      select is_identity, identity_generation, is_nullable
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'incident_updates'
+        and column_name = 'sequence'
+    `;
+    assert.equal(column.is_identity, 'YES');
+    assert.equal(column.identity_generation, 'ALWAYS');
+    assert.equal(column.is_nullable, 'NO');
+
+    const indexes = await sql<{ indexdef: string }[]>`
+      select indexdef from pg_indexes where schemaname = 'public' and tablename = 'incident_updates'
+    `;
+    assert.ok(
+      indexes.some((i) =>
+        /CREATE UNIQUE INDEX .*\(incident_id, sequence\)/.test(i.indexdef),
+      ),
+      'a unique index covers exactly (incident_id, sequence)',
+    );
+
+    const seqs = await sql<{ seqcache: string }[]>`
+      select seqcache from pg_sequence
+      where seqrelid = pg_get_serial_sequence('incident_updates', 'sequence')::regclass
+    `;
+    assert.equal(seqs.length, 1, 'the identity has a sequence');
+    assert.equal(String(seqs[0].seqcache), '1');
+
+    const incidentId = await declareIncident(app, cookie, {
+      title: 'Sequence refused',
+      impact: 'major',
+    });
+    await assert.rejects(
+      withTenantTransaction(orgId, async ({ sql: tx }) => {
+        await tx`
+          insert into incident_updates (
+            org_id, incident_id, status, message, sequence
+          )
+          values (${orgId}, ${incidentId}, 'investigating', 'x', 1)
+        `;
+      }),
+      (error: { code?: string }) => error.code === '428C9',
+    );
+    await assert.rejects(
+      withTenantTransaction(orgId, async ({ sql: tx }) => {
+        await tx`
+          insert into incident_updates (
+            org_id, incident_id, status, message, sequence
+          )
+          overriding system value
+          values (${orgId}, ${incidentId}, 'investigating', 'x', -5)
+        `;
+      }),
+      (error: { code?: string; message?: string }) =>
+        error.code === '42501' &&
+        /permission denied for table incident_updates/.test(
+          error.message ?? '',
+        ),
     );
   });
 
