@@ -8,12 +8,11 @@ import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentCreatedEvent } from '@/shared/events/incident.events';
 import { capturing } from '@/shared/testing/events';
-import { createService } from '@/shared/testing/fixtures';
-import { signUpWithOrg } from '@/shared/testing/tenant';
+import { createMonitor, createService } from '@/shared/testing/fixtures';
+import { signUpWithOrg, TEST_ORIGIN } from '@/shared/testing/tenant';
 
 /** Story 2.8 — declare an incident. */
 
-const ORIGIN = 'http://localhost:3000';
 const tag = `inc-${randomBytes(4).toString('hex')}`;
 
 let app: FastifyInstance;
@@ -30,7 +29,7 @@ function postIncident(cookie: string, payload: Record<string, unknown>) {
   return app.inject({
     method: 'POST',
     url: '/api/v1/incidents',
-    headers: { cookie, origin: ORIGIN },
+    headers: { cookie, origin: TEST_ORIGIN },
     payload,
   });
 }
@@ -215,13 +214,11 @@ describe('Story 2.8: declare an incident', () => {
   });
 
   it('allows only one open draft per monitor', async () => {
-    const monitorId = randomBytes(16)
-      .toString('hex')
-      .replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+    const monitorId = await createMonitor(app, cookieA, serviceAId);
 
-    // Drafts are monitor-born and arrive in Epic 5; the guard is the partial
-    // unique index, which exists now and is what makes duplicates impossible
-    // rather than merely unlikely.
+    // These hand inserts exercise the partial unique index directly, which is
+    // what makes duplicates impossible rather than merely unlikely.
+    // monitor-draft.integration.test.ts covers drafts made by the command.
     await withTenantTransaction(orgAId, async ({ sql: tx }) => {
       await tx`
         insert into incidents (org_id, title, status, impact, origin_monitor_id, source)

@@ -16,6 +16,30 @@ import type { TenantTransaction } from '@/shared/db/tenant-transaction';
 
 const FOREIGN_KEY_VIOLATION = '23503';
 
+async function insertImpacts(tx: TenantTransaction, incident: IncidentEntity) {
+  if (incident.affectedServices.length === 0) return;
+
+  try {
+    await tx.sql`
+      insert into incident_service_impacts ${tx.sql(
+        incident.affectedServices.map((affected) => ({
+          org_id: incident.orgId,
+          incident_id: incident.id,
+          service_id: affected.serviceId,
+          impact: affected.impact,
+        })),
+      )}
+    `;
+  } catch (error) {
+    // The service key spans (service_id, org_id), so naming another
+    // organization's service fails here rather than silently attaching it.
+    if ((error as { code?: string }).code === FOREIGN_KEY_VIOLATION) {
+      throw new UnknownAffectedServiceError(error as Error);
+    }
+    throw error;
+  }
+}
+
 export default function incidentRepository({
   incidentMapper,
 }: Dependencies): IncidentRepository {
@@ -64,39 +88,58 @@ export default function incidentRepository({
       await tx.sql`
         insert into incidents (
           id, org_id, title, status, impact, started_at, resolved_at,
-          created_by_user_id, origin_monitor_id, source, created_at, updated_at
+          created_by_user_id, origin_monitor_id, origin_failure_episode, source,
+          created_at, updated_at
         ) values (
           ${incident.id}, ${incident.orgId}, ${incident.title},
           ${incident.status}, ${incident.impact}, ${incident.startedAt},
           ${incident.resolvedAt}, ${incident.createdByUserId},
-          ${incident.originMonitorId}, ${incident.source},
-          ${incident.createdAt}, ${incident.updatedAt}
+          ${incident.originMonitorId}, ${incident.originFailureEpisode},
+          ${incident.source}, ${incident.createdAt}, ${incident.updatedAt}
         )
       `;
 
-      if (incident.affectedServices.length === 0) {
-        return;
-      }
+      await insertImpacts(tx, incident);
+    },
 
-      try {
-        await tx.sql`
-          insert into incident_service_impacts ${tx.sql(
-            incident.affectedServices.map((affected) => ({
-              org_id: incident.orgId,
-              incident_id: incident.id,
-              service_id: affected.serviceId,
-              impact: affected.impact,
-            })),
-          )}
-        `;
-      } catch (error) {
-        // The service key spans (service_id, org_id), so naming another
-        // organization's service fails here rather than silently attaching it.
-        if ((error as { code?: string }).code === FOREIGN_KEY_VIOLATION) {
-          throw new UnknownAffectedServiceError(error as Error);
-        }
-        throw error;
-      }
+    async insertDraftIfAbsent(tx: TenantTransaction, incident: IncidentEntity) {
+      // Lock the monitor's open incidents first. A confirm in flight holds the
+      // row lock, so this waits for it, and the insert below (a fresh
+      // statement snapshot) sees the committed status. The bare
+      // `on conflict do nothing` covers both partial unique indexes (open
+      // draft, and monitor + episode) without aborting the transaction. The
+      // not-exists covers a confirmed incident that is still unresolved.
+      await tx.sql`
+        select id from incidents
+        where origin_monitor_id = ${incident.originMonitorId}::uuid
+          and status <> 'resolved'
+        for no key update
+      `;
+      const rows = await tx.sql<{ id: string }[]>`
+        insert into incidents (
+          id, org_id, title, status, impact, started_at, resolved_at,
+          created_by_user_id, origin_monitor_id, origin_failure_episode, source,
+          created_at, updated_at
+        )
+        select
+          ${incident.id}::uuid, ${incident.orgId}, ${incident.title},
+          ${incident.status}, ${incident.impact}, ${incident.startedAt}::timestamptz,
+          ${incident.resolvedAt}::timestamptz, ${incident.createdByUserId},
+          ${incident.originMonitorId}::uuid, ${incident.originFailureEpisode}::integer,
+          ${incident.source}, ${incident.createdAt}::timestamptz,
+          ${incident.updatedAt}::timestamptz
+        where not exists (
+          select 1 from incidents
+          where origin_monitor_id = ${incident.originMonitorId}::uuid
+            and status in ('investigating', 'identified', 'monitoring')
+        )
+        on conflict do nothing
+        returning id
+      `;
+      if (rows.length === 0) return false;
+
+      await insertImpacts(tx, incident);
+      return true;
     },
 
     async updateStatus(

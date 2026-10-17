@@ -15,6 +15,7 @@ export interface IncidentModel {
   resolved_at: Date | null;
   created_by_user_id: string | null;
   origin_monitor_id: string | null;
+  origin_failure_episode: number | null;
   source: IncidentSource;
   created_at: Date;
   updated_at: Date;
@@ -35,6 +36,7 @@ export default function incidentMapper() {
       resolvedAt: row.resolved_at,
       createdByUserId: row.created_by_user_id,
       originMonitorId: row.origin_monitor_id,
+      originFailureEpisode: row.origin_failure_episode,
       source: row.source,
       createdAt: row.created_at,
       updatedAt: row.updated_at,

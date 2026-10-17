@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
+import type { CheckOutcome } from '@/modules/monitoring/checks/check-outcome';
+import {
+  type RecordCheckResultCommandResult,
+  recordCheckResultCommand,
+} from '@/modules/monitoring/commands/record-check-result/record-check-result.handler';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import type {
@@ -322,4 +327,66 @@ export async function insertIncidentUpdate(
       )
     `;
   });
+}
+
+/**
+ * Records one check outcome through `RecordCheckResultCommand`, which moves
+ * the monitor's counters and emits its events. Needs the month's
+ * `check_results` partition (`createCheckResultPartitions`).
+ */
+export function recordCheckOutcome(
+  app: FastifyInstance,
+  orgId: string,
+  monitorId: string,
+  outcome: CheckOutcome<object>,
+) {
+  return app.commandBus.execute<RecordCheckResultCommandResult>(
+    recordCheckResultCommand({ orgId, monitorId, outcome }),
+  );
+}
+
+let outcomeTick = 0;
+const outcomeBase = Date.now();
+const nextCheckedAt = () => new Date(outcomeBase + outcomeTick++);
+
+/** A failed http check outcome. */
+export function failureOutcome(): CheckOutcome {
+  return {
+    status: 'failure',
+    checkedAt: nextCheckedAt(),
+    latencyMs: null,
+    errorCode: 'timeout',
+    errorMessage: 'timed out',
+    metadata: { statusCode: null, redirects: 0 },
+  };
+}
+
+/** A successful check outcome; `metadata` defaults to an http one. */
+export function successOutcome(
+  metadata: object = { statusCode: 200, redirects: 0 },
+): CheckOutcome<object> {
+  return {
+    status: 'success',
+    checkedAt: nextCheckedAt(),
+    latencyMs: 12,
+    errorCode: null,
+    errorMessage: null,
+    metadata,
+  };
+}
+
+/** Moves an incident through `POST /incidents/:id/transition`. */
+export async function transitionIncident(
+  app: FastifyInstance,
+  cookie: string,
+  id: string,
+  status: IncidentStatus,
+) {
+  const response = await app.inject({
+    method: 'POST',
+    url: `/api/v1/incidents/${id}/transition`,
+    headers: { cookie, origin: TEST_ORIGIN },
+    payload: { status },
+  });
+  assert.equal(response.statusCode, 200, response.body);
 }

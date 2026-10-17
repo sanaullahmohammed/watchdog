@@ -39,6 +39,16 @@ export interface IncidentRepository {
   /** Writes the incident and its per-service impact in one transaction. */
   insert(tx: TenantTransaction, incident: IncidentEntity): Promise<void>;
   /**
+   * Inserts a monitor-born draft and its impact unless the monitor already has
+   * one open, an unresolved confirmed incident, or a proposal for this
+   * episode. Takes `for no key update` on the monitor's open incidents first,
+   * held until the transaction ends. Returns whether a row was created.
+   */
+  insertDraftIfAbsent(
+    tx: TenantTransaction,
+    incident: IncidentEntity,
+  ): Promise<boolean>;
+  /**
    * `lock` holds a row lock until the transaction ends. Transitions take
    * `update` (FOR NO KEY UPDATE), so two of them cannot both pass the legality
    * check against the same status. Posted updates take `share`, so they record
