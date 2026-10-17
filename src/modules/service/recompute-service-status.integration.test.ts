@@ -11,8 +11,20 @@ import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { incidentConfirmedEvent } from '@/shared/events/incident.events';
 import { maintenanceStartedEvent } from '@/shared/events/maintenance.events';
+import {
+  monitorCheckFailedEvent,
+  monitorCheckSucceededEvent,
+  monitorStateChangedEvent,
+} from '@/shared/events/monitor.events';
 import { serviceStatusChangedEvent } from '@/shared/events/service.events';
-import { createService, declareIncident } from '@/shared/testing/fixtures';
+import {
+  archiveService,
+  createMonitor,
+  createService,
+  declareIncident,
+  restoreService,
+  setMonitorCheckState,
+} from '@/shared/testing/fixtures';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /** Story 2.17 — recompute and announce service status. */
@@ -484,5 +496,234 @@ describe('Story 2.17: recompute and announce service status', () => {
     recomputer.handler({ type: 'incident.created', payload: { orgId: '' } });
 
     await assert.doesNotReject(settle());
+  });
+
+  describe('Story 5.10: monitor state moves service status', () => {
+    const fresh = async (label: string) => {
+      const slug = `${tag}-${label}`;
+      return createService(app, cookieA, { name: slug, slug });
+    };
+
+    const monitorFor = async (
+      serviceId: string,
+      failures: number,
+      overrides: object = {},
+      state: { lastCheckedAt?: Date | null } = {},
+    ) => {
+      const monitorId = await createMonitor(app, cookieA, serviceId, {
+        failureThreshold: 3,
+        ...overrides,
+      });
+      await setMonitorCheckState(orgAId, monitorId, {
+        consecutiveFailures: failures,
+        ...state,
+      });
+      return monitorId;
+    };
+
+    const base = (monitorId: string, serviceId: string) => ({
+      orgId: orgAId,
+      monitorId,
+      serviceId,
+      monitorName: 'mon',
+    });
+
+    const emitStateChanged = async (monitorId: string, serviceId: string) => {
+      app.eventBus.emit(
+        monitorStateChangedEvent({
+          ...base(monitorId, serviceId),
+          from: 'healthy',
+          to: 'failing',
+          failureEpisode: 1,
+        }),
+      );
+      await settle();
+    };
+
+    it('moves the service on monitor.state_changed, announcing once', async () => {
+      const id = await fresh('m-trigger');
+      const monitorId = await monitorFor(id, 3);
+      await emitStateChanged(monitorId, id);
+
+      assert.equal(await statusOf(orgAId, id), 'major_outage');
+      assert.deepEqual(announcedFor(id), [
+        {
+          id,
+          orgId: orgAId,
+          slug: `${tag}-m-trigger`,
+          from: 'operational',
+          to: 'major_outage',
+        },
+      ]);
+    });
+
+    it('is not moved by check events', async () => {
+      const id = await fresh('m-checks');
+      const monitorId = await monitorFor(id, 3);
+      const checkedAt = new Date().toISOString();
+      app.eventBus.emit(
+        monitorCheckFailedEvent({
+          ...base(monitorId, id),
+          checkedAt,
+          errorCode: 'timeout',
+        }),
+      );
+      app.eventBus.emit(
+        monitorCheckSucceededEvent({ ...base(monitorId, id), checkedAt }),
+      );
+      await settle();
+
+      assert.equal(await statusOf(orgAId, id), 'operational');
+      assert.deepEqual(announcedFor(id), []);
+    });
+
+    it("takes the worst of a service's monitors", async () => {
+      const id = await fresh('m-worst');
+      await monitorFor(id, 0);
+      const failing = await monitorFor(id, 3);
+      await emitStateChanged(failing, id);
+      assert.equal(await statusOf(orgAId, id), 'major_outage');
+    });
+
+    it('ignores a disabled monitor', async () => {
+      const id = await fresh('m-disabled');
+      const monitorId = await monitorFor(id, 3, { enabled: false });
+      await emitStateChanged(monitorId, id);
+      assert.equal(await statusOf(orgAId, id), 'operational');
+    });
+
+    it('ignores a monitor that has never been checked', async () => {
+      const id = await fresh('m-unchecked');
+      const monitorId = await monitorFor(id, 3, {}, { lastCheckedAt: null });
+      await emitStateChanged(monitorId, id);
+      assert.equal(await statusOf(orgAId, id), 'operational');
+    });
+
+    it('lets a manual override beat a failing monitor', async () => {
+      const id = await fresh('m-override');
+      const monitorId = await monitorFor(id, 3);
+      const put = await api(cookieA, 'PUT', `/services/${id}/status-override`, {
+        status: 'degraded',
+      });
+      assert.equal(put.statusCode, 200, put.body);
+      await emitStateChanged(monitorId, id);
+      assert.equal(await statusOf(orgAId, id), 'degraded');
+    });
+
+    it('resolves the worst of a monitor and an incident', async () => {
+      const failingId = await fresh('m-fail-inc');
+      const failing = await monitorFor(failingId, 3);
+      await silentIncident(orgAId, failingId, 'minor', 'investigating');
+      await emitStateChanged(failing, failingId);
+      assert.equal(await statusOf(orgAId, failingId), 'major_outage');
+
+      const healthyId = await fresh('m-ok-inc');
+      const healthy = await monitorFor(healthyId, 0);
+      await silentIncident(orgAId, healthyId, 'minor', 'investigating');
+      await emitStateChanged(healthy, healthyId);
+      assert.equal(await statusOf(orgAId, healthyId), 'degraded');
+    });
+
+    it('returns to operational when the monitor is disabled', async () => {
+      const id = await fresh('m-disable');
+      const monitorId = await monitorFor(id, 3);
+      await emitStateChanged(monitorId, id);
+      assert.equal(await statusOf(orgAId, id), 'major_outage');
+
+      const patched = await api(cookieA, 'PATCH', `/monitors/${monitorId}`, {
+        enabled: false,
+      });
+      assert.equal(patched.statusCode, 200, patched.body);
+      await settle();
+      assert.equal(await statusOf(orgAId, id), 'operational');
+      assert.deepEqual(
+        announcedFor(id).map((c) => [c.from, c.to]),
+        [
+          ['operational', 'major_outage'],
+          ['major_outage', 'operational'],
+        ],
+      );
+    });
+
+    it('eases to degraded when the threshold is raised above the failures', async () => {
+      const id = await fresh('m-threshold');
+      const monitorId = await monitorFor(id, 3);
+      await emitStateChanged(monitorId, id);
+      assert.equal(await statusOf(orgAId, id), 'major_outage');
+
+      const patched = await api(cookieA, 'PATCH', `/monitors/${monitorId}`, {
+        failureThreshold: 5,
+      });
+      assert.equal(patched.statusCode, 200, patched.body);
+      await settle();
+      assert.equal(await statusOf(orgAId, id), 'degraded');
+    });
+
+    it('corrects a lost event on the next reconciliation', async () => {
+      const id = await fresh('m-lost');
+      await monitorFor(id, 3);
+      assert.equal(await statusOf(orgAId, id), 'operational');
+
+      const corrected =
+        await app.commandBus.execute<RecomputeServiceStatusCommandResult>(
+          recomputeServiceStatusCommand({ orgId: orgAId }),
+        );
+      assert.deepEqual(
+        corrected
+          .filter((change) => change.id === id)
+          .map((change) => [change.from, change.to]),
+        [['operational', 'major_outage']],
+      );
+      assert.equal(await statusOf(orgAId, id), 'major_outage');
+    });
+
+    it('skips an archived service, and a restore brings the status back', async () => {
+      const id = await fresh('m-archived');
+      await monitorFor(id, 3);
+      await archiveService(app, cookieA, id);
+      await settle();
+
+      const changes = await recomputer.recompute(orgAId);
+      assert.deepEqual(
+        changes.filter((change) => change.id === id),
+        [],
+      );
+      assert.equal(await statusOf(orgAId, id), 'operational');
+
+      await restoreService(app, cookieA, id);
+      await settle();
+      assert.equal(await statusOf(orgAId, id), 'major_outage');
+      assert.deepEqual(
+        announcedFor(id).map((c) => [c.from, c.to]),
+        [['operational', 'major_outage']],
+      );
+    });
+
+    it("does not read another organization's monitors", async () => {
+      const idA = await fresh('m-scope-a');
+      const slugB = `${tag}-m-scope-b`;
+      const idB = await createService(app, cookieB, {
+        name: slugB,
+        slug: slugB,
+      });
+      const monitorB = await createMonitor(app, cookieB, idB, {
+        failureThreshold: 3,
+      });
+      await setMonitorCheckState(orgBId, monitorB, { consecutiveFailures: 3 });
+      const before = announced.length;
+
+      const changes = await recomputer.recompute(orgAId);
+
+      assert.equal(await statusOf(orgAId, idA), 'operational');
+      assert.equal(await statusOf(orgBId, idB), 'operational');
+      assert.deepEqual(
+        changes.filter((change) => change.orgId !== orgAId),
+        [],
+      );
+      assert.deepEqual(
+        announced.slice(before).filter((change) => change.orgId !== orgAId),
+        [],
+      );
+    });
   });
 });

@@ -3,6 +3,7 @@ import { resolveServiceStatus } from '@/modules/service/domain/effective-status'
 import type { ServiceStatus } from '@/modules/service/domain/service.types';
 import type { Action } from '@/shared/cqrs/bus.types';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { serviceMonitorStateOf } from '@/shared/domain/monitor-state';
 import {
   incidentConfirmedEvent,
   incidentCreatedEvent,
@@ -17,6 +18,7 @@ import {
   maintenanceStartedEvent,
   maintenanceUpdatedEvent,
 } from '@/shared/events/maintenance.events';
+import { monitorStateChangedEvent } from '@/shared/events/monitor.events';
 import {
   serviceManualOverrideClearedEvent,
   serviceManualOverrideSetEvent,
@@ -33,6 +35,10 @@ import {
  * because an edit can rewrite an active incident's or an in-progress window's
  * affected services, and a restored service returns with the value it had
  * when it was archived. Leaving any of them out lets status drift silently.
+ *
+ * `monitor.state_changed` is the monitor input (DOMAIN M3). The handler reads
+ * only `orgId`; state comes from the stored monitor rows (M1). Check events
+ * are not triggers: only a state move can change a status.
  */
 export const RECOMPUTE_TRIGGERS = [
   incidentCreatedEvent,
@@ -48,6 +54,7 @@ export const RECOMPUTE_TRIGGERS = [
   serviceManualOverrideSetEvent,
   serviceManualOverrideClearedEvent,
   serviceRestoredEvent,
+  monitorStateChangedEvent,
 ] as const;
 
 export type RecomputeServiceStatusCommandResult = Promise<
@@ -97,8 +104,7 @@ export default function makeRecomputeServiceStatus({
           manualOverride: service.manualOverride,
           activeIncidentImpacts: service.activeIncidentImpacts,
           hasActiveMaintenance: service.hasActiveMaintenance,
-          // Monitor-derived state arrives with Epic 5.
-          monitorState: null,
+          monitorState: serviceMonitorStateOf(service.monitors),
         });
         if (to === service.lastKnownStatus) continue;
 

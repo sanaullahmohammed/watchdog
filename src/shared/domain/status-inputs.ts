@@ -2,7 +2,7 @@
  * Value ladders that cross module boundaries.
  *
  * Effective service status reads incident impact, which the `incident` module
- * produces, and monitor-derived state, which `monitoring` will. The public
+ * produces, and monitor-derived state, which `monitoring` produces. The public
  * status payload reads all three lifecycles at once. Modules may not import one
  * another, so every ladder more than one module names lives here rather than
  * inside any one producer, and each module re-exports what it owns. So do the

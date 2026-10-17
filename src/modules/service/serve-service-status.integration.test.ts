@@ -7,7 +7,12 @@ import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 import { maintenanceStartedEvent } from '@/shared/events/maintenance.events';
-import { createService, declareIncident } from '@/shared/testing/fixtures';
+import {
+  createMonitor,
+  createService,
+  declareIncident,
+  setMonitorCheckState,
+} from '@/shared/testing/fixtures';
 import { gql } from '@/shared/testing/graphql';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
@@ -159,13 +164,44 @@ describe('Story 2.18: serve resolved status through the service queries', () => 
     });
     await settle();
 
-    // Monitor-derived state is the fourth input. Nothing can set it until
-    // Epic 5 adds monitors, which carries that case.
     const statuses = await listedStatuses(cookieA);
     assert.equal(statuses.get(`${tag}-quiet`), 'operational');
     assert.equal(statuses.get(`${tag}-incident`), 'partial_outage');
     assert.equal(statuses.get(`${tag}-maintained`), 'maintenance');
     assert.equal(statuses.get(`${tag}-overridden`), 'degraded');
+  });
+
+  it('lists a monitor-derived status on REST and GraphQL alike', async () => {
+    const ladder: [string, number, string][] = [
+      ['mon-out', 3, 'major_outage'],
+      ['mon-deg', 1, 'degraded'],
+      ['mon-ok', 0, 'operational'],
+    ];
+    for (const [label, failures] of ladder) {
+      const slug = `${tag}-${label}`;
+      const id = await createService(app, cookieA, { name: slug, slug });
+      const monitorId = await createMonitor(app, cookieA, id, {
+        failureThreshold: 3,
+      });
+      await setMonitorCheckState(orgAId, monitorId, {
+        consecutiveFailures: failures,
+      });
+    }
+    await recomputer.recompute(orgAId);
+
+    const rest = await listedStatuses(cookieA);
+    const graph = (
+      await gql<{ services: ServiceBody[] }>(
+        app,
+        `{ services { ${SERVICE_FIELDS} } }`,
+        { cookie: cookieA },
+      )
+    ).body.data?.services;
+    const viaGraph = new Map(graph?.map((s) => [s.slug, s.lastKnownStatus]));
+    for (const [label, , expected] of ladder) {
+      assert.equal(rest.get(`${tag}-${label}`), expected);
+      assert.equal(viaGraph.get(`${tag}-${label}`), expected);
+    }
   });
 
   it('serves the stored status rather than recomputing it per request', async () => {

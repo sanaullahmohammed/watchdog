@@ -1,5 +1,6 @@
 import type { ServiceStatus } from '@/modules/service/domain/service.types';
 import type { TenantTransaction } from '@/shared/db/tenant-transaction';
+import type { MonitorStateInput } from '@/shared/domain/monitor-state';
 import {
   ACTIVE_INCIDENT_STATUSES,
   type IncidentImpact,
@@ -14,12 +15,13 @@ export type LiveServiceStatusInputs = {
   lastKnownStatus: ServiceStatus;
   activeIncidentImpacts: IncidentImpact[];
   hasActiveMaintenance: boolean;
+  monitors: MonitorStateInput[];
 };
 
 /**
  * The status recomputation handler's reads and its one write.
  *
- * It reads the incident and maintenance tables directly. That is a read of
+ * It reads the incident, maintenance and monitor tables directly. That is a read of
  * data, not an import of another module's code, and it is the only way to
  * gather the inputs without a module calling across a boundary; DOMAIN.md's
  * Status recomputation section records why the service module owns this.
@@ -77,6 +79,24 @@ export default function serviceStatusRepository() {
       `;
       const maintained = new Set(underMaintenance.map((row) => row.service_id));
 
+      // No lock is needed: monitor.state_changed is emitted only after the
+      // check or edit commits, and this read runs after the services lock in
+      // its own READ COMMITTED statement, so the recomputation that event
+      // triggers sees the committed counters. RLS scopes the rows.
+      const monitorRows = await tx.sql<
+        {
+          service_id: string;
+          enabled: boolean;
+          last_checked_at: Date | null;
+          consecutive_failures: number;
+          failure_threshold: number;
+        }[]
+      >`
+        select service_id, enabled, last_checked_at, consecutive_failures,
+          failure_threshold
+        from monitors
+      `;
+
       return services.map((service) => ({
         id: service.id,
         orgId: service.org_id,
@@ -87,6 +107,14 @@ export default function serviceStatusRepository() {
           .filter((row) => row.service_id === service.id)
           .map((row) => row.impact),
         hasActiveMaintenance: maintained.has(service.id),
+        monitors: monitorRows
+          .filter((row) => row.service_id === service.id)
+          .map((row) => ({
+            enabled: row.enabled,
+            lastCheckedAt: row.last_checked_at,
+            consecutiveFailures: row.consecutive_failures,
+            failureThreshold: row.failure_threshold,
+          })),
       }));
     },
 

@@ -477,6 +477,22 @@ describe('Story 5.9: checks run on the worker loop', () => {
     assert.equal((await results(org.orgId, monitorId)).length, 1);
   });
 
+  it('moves the service status when a real check fails', async () => {
+    const org = await newOrg();
+    await make(org, '/error', { failureThreshold: 1 });
+    await runMonitorPass(app, quietLogger, { orgIds: [org.orgId] });
+    await app.eventBus.drain();
+
+    const [row] = await withTenantTransaction(
+      org.orgId,
+      ({ sql: tx }) =>
+        tx<{ last_known_status: string }[]>`
+          select last_known_status from services where id = ${org.serviceId}
+        `,
+    );
+    assert.equal(row.last_known_status, 'major_outage');
+  });
+
   it('rejects and runs no command when tenant discovery fails', async () => {
     // Last in the file: it closes the pool, so this file's rows go first.
     await deleteOrgs();
