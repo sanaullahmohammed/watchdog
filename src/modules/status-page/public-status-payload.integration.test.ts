@@ -111,7 +111,7 @@ const PAGE_SELECTION = `
     id title description status
     scheduledStartAt scheduledEndAt startedAt affectedServiceIds
   }
-  uptime { windowDays services { serviceId days { date uptimeRatio } } }
+  uptime { windowDays services { serviceId days { date uptimeRatio worstStatus } } }
 `;
 
 async function fetchPageOverGraphql(slug: string) {
@@ -822,8 +822,8 @@ describe('Story 3.3: serve the public status payload', () => {
   it('carries the uptime window in its final shape and explicitly empty', async () => {
     const page = await fetchPage(slugA);
 
-    // Epic 5 fills this. Until then an integrator can tell "no data yet" from
-    // "100% uptime", which a missing field would not have said.
+    // This organization has no rollups, so an integrator can tell "no data
+    // yet" from "100% uptime", which a missing field would not have said.
     assert.deepEqual(page.uptime, {
       windowDays: UPTIME_WINDOW_DAYS,
       services: [],

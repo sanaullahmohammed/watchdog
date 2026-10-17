@@ -5,6 +5,7 @@ import type {
   PublicMaintenanceRow,
   PublicServiceRow,
   PublicStatusReads,
+  PublicUptimeRow,
 } from '@/modules/status-page/database/public-status.repository';
 import {
   type Published,
@@ -26,6 +27,7 @@ export type PublicStatusPageView = {
   services: PublicServiceRow[];
   incidents: Published<PublicIncidentRow>[];
   maintenance: Published<PublicMaintenanceRow>[];
+  uptime: PublicUptimeRow[];
   generatedAt: Date;
 };
 
@@ -54,7 +56,7 @@ export default function makeGetPublicStatusPage({
       // organization the slug resolved to, so RLS decides what is visible and
       // one page can never carry another tenant's rows.
       //
-      // The three reads share one snapshot: repeatable read, read only. Under
+      // The four reads share one snapshot: repeatable read, read only. Under
       // the default, read committed, each statement would see what had
       // committed when it began, and an incident declared between two of them
       // could appear on a page whose services were read before it existed.
@@ -72,6 +74,7 @@ export default function makeGetPublicStatusPage({
           services: await publicStatusRepository.listPublicServices(tx),
           incidents: await publicStatusRepository.listActiveIncidents(tx),
           maintenance: await publicStatusRepository.listOpenMaintenance(tx),
+          uptime: await publicStatusRepository.listPublicUptime(tx),
         }),
         { isolation: 'repeatable read', readOnly: true },
       );
@@ -81,6 +84,7 @@ export default function makeGetPublicStatusPage({
         services: reads.services,
         incidents: publishable(reads.incidents),
         maintenance: publishable(reads.maintenance),
+        uptime: reads.uptime,
         generatedAt: new Date(),
       };
     },

@@ -43,3 +43,12 @@ Feature: Public status page
     Then the page answers 404
     And the body is the one answer every miss gets
     And a slug over 100 characters gets that same answer
+
+  Scenario: The 90-day uptime comes from the checks monitors recorded
+    Given a monitor for "Checkout" recorded a failure yesterday
+    And the uptime rollups were refreshed
+    When a visitor opens the organization's status page with no credentials
+    Then the page answers 200
+    And the uptime covers 90 days ending today for "Checkout"
+    And yesterday is "0" and "major_outage" for "Checkout"
+    And "Search" has no uptime but is on the page

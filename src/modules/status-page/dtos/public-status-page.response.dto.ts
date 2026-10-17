@@ -100,10 +100,10 @@ export const publicStatusPageResponseDtoSchema = Type.Object({
     }),
   ),
   /**
-   * Shaped now, filled in Epic 5. `services` is empty until rollups exist, so
-   * an integrator can tell "no data yet" from "100% uptime"; the per-day shape
-   * is the one DOMAIN's `uptime_rollups` already implies. See DOMAIN, "Public
-   * status page", for what a day with no checks carries.
+   * The last 90 UTC days for each visible service with at least one rollup in
+   * the window, in the services list's order. A service with none is absent, so
+   * an integrator can tell "no data yet" from "100% uptime". See DOMAIN,
+   * "Public status page", for what a day with no checks carries.
    */
   uptime: Type.Object({
     windowDays: Type.Integer(),
