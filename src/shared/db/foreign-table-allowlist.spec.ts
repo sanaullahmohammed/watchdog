@@ -67,6 +67,7 @@ const FOREIGN: Readonly<Record<string, readonly string[]>> = {
     'maintenance',
     'maintenance_services',
     'organization',
+    'uptime_rollups',
   ],
 };
 

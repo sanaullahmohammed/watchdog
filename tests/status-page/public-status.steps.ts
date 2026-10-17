@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { Given, Then, When } from '@cucumber/cucumber';
+import { refreshUptimeRollupsCommand } from '@/modules/monitoring/commands/refresh-uptime-rollups/refresh-uptime-rollups.handler';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import {
+  createMonitor,
+  insertCheckResult,
+  utcToday,
+} from '@/shared/testing/fixtures';
 import { signUpWithOrg, TEST_ORIGIN } from '@/shared/testing/tenant';
 import type { ICustomWorld } from '../support/custom-world';
 
@@ -11,6 +17,17 @@ type PublicPage = {
   overallStatus: string;
   groups: { services: { name: string; status: string }[] }[];
   activeIncidents: { title: string; affectedServiceIds: string[] }[];
+  uptime: {
+    windowDays: number;
+    services: {
+      serviceId: string;
+      days: {
+        date: string;
+        uptimeRatio: number | null;
+        worstStatus: string | null;
+      }[];
+    }[];
+  };
   maintenance: {
     title: string;
     status: string;
@@ -293,5 +310,87 @@ Then(
     await visit(this, `${this.context.slug}-${'n'.repeat(150)}`);
     assert.equal(this.context.status, 404, this.context.body);
     assert.deepEqual(missBody(this.context.body), missBody(first));
+  },
+);
+
+const DAY = 24 * hour;
+
+Given(
+  'a monitor for {string} recorded a failure yesterday',
+  async function (this: ICustomWorld, service: string) {
+    const serviceId = this.context.services[service];
+    const monitorId = await createMonitor(
+      this.server,
+      this.context.cookie,
+      serviceId,
+    );
+    const yesterday = new Date((await utcToday()).getTime() - DAY + 12 * hour);
+    await insertCheckResult(this.context.orgId, {
+      monitorId,
+      serviceId,
+      checkedAt: yesterday,
+      status: 'failure',
+    });
+  },
+);
+
+Given('the uptime rollups were refreshed', async function (this: ICustomWorld) {
+  await this.server.commandBus.execute(
+    refreshUptimeRollupsCommand({ orgId: this.context.orgId }),
+  );
+});
+
+function uptimeOf(world: ICustomWorld, name: string) {
+  return page(world).uptime.services.find(
+    (entry) => entry.serviceId === world.context.services[name],
+  );
+}
+
+Then(
+  'the uptime covers 90 days ending today for {string}',
+  async function (this: ICustomWorld, name: string) {
+    const entry = uptimeOf(this, name);
+    assert.ok(entry, `${name} has no uptime`);
+    assert.equal(page(this).uptime.windowDays, 90);
+    assert.equal(entry.days.length, 90);
+    assert.equal(
+      entry.days.at(-1)?.date,
+      (await utcToday()).toISOString().slice(0, 10),
+    );
+    assert.equal(
+      entry.days[0].date,
+      new Date((await utcToday()).getTime() - 89 * DAY)
+        .toISOString()
+        .slice(0, 10),
+    );
+  },
+);
+
+Then(
+  'yesterday is {string} and {string} for {string}',
+  async function (
+    this: ICustomWorld,
+    ratio: string,
+    worst: string,
+    name: string,
+  ) {
+    const yesterday = new Date((await utcToday()).getTime() - DAY)
+      .toISOString()
+      .slice(0, 10);
+    const day = uptimeOf(this, name)?.days.find((d) => d.date === yesterday);
+    assert.ok(day, `no ${yesterday} for ${name}`);
+    assert.equal(day.uptimeRatio, Number(ratio));
+    assert.equal(day.worstStatus, worst);
+  },
+);
+
+Then(
+  '{string} has no uptime but is on the page',
+  function (this: ICustomWorld, name: string) {
+    assert.equal(uptimeOf(this, name), undefined);
+    const listed = page(this)
+      .groups.flatMap((group) => group.services)
+      .some((service) => service.name === name);
+    assert.ok(listed, `${name} is not on the page`);
   },
 );

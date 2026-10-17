@@ -1,4 +1,7 @@
-import type { PublicServiceRow } from '@/modules/status-page/database/public-status.repository';
+import type {
+  PublicServiceRow,
+  PublicUptimeRow,
+} from '@/modules/status-page/database/public-status.repository';
 import { overallStatus } from '@/modules/status-page/domain/public-page';
 import {
   type PublicStatusPageResponseDto,
@@ -16,6 +19,7 @@ export function toPublicStatusPage({
   services,
   incidents,
   maintenance,
+  uptime,
   generatedAt,
 }: PublicStatusPageView): PublicStatusPageResponseDto {
   return {
@@ -47,7 +51,10 @@ export function toPublicStatusPage({
       startedAt: window.startedAt?.toISOString() ?? null,
       affectedServiceIds: window.affectedServiceIds,
     })),
-    uptime: { windowDays: UPTIME_WINDOW_DAYS, services: [] },
+    uptime: {
+      windowDays: UPTIME_WINDOW_DAYS,
+      services: groupUptime(services, uptime),
+    },
   };
 }
 
@@ -85,4 +92,39 @@ function groupServices(
   }
 
   return groups;
+}
+
+/**
+ * Uptime for the services that have any, in the services list's order. The
+ * rows arrive grouped by service and oldest day first; this never re-sorts.
+ */
+function groupUptime(
+  services: PublicServiceRow[],
+  rows: PublicUptimeRow[],
+): PublicStatusPageResponseDto['uptime']['services'] {
+  const byService = new Map<string, PublicUptimeRow[]>();
+  for (const row of rows) {
+    const days = byService.get(row.serviceId);
+    if (days) {
+      days.push(row);
+    } else {
+      byService.set(row.serviceId, [row]);
+    }
+  }
+
+  return services.flatMap((service) => {
+    const days = byService.get(service.id);
+    return days
+      ? [
+          {
+            serviceId: service.id,
+            days: days.map((day) => ({
+              date: day.date,
+              uptimeRatio: day.uptimeRatio,
+              worstStatus: day.worstStatus,
+            })),
+          },
+        ]
+      : [];
+  });
 }

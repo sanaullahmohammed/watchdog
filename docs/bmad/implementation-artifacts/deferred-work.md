@@ -224,3 +224,14 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: ARCHITECTURE.md 6.1 says a migration creates "two `SECURITY DEFINER` functions" and grants `watchdog_app` EXECUTE "on those two functions and nothing more". Story 5.11 adds a third, `check_results_retained_from()`, which the lost-range rule needs.
   evidence: Review Triage Log B1; `docs/genesis/ARCHITECTURE.md:538`; `db/migrations/20261017120000_create_uptime_rollups.sql`. AGENTS.md: a decision changes in its owning document, which is the owner's to edit.
   target: Genesis edit (owner).
+
+## From Story 5.12 (2026-10-17)
+
+- source_spec: `spec-5-12-fill-the-90-day-uptime-in-the-public-payload.md`
+  summary: DOMAIN's Public status page still says uptime is "shaped now and filled in Epic 5". Its "90-day query sketch" filters on the session-zone `current_date`, which contradicts its own UTC-day rule, and shows neither gap-filling nor visibility. Both now describe less than the code does.
+  evidence: Review Triage Log B1; `docs/genesis/DOMAIN.md:1117` and `:1265-1275`; `src/modules/status-page/database/public-status.repository.ts` `listPublicUptime`.
+  target: Genesis edit (owner).
+- source_spec: `spec-5-12-fill-the-90-day-uptime-in-the-public-payload.md`
+  summary: `ROLLUP_RETENTION_DAYS` accepts values below 90. Pruning would then empty the older part of every public 90-day bar, and those days would read as "no checks ran". The minimum could be the window length.
+  evidence: Review Triage Log E1; `src/config/check-results-env.ts` (minimum 1, from 5.11's frozen rule); DOMAIN, Public status page.
+  target: Epic 8 (default).

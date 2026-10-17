@@ -10,10 +10,10 @@ import { UPTIME_DAY_STATUSES } from '@/shared/domain/status-inputs';
  * Epic 3 retrospective, action item 12 (R-17): the uptime day's shape, on both
  * surfaces at once.
  *
- * Epic 5 fills `uptime.services`, so until then no request carries a day and
- * neither the parity contract, which compares request shapes, nor the
- * REST-against-GraphQL value test, which sees an empty array, would notice a
- * field added to one surface and not the other. This reads both declarations.
+ * `uptime.services` carries days only for services with rollups, so the parity
+ * contract, which compares request shapes, cannot see a day, and the value
+ * test compares only the fields it selects, so a field added to one surface
+ * and not the other could go unnoticed. This reads both declarations.
  */
 
 type JsonSchema = {

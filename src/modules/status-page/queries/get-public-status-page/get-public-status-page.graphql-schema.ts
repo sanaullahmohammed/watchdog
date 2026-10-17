@@ -75,7 +75,7 @@ const publicStatusPageSchema = `
     days: [PublicStatusUptimeDay!]!
   }
 
-  "Shaped now, filled in Epic 5: services is empty until rollups exist."
+  "Visible services with at least one rollup in the window, in the services list's order."
   type PublicStatusUptime {
     windowDays: Int!
     services: [PublicStatusUptimeService!]!

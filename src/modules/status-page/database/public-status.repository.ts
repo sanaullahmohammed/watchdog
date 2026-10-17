@@ -6,6 +6,7 @@ import {
   type IncidentStatus,
   type MaintenanceStatus,
   type ServiceStatus,
+  type UptimeDayStatus,
 } from '@/shared/domain/status-inputs';
 
 export type PublicServiceRow = {
@@ -47,6 +48,15 @@ export type PublicMaintenanceRow = {
   affectedServices: AffectedService[];
 };
 
+/** One UTC day of one visible service. Null on a day with no rollup row. */
+export type PublicUptimeRow = {
+  serviceId: string;
+  /** `YYYY-MM-DD`, a UTC day. */
+  date: string;
+  uptimeRatio: number | null;
+  worstStatus: UptimeDayStatus | null;
+};
+
 /**
  * Everything one page is built from, read together under one transaction.
  * Incidents and windows arrive unfiltered by the services they name: which of
@@ -56,6 +66,7 @@ export type PublicStatusReads = {
   services: PublicServiceRow[];
   incidents: PublicIncidentRow[];
   maintenance: PublicMaintenanceRow[];
+  uptime: PublicUptimeRow[];
 };
 
 /** What is happening or about to. A completed window is history. */
@@ -131,6 +142,53 @@ export default function publicStatusRepository() {
         groupId: row.group_id,
         groupName: row.group_name,
         groupDisplayOrder: row.group_display_order,
+      }));
+    },
+
+    /**
+     * The 90 UTC days `today - 89 .. today` for every visible service that has
+     * at least one rollup in that window, oldest first. A day with no rollup
+     * row carries nulls. Days come from an integer series over the database's
+     * UTC date, because a date series resolves to timestamptz and would follow
+     * the session time zone. Ordered by service id then day; the presenter, not
+     * this query, decides the order services appear in.
+     */
+    async listPublicUptime(tx: TenantTransaction): Promise<PublicUptimeRow[]> {
+      const rows = await tx.sql<
+        {
+          service_id: string;
+          date: string;
+          uptime_ratio: string | null;
+          worst_status: UptimeDayStatus | null;
+        }[]
+      >`
+        select i.service_id, to_char(d.day, 'YYYY-MM-DD') as date,
+               r.uptime_ratio, r.worst_status
+        from (
+          select distinct rr.service_id
+          from uptime_rollups rr
+          join services s on s.id = rr.service_id and s.org_id = rr.org_id
+          where s.is_public = true and s.archived_at is null
+            and rr.day between (now() at time zone 'UTC')::date - 89
+                          and (now() at time zone 'UTC')::date
+        ) i
+        cross join (
+          select (now() at time zone 'UTC')::date - 89
+                 + generate_series(0, 89) as day
+        ) d
+        -- Tenant-scoped by RLS, like every read here.
+        left join uptime_rollups r
+          on r.service_id = i.service_id and r.day = d.day
+        order by i.service_id asc, d.day asc
+      `;
+
+      return rows.map((row) => ({
+        serviceId: row.service_id,
+        date: row.date,
+        // numeric arrives as a string ("0.75000"); the payload carries a number.
+        uptimeRatio:
+          row.uptime_ratio === null ? null : Number(row.uptime_ratio),
+        worstStatus: row.worst_status,
       }));
     },
 

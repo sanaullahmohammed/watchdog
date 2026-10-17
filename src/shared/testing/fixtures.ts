@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import type { UptimeDayStatus } from '@/shared/domain/status-inputs';
 import { TEST_ORIGIN } from '@/shared/testing/tenant';
 
 /**
@@ -126,6 +127,22 @@ export const restoreService = (
   serviceId: string,
 ) => post(app, cookie, serviceId, 'restore');
 
+/** Changes a service through `PATCH /api/v1/services/:id`. */
+export async function updateService(
+  app: FastifyInstance,
+  cookie: string,
+  serviceId: string,
+  changes: object,
+) {
+  const response = await app.inject({
+    method: 'PATCH',
+    url: `/api/v1/services/${serviceId}`,
+    headers: { cookie, origin: TEST_ORIGIN },
+    payload: changes,
+  });
+  assert.equal(response.statusCode, 200, response.body);
+}
+
 /**
  * Writes a monitor's check counters directly, for tests that need arbitrary
  * counters; a real check goes through `RecordCheckResultCommand`.
@@ -208,6 +225,42 @@ export function utcToday(): Promise<Date> {
     select (now() at time zone 'UTC')::date::text as today
   `.then((rows) => new Date(`${rows[0].today}T00:00:00Z`));
   return utcTodayPromise;
+}
+
+/**
+ * Upserts one uptime rollup row directly, with counts consistent with its
+ * ratio (100 checks). `day` is a UTC midnight `Date`, usually from `utcToday()`.
+ */
+export async function insertUptimeRollup(
+  orgId: string,
+  rollup: {
+    serviceId: string;
+    day: Date;
+    uptimeRatio: number;
+    worstStatus: UptimeDayStatus;
+  },
+) {
+  const total = 100;
+  const successful = Math.round(rollup.uptimeRatio * total);
+  await withTenantTransaction(orgId, async ({ sql: tx }) => {
+    await tx`
+      insert into uptime_rollups (
+        org_id, service_id, day, total_checks, successful_checks,
+        failed_checks, uptime_ratio, worst_status
+      ) values (
+        ${orgId}, ${rollup.serviceId}, ${rollup.day.toISOString().slice(0, 10)}::date,
+        ${total}, ${successful}, ${total - successful},
+        ${rollup.uptimeRatio}, ${rollup.worstStatus}
+      )
+      on conflict (org_id, service_id, day) do update set
+        total_checks = excluded.total_checks,
+        successful_checks = excluded.successful_checks,
+        failed_checks = excluded.failed_checks,
+        uptime_ratio = excluded.uptime_ratio,
+        worst_status = excluded.worst_status,
+        updated_at = now()
+    `;
+  });
 }
 
 /** Sets an organization's rollup watermark directly, to arrange a catch-up. */
