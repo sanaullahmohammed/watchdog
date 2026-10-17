@@ -10,6 +10,7 @@ import {
   maintainCheckResultPartitionsCommand,
 } from '@/modules/monitoring/commands/maintain-check-result-partitions/maintain-check-result-partitions.handler';
 import { recordCheckResultCommand } from '@/modules/monitoring/commands/record-check-result/record-check-result.handler';
+import { refreshUptimeRollupsCommand } from '@/modules/monitoring/commands/refresh-uptime-rollups/refresh-uptime-rollups.handler';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
@@ -217,7 +218,7 @@ describe('Story 5.3: check_results partitions', () => {
     }
   });
 
-  it('exposes exactly the two definer functions to the application role', async () => {
+  it('exposes exactly the three definer functions to the application role', async () => {
     const [{ me }] = await owner<{ me: string }[]>`select current_user as me`;
     const rows = await owner<
       {
@@ -239,6 +240,7 @@ describe('Story 5.3: check_results partitions', () => {
     assert.deepEqual(
       rows.map((row) => [row.proname, row.args]),
       [
+        ['check_results_retained_from', ''],
         ['create_check_result_partitions', 'p_from date'],
         ['drop_expired_check_result_partitions', 'p_retention_days integer'],
       ],
@@ -448,6 +450,7 @@ describe('Story 5.3: check_results partitions', () => {
             if (command.type === 'maintenance/transition_due')
               return { started: 0, completed: 0 };
             if (command.type === 'service/status.reconcile') return [];
+            if (command.type === refreshUptimeRollupsCommand.type) return null;
             if (command.type === maintainCheckResultPartitionsCommand.type)
               return { created: 0, dropped: 0 };
             throw new Error(`unexpected command ${command.type}`);
@@ -463,10 +466,94 @@ describe('Story 5.3: check_results partitions', () => {
         .filter((i) => i >= 0);
       assert.deepEqual(indexes, [seen.length - 1]);
       assert.ok(seen.length > 1, 'organization commands ran first');
+      const lastRollup = seen
+        .map((c, i) => (c.type === refreshUptimeRollupsCommand.type ? i : -1))
+        .filter((i) => i >= 0)
+        .pop();
+      assert.ok(lastRollup !== undefined, 'rollups ran');
+      assert.ok(lastRollup < indexes[0], 'rollups ran before maintenance');
       assert.equal(
         seen[seen.length - 1].payload.retentionDays,
         env.monitor.checkResultsRetentionDays,
       );
+    });
+
+    const failingStub = (
+      failing: (orgId: string) => boolean,
+      reconcileFails: (orgId: string) => boolean = () => false,
+    ) => {
+      const refreshed: string[] = [];
+      let maintained = 0;
+      const stubApp = {
+        commandBus: {
+          async execute(command: {
+            type: string;
+            payload: Record<string, unknown>;
+          }) {
+            if (command.type === 'maintenance/transition_due')
+              return { started: 0, completed: 0 };
+            if (command.type === 'service/status.reconcile') {
+              if (reconcileFails(command.payload.orgId as string))
+                throw new Error('reconcile refused');
+              return [];
+            }
+            if (command.type === refreshUptimeRollupsCommand.type) {
+              const id = command.payload.orgId as string;
+              refreshed.push(id);
+              if (failing(id)) throw new Error('rollup refused');
+              return null;
+            }
+            if (command.type === maintainCheckResultPartitionsCommand.type) {
+              maintained += 1;
+              return { created: 0, dropped: 0 };
+            }
+            throw new Error(`unexpected command ${command.type}`);
+          },
+        },
+      } as unknown as Parameters<typeof runWorkerPass>[0];
+      return { stubApp, refreshed, maintained: () => maintained };
+    };
+
+    it('keeps going when one organization rollup fails', async () => {
+      const { errors, log } = logger();
+      const { stubApp, refreshed, maintained } = failingStub(
+        (id) => id === 'org-1',
+      );
+      await runWorkerPass(stubApp, log, { orgIds: ['org-1', 'org-2'] });
+      assert.deepEqual(refreshed, ['org-1', 'org-2']);
+      assert.equal(errors.length, 1);
+      assert.equal((errors[0] as { orgId: string }).orgId, 'org-1');
+      assert.equal(maintained(), 0);
+
+      const full = failingStub((id) => id === 'org-1');
+      await runWorkerPass(full.stubApp, silent, {
+        orgIds: ['org-1', 'org-2'],
+        maintainPartitions: true,
+      });
+      assert.equal(full.maintained(), 1);
+    });
+
+    it('still refreshes rollups when reconciliation fails', async () => {
+      const { errors, log } = logger();
+      const { stubApp, refreshed } = failingStub(
+        () => false,
+        (id) => id === 'org-1',
+      );
+      await runWorkerPass(stubApp, log, { orgIds: ['org-1', 'org-2'] });
+      assert.deepEqual(refreshed, ['org-1', 'org-2']);
+      assert.equal(errors.length, 1);
+    });
+
+    it('rejects when every organization rollup fails, after maintenance', async () => {
+      const { stubApp, maintained } = failingStub(() => true);
+      await assert.rejects(
+        runWorkerPass(stubApp, silent, {
+          orgIds: ['org-1', 'org-2'],
+          maintainPartitions: true,
+        }),
+        (error: Error) => error.message === 'every organization failed (2)',
+      );
+      assert.equal(maintained(), 1);
     });
 
     it('skips maintenance on a scoped pass', async () => {

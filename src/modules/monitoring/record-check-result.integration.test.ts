@@ -150,6 +150,7 @@ describe('Story 5.6: record a check result', () => {
         'monitor/threshold_breached',
         'monitor/recovered',
         'monitor/ssl_expiry_warning',
+        'uptime/rollup_refreshed',
       ].sort(),
     );
   });

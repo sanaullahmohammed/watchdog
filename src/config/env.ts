@@ -116,6 +116,7 @@ export default {
     allowedCidrs: monitorAllowedCidrs,
     checkConcurrency: env.MONITOR_CHECK_CONCURRENCY,
     checkResultsRetentionDays: env.CHECK_RESULTS_RETENTION_DAYS,
+    rollupRetentionDays: env.ROLLUP_RETENTION_DAYS,
   },
   worker: {
     heartbeatPath: env.WORKER_HEARTBEAT_PATH,

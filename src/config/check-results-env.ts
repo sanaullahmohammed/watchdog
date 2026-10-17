@@ -11,4 +11,13 @@ export const checkResultsEnvProperties = {
     minimum: 1,
     maximum: 36_500,
   }),
+  /**
+   * Daily uptime rollups older than this many days are pruned by each
+   * refresh. Longer than raw results on purpose (DOMAIN, partitioning).
+   */
+  ROLLUP_RETENTION_DAYS: Type.Integer({
+    default: 400,
+    minimum: 1,
+    maximum: 36_500,
+  }),
 };

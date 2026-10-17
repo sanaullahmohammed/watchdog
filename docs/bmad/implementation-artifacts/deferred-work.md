@@ -217,3 +217,10 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: The real worker's SIGTERM path is now tested, but shutdown's use of `closeWorker` (the pool still ends when `app.close()` fails, DR-4) is proven only by the `closeWorker` unit-level test. Shutdown calling `app.close()` and `closeDbConnection()` directly would pass every happy-path test. Settling it needs a fault-injection seam in `startWorker`.
   evidence: Review of Story 5.9; the retro item 2 shutdown entry, removed with this story, had this half still open.
   target: Epic 8 (default).
+
+## From Story 5.11 (2026-10-17)
+
+- source_spec: `spec-5-11-refresh-daily-uptime-rollups.md`
+  summary: ARCHITECTURE.md 6.1 says a migration creates "two `SECURITY DEFINER` functions" and grants `watchdog_app` EXECUTE "on those two functions and nothing more". Story 5.11 adds a third, `check_results_retained_from()`, which the lost-range rule needs.
+  evidence: Review Triage Log B1; `docs/genesis/ARCHITECTURE.md:538`; `db/migrations/20261017120000_create_uptime_rollups.sql`. AGENTS.md: a decision changes in its owning document, which is the owner's to edit.
+  target: Genesis edit (owner).

@@ -8,6 +8,10 @@ import {
   maintainCheckResultPartitionsCommand,
 } from '@/modules/monitoring/commands/maintain-check-result-partitions/maintain-check-result-partitions.handler';
 import {
+  type RefreshUptimeRollupsCommandResult,
+  refreshUptimeRollupsCommand,
+} from '@/modules/monitoring/commands/refresh-uptime-rollups/refresh-uptime-rollups.handler';
+import {
   type RunDueMonitorChecksCommandResult,
   runDueMonitorChecksCommand,
 } from '@/modules/monitoring/commands/run-due-monitor-checks/run-due-monitor-checks.handler';
@@ -28,12 +32,13 @@ const MONITOR_LOOP = 'monitor';
 
 /**
  * Background entrypoint. Two loops share the process: maintenance (window
- * transitions, service status reconciliation, partition maintenance) and the
- * monitor loop (due checks). Later stories add uptime rollups and email
+ * transitions, service status reconciliation, uptime rollups, partition
+ * maintenance) and the monitor loop (due checks). A later story adds email
  * dispatch. One image, two commands, separate processes that share no memory.
  */
 /**
- * One pass across every tenant: the work that is due, then reconciliation.
+ * One pass across every tenant: the work that is due, then reconciliation,
+ * then the uptime rollup refresh.
  *
  * Discovery and work are separate steps because the worker has no request and
  * therefore no organization: it learns which tenants exist from Better Auth's
@@ -78,6 +83,8 @@ export async function runWorkerPass(
 
   let failed = 0;
   for (const orgId of orgIds) {
+    // One boolean per organization, so it counts once however many steps fail.
+    let orgFailed = false;
     try {
       const moved = await app.commandBus.execute<
         Promise<{ started: number; completed: number }>
@@ -111,16 +118,41 @@ export async function runWorkerPass(
         );
       }
     } catch (error) {
-      failed += 1;
+      orgFailed = true;
       logger.error(
         { orgId, err: error },
         'worker pass failed for organization',
       );
     }
+
+    // Rollups go after the organization's reconciliation and before partition
+    // maintenance below, so a day is rolled up before retention can drop its
+    // raw results. It touches only this organization, so a scoped pass runs it
+    // too. Its own try, so a failed reconciliation does not skip it.
+    try {
+      const lost =
+        await app.commandBus.execute<RefreshUptimeRollupsCommandResult>(
+          refreshUptimeRollupsCommand({ orgId }),
+        );
+      if (lost) {
+        logger.warn(
+          { orgId, from: lost.from, to: lost.to },
+          'uptime rollups lost to retention before they could be computed',
+        );
+      }
+    } catch (error) {
+      orgFailed = true;
+      logger.error(
+        { orgId, err: error },
+        'uptime rollup refresh failed for organization',
+      );
+    }
+
+    if (orgFailed) failed += 1;
   }
 
-  // After the organization loop, so the rollup step (Story 5.11) can go before
-  // it: a day is rolled up before its raw rows are dropped. ARCHITECTURE.md 6.1.
+  // After the organization loop, whose rollup step must come first: a day is
+  // rolled up before its raw rows are dropped. ARCHITECTURE.md 6.1.
   let maintenanceFailed = false;
   if (options.orgIds === undefined || options.maintainPartitions === true) {
     try {

@@ -14,30 +14,73 @@ describe('CHECK_RESULTS_RETENTION_DAYS', () => {
 
   it('accepts a positive whole number', () => {
     assert.equal(
-      Value.Check(schema, { CHECK_RESULTS_RETENTION_DAYS: 1 }),
+      Value.Check(schema, {
+        ROLLUP_RETENTION_DAYS: 400,
+        CHECK_RESULTS_RETENTION_DAYS: 1,
+      }),
       true,
     );
   });
 
   it('refuses a value over 36500', () => {
     assert.equal(
-      Value.Check(schema, { CHECK_RESULTS_RETENTION_DAYS: 36_500 }),
+      Value.Check(schema, {
+        ROLLUP_RETENTION_DAYS: 400,
+        CHECK_RESULTS_RETENTION_DAYS: 36_500,
+      }),
       true,
     );
     assert.equal(
-      Value.Check(schema, { CHECK_RESULTS_RETENTION_DAYS: 36_501 }),
+      Value.Check(schema, {
+        ROLLUP_RETENTION_DAYS: 400,
+        CHECK_RESULTS_RETENTION_DAYS: 36_501,
+      }),
       false,
     );
   });
 
   it('refuses 0 and a fraction', () => {
     assert.equal(
-      Value.Check(schema, { CHECK_RESULTS_RETENTION_DAYS: 0 }),
+      Value.Check(schema, {
+        ROLLUP_RETENTION_DAYS: 400,
+        CHECK_RESULTS_RETENTION_DAYS: 0,
+      }),
       false,
     );
     assert.equal(
-      Value.Check(schema, { CHECK_RESULTS_RETENTION_DAYS: 1.5 }),
+      Value.Check(schema, {
+        ROLLUP_RETENTION_DAYS: 400,
+        CHECK_RESULTS_RETENTION_DAYS: 1.5,
+      }),
       false,
     );
+  });
+});
+
+describe('ROLLUP_RETENTION_DAYS', () => {
+  it('defaults to 400', () => {
+    const value = Value.Default(schema, {}) as Record<string, unknown>;
+    assert.equal(value.ROLLUP_RETENTION_DAYS, 400);
+  });
+
+  it('accepts 1 and 36500, refuses 0, 36501 and a fraction', () => {
+    for (const ok of [1, 36_500]) {
+      assert.equal(
+        Value.Check(schema, {
+          CHECK_RESULTS_RETENTION_DAYS: 30,
+          ROLLUP_RETENTION_DAYS: ok,
+        }),
+        true,
+      );
+    }
+    for (const bad of [0, 36_501, 1.5]) {
+      assert.equal(
+        Value.Check(schema, {
+          CHECK_RESULTS_RETENTION_DAYS: 30,
+          ROLLUP_RETENTION_DAYS: bad,
+        }),
+        false,
+      );
+    }
   });
 });
