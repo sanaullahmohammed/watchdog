@@ -78,3 +78,19 @@ export const monitorSslExpiryWarningEvent = monitorEventCreator<
     certificateExpiresAt: string;
   }
 >('ssl_expiry_warning');
+
+/**
+ * Daily uptime rollups were refreshed or pruned for an organization. Emitted
+ * after commit, and only when a row was written or deleted, so a pass that
+ * changed nothing announces nothing. `from` is the first day refreshed and
+ * `through` is today, both `YYYY-MM-DD` UTC days. Admin-only.
+ */
+const uptimeEventCreator = actionCreatorFactory('uptime');
+
+export const uptimeRollupRefreshedEvent = uptimeEventCreator<{
+  orgId: string;
+  from: string;
+  through: string;
+  written: number;
+  pruned: number;
+}>('rollup_refreshed');

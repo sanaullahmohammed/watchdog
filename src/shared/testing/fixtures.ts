@@ -166,3 +166,58 @@ export async function createCheckResultPartitions(from?: Date | string) {
   `;
   return rows[0].created;
 }
+
+/**
+ * Stores one check result at `checkedAt`, creating its month's partition first
+ * (a partition more than 13 months back is refused). Goes straight to the
+ * table: the tests that need rollups want arbitrary results on arbitrary days,
+ * not the counters `RecordCheckResultCommand` also moves.
+ */
+export async function insertCheckResult(
+  orgId: string,
+  result: {
+    monitorId: string;
+    serviceId: string;
+    checkedAt: Date;
+    status: 'success' | 'failure';
+    latencyMs?: number | null;
+  },
+) {
+  await createCheckResultPartitions(result.checkedAt);
+  await withTenantTransaction(orgId, async ({ sql: tx }) => {
+    await tx`
+      insert into check_results (
+        org_id, monitor_id, service_id, checked_at, status, latency_ms
+      ) values (
+        ${orgId}, ${result.monitorId}, ${result.serviceId}, ${result.checkedAt},
+        ${result.status}, ${result.latencyMs ?? null}
+      )
+    `;
+  });
+}
+
+let utcTodayPromise: Promise<Date> | undefined;
+
+/**
+ * Today's UTC date as a midnight `Date`, read from the database once, so every
+ * "d-n" in a file derives from one clock. A run that straddles 00:00 UTC can
+ * still flake, because the handler reads `now()` itself; that is accepted.
+ */
+export function utcToday(): Promise<Date> {
+  utcTodayPromise ??= sql<{ today: string }[]>`
+    select (now() at time zone 'UTC')::date::text as today
+  `.then((rows) => new Date(`${rows[0].today}T00:00:00Z`));
+  return utcTodayPromise;
+}
+
+/** Sets an organization's rollup watermark directly, to arrange a catch-up. */
+export async function setRollupProgress(orgId: string, day: Date) {
+  await withTenantTransaction(orgId, async ({ sql: tx }) => {
+    await tx`
+      insert into uptime_rollup_progress (org_id, refreshed_through)
+      values (${orgId}, ${day.toISOString().slice(0, 10)}::date)
+      on conflict (org_id) do update set
+        refreshed_through = excluded.refreshed_through
+    `;
+  });
+}

@@ -23,5 +23,16 @@ export default function checkResultPartitionRepository() {
       `;
       return rows[0].dropped;
     },
+
+    /**
+     * The first UTC day of the oldest `check_results` partition, as
+     * `YYYY-MM-DD`, or null when there is none. What retention has left.
+     */
+    async retainedFrom(): Promise<string | null> {
+      const rows = await sql<{ day: string | null }[]>`
+        select public.check_results_retained_from()::text as day
+      `;
+      return rows[0].day;
+    },
   };
 }

@@ -29,7 +29,13 @@ const authTables = [
 const OWNED: Readonly<Record<string, readonly string[]>> = {
   incident: ['incidents', 'incident_updates', 'incident_service_impacts'],
   maintenance: ['maintenance', 'maintenance_services'],
-  monitoring: ['monitors', 'check_results', 'monitor_ssl_warnings'],
+  monitoring: [
+    'monitors',
+    'check_results',
+    'monitor_ssl_warnings',
+    'uptime_rollups',
+    'uptime_rollup_progress',
+  ],
   service: ['services', 'service_groups'],
   'status-page': [],
   'better-auth': authTables,

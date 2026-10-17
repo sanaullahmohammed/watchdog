@@ -6,6 +6,7 @@ import { after, before, describe, it } from 'node:test';
 import type { FastifyBaseLogger } from 'fastify';
 import { buildApp } from '@/server/build-app';
 import sql, { closeDbConnection } from '@/shared/db/postgres';
+import { signUpWithOrg } from '@/shared/testing/tenant';
 import { runHealthcheck as runHealthcheckProcess } from '@/shared/testing/worker-process';
 import { createWorkerHealth } from '@/worker-health';
 import { closeWorker, runWorkerPass, startLoop } from './worker';
@@ -78,7 +79,6 @@ const appPromise = buildApp({ logger: false }).then(async (built) => {
   return built;
 });
 const BAD_ORG_ID = 'not a valid id!';
-const MISSING_ORG_ID = 'a'.repeat(32);
 
 describe(
   'Worker health reports completed passes',
@@ -224,11 +224,17 @@ describe(
     it('passes when some organizations fail and others succeed', async () => {
       const app = await appPromise;
       const { path, health } = setup('some-orgs-fail');
+      // A real organization: the rollup step writes a progress row, which an
+      // organization that does not exist refuses.
+      const { orgId } = await signUpWithOrg(
+        app,
+        `whealth-${Date.now().toString(36)}`,
+      );
       const loop = startLoop({
         name: 'maintenance',
         pass: () =>
           runWorkerPass(app, quietLogger, {
-            orgIds: [BAD_ORG_ID, MISSING_ORG_ID],
+            orgIds: [BAD_ORG_ID, orgId],
           }),
         intervalMs: 1_000,
         health,
