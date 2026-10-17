@@ -246,7 +246,10 @@ export default function publicStatusRepository() {
           -- was not shown to customers, and nor were the notes posted to it.
           -- DOMAIN, "Public status page"; Epic 3 retrospective, R-4.
           and status <> 'draft'
-        order by created_at asc, id asc
+        -- The timeline order is the sequence assigned at insert, not the
+        -- clock, which can step back (Epic 2 D-1, story 5.13). Same order as
+        -- the admin timeline. sequence is unique per row.
+        order by sequence asc
       `;
 
       return incidents.map((incident) => ({

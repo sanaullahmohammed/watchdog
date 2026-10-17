@@ -6,6 +6,8 @@
 -- appear to move backwards. clock_timestamp() is the time the row is written.
 -- Once the row is locked, that is the order the writes actually happened in.
 -- Epic 2 retrospective, R-3.
+-- Stories 5.13 and 5.14 later moved the order to `sequence`; created_at is
+-- now for display.
 alter table incident_updates alter column created_at set default clock_timestamp();
 
 -- migrate:down

@@ -765,7 +765,7 @@ describe('Story 3.3: serve the public status payload', () => {
       ({ sql: tx }) => tx<{ status: string }[]>`
         select status from incident_updates
         where incident_id = ${id.confirmedDraft}
-        order by created_at, id
+        order by sequence
       `,
     );
     assert.deepEqual(

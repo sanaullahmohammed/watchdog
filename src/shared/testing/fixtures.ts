@@ -3,7 +3,11 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
-import type { UptimeDayStatus } from '@/shared/domain/status-inputs';
+import type {
+  IncidentImpact,
+  IncidentStatus,
+  UptimeDayStatus,
+} from '@/shared/domain/status-inputs';
 import { TEST_ORIGIN } from '@/shared/testing/tenant';
 
 /**
@@ -271,6 +275,51 @@ export async function setRollupProgress(orgId: string, day: Date) {
       values (${orgId}, ${day.toISOString().slice(0, 10)}::date)
       on conflict (org_id) do update set
         refreshed_through = excluded.refreshed_through
+    `;
+  });
+}
+
+/**
+ * A draft with source `monitoring` and no origin monitor, inserted directly.
+ * Returns its id.
+ */
+export async function insertDraftIncident(
+  orgId: string,
+  incident: { title: string; impact: IncidentImpact },
+): Promise<string> {
+  const [row] = await withTenantTransaction(
+    orgId,
+    ({ sql: tx }) => tx<{ id: string }[]>`
+      insert into incidents (org_id, title, status, impact, source)
+      values (${orgId}, ${incident.title}, 'draft', ${incident.impact}, 'monitoring')
+      returning id
+    `,
+  );
+  return row.id;
+}
+
+/**
+ * One timeline entry inserted directly, in its own transaction, stamped
+ * `now() + createdAtOffset` (an interval such as `'1 hour'` or `'-1 hour'`) so
+ * a test can make the clock disagree with insert order.
+ */
+export async function insertIncidentUpdate(
+  orgId: string,
+  update: {
+    incidentId: string;
+    status: IncidentStatus;
+    message: string;
+    createdAtOffset: string;
+  },
+) {
+  await withTenantTransaction(orgId, async ({ sql: tx }) => {
+    await tx`
+      insert into incident_updates (
+        org_id, incident_id, status, message, created_at
+      ) values (
+        ${orgId}, ${update.incidentId}, ${update.status}, ${update.message},
+        now() + ${update.createdAtOffset}::interval
+      )
     `;
   });
 }
