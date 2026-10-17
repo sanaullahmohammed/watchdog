@@ -186,7 +186,7 @@ Append-only update timeline for an incident.
 | `message` | `text` | Public/admin update body |
 | `created_by_user_id` | `text null` | Ref -> Better Auth user; null for system-generated |
 | `created_at` | `timestamptz` | Required; when the entry was written, for display; not the order, because the clock can step back |
-| `sequence` | `bigint` | Generated always as identity; the timeline order, assigned at insert under the incident's row lock, so it follows the lock rather than the clock (Epic 2 D-1) |
+| `sequence` | `bigint` | Generated always as identity; the timeline order, assigned at insert under the incident's row lock, so it follows the lock rather than the clock (Epic 2 D-1); `watchdog_app` is granted insert on every other column, so tenant code cannot choose it |
 
 Who writes an entry, and what announces it:
 
@@ -552,6 +552,7 @@ erDiagram
     text message
     text created_by_user_id FK
     timestamptz created_at
+    bigint sequence
   }
 
   INCIDENT_SERVICE_IMPACT {
@@ -1106,7 +1107,7 @@ An affected-service reference that is not visible is never published, even as an
 
 Visibility is judged from current rows at read time. Making a service private, or archiving it, takes the incidents and windows that named only it off the page with it; nothing about them is stored.
 
-**An incident's timeline leaves out its draft era.** The page shows a listed incident's entries oldest first, except those recorded with status `draft`. A draft was never shown to customers, and neither were the notes taken while it was one. A posted update records the incident's current status, and an update may be posted to a draft (decided 2026-09-23, closing Epic 2's D-4; see IncidentUpdate), so before this rule, confirming a draft published every triage note written on it (Epic 3 retrospective, R-4). A confirmed draft's timeline therefore opens at its confirmation, the `draft -> investigating` entry.
+**An incident's timeline leaves out its draft era.** The page shows a listed incident's entries oldest first by `sequence`, except those recorded with status `draft`. A draft was never shown to customers, and neither were the notes taken while it was one. A posted update records the incident's current status, and an update may be posted to a draft (decided 2026-09-23, closing Epic 2's D-4; see IncidentUpdate), so before this rule, confirming a draft published every triage note written on it (Epic 3 retrospective, R-4). A confirmed draft's timeline therefore opens at its confirmation, the `draft -> investigating` entry.
 
 **The banner.** `overallStatus` is `worstOf` over two lists:
 

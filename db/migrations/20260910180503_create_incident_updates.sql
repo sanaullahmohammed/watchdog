@@ -24,6 +24,8 @@ create table incident_updates (
 
 -- (created_at, id) is the timeline order: id breaks ties for updates written
 -- inside one transaction, which share a timestamp.
+-- Stories 5.13 and 5.14 moved both timelines to `sequence`, and
+-- 20261017140000_drop_incident_updates_timeline_idx.sql drops this index.
 create index incident_updates_timeline_idx
   on incident_updates (incident_id, created_at, id);
 create index incident_updates_org_id_idx on incident_updates (org_id);
