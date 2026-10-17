@@ -390,3 +390,19 @@ export async function transitionIncident(
   });
   assert.equal(response.statusCode, 200, response.body);
 }
+
+/** Changes a monitor through `PATCH /api/v1/monitors/:id`. */
+export async function updateMonitor(
+  app: FastifyInstance,
+  cookie: string,
+  monitorId: string,
+  changes: object,
+) {
+  const response = await app.inject({
+    method: 'PATCH',
+    url: `/api/v1/monitors/${monitorId}`,
+    headers: { cookie, origin: TEST_ORIGIN },
+    payload: changes,
+  });
+  assert.equal(response.statusCode, 200, response.body);
+}

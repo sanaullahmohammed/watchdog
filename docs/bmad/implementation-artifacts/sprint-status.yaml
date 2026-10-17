@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-17-2026 19:53
+last_updated: 10-17-2026 20:33
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -87,8 +87,8 @@ development_status:
   5-12-fill-the-90-day-uptime-in-the-public-payload: done
   5-13-order-the-admin-timeline-by-sequence-not-the-clock: done
   5-14-order-the-public-timeline-by-the-same-sequence: done
-  5-15-open-a-draft-when-a-monitor-breaches-its-threshold: review
-  5-16-reconcile-missed-drafts-each-pass: backlog
+  5-15-open-a-draft-when-a-monitor-breaches-its-threshold: done
+  5-16-reconcile-missed-drafts-each-pass: review
   epic-5-retrospective: optional
 
   epic-6: backlog

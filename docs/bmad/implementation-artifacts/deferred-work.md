@@ -254,9 +254,13 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   evidence: Review pass 1, B7. The commit-order caveat is recorded for Epic 4's cursor in the 5.13 entries above; the pitfall itself does not carry it.
   target: AGENTS.md edit.
 
-## From Story 5.15 (2026-10-17)
+## From Story 5.16 (2026-10-17)
 
-- source_spec: `spec-5-15-open-a-draft-when-a-monitor-breaches-its-threshold.md`
-  summary: A monitor-born draft's `startedAt` is the moment the command runs, because neither `monitor.threshold_breached` nor `createDraftFromMonitorCommand` carries the breaching check's time. On the event path the two differ by milliseconds. Story 5.16's reconciliation reuses the command, so a draft it opens would show the pass time, possibly long after the threshold was crossed. Consider a `breachedAt` in the command payload when 5.16 adds its caller.
-  evidence: Review pass 1, B5; `incidentDomain.proposeDraft` stamps `new Date()`. The spec's Design Notes record the choice.
-  target: Story 5.16.
+- source_spec: `spec-5-16-reconcile-missed-drafts-each-pass.md`
+  summary: AGENTS.md's pitfall on unscoped worker passes says `runWorkerPass` "reconciles the status of every service it finds". It now also opens a draft for every at-threshold monitor in every organization, which would break a concurrent file counting its own monitors' incidents, and its list of per-organization alternatives could name `createDraftFromMonitorCommand`.
+  evidence: Review pass 1, B8b; `src/worker.ts` draft reconciliation step.
+  target: AGENTS.md edit.
+- source_spec: `spec-5-16-reconcile-missed-drafts-each-pass.md`
+  summary: ARCHITECTURE.md's "Every pass also reconciles" names only status recomputation through `RecomputeServiceStatusCommand`. The pass now also reconciles drafts through `ListMonitorsAtThresholdQuery` and `CreateDraftFromMonitorCommand`, neither of which the module table lists.
+  evidence: Review pass 1, B9; `docs/genesis/ARCHITECTURE.md:494` and `:46-48`. ARCHITECTURE owns runtime wiring.
+  target: Genesis edit (owner).
