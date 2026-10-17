@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/server/build-app';
@@ -78,23 +78,77 @@ describe('Story 2.11: read incidents and their timelines', () => {
     await sql.end({ timeout: 5 });
   });
 
+  it('orders a timeline by insert order, not by created_at', async () => {
+    // The clock can step back. Two entries written one after the other, the
+    // first stamped an hour ahead and the second an hour behind, must still
+    // read in the order they were written.
+    const id = await declareIncident(app, cookieA, {
+      title: `${tag}-clock`,
+      impact: 'major',
+    });
+    for (const [message, offset] of [
+      ['first', '1 hour'],
+      ['second', '-1 hour'],
+    ] as const) {
+      await withTenantTransaction(orgAId, async ({ sql: tx }) => {
+        await tx`
+          insert into incident_updates (
+            org_id, incident_id, status, message, created_at
+          )
+          values (
+            ${orgAId}, ${id}, 'investigating', ${message},
+            now() + ${offset}::interval
+          )
+        `;
+      });
+    }
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/incidents/${id}/updates`,
+      headers: { cookie: cookieA, origin: ORIGIN },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const rest = JSON.parse(response.body) as { message: string }[];
+    assert.equal(rest.length, 3);
+    assert.deepEqual(
+      rest.slice(1).map((e) => e.message),
+      ['first', 'second'],
+    );
+
+    const graph = await gqlData<{ incidentTimeline: unknown[] }>(
+      app,
+      'query ($id: ID!) { incidentTimeline(id: $id) { id status message createdAt } }',
+      { cookie: cookieA, variables: { id } },
+    );
+    assert.deepEqual(graph.incidentTimeline, rest);
+  });
+
   it('orders a timeline deterministically when entries share a timestamp', async () => {
-    // All three carry the same created_at, set explicitly. The column defaults
-    // to clock_timestamp(), so rows written in one transaction no longer tie on
-    // their own, and only the id tiebreaker can order these.
+    // Same created_at, set explicitly, and ids chosen so the insert order is
+    // the reverse of the uuid sort order: the old (created_at, id) order would
+    // always read these reversed. Three statements, not one multi-row values,
+    // since only separate inserts have a defined identity order.
     const at = new Date();
-    const ids = await withTenantTransaction(orgAId, async ({ sql: tx }) => {
-      const rows = await tx<{ id: string }[]>`
-        insert into incident_updates (
-          org_id, incident_id, status, message, created_at
-        )
-        values
-          (${orgAId}, ${openIncidentId}, 'investigating', 'one', ${at}),
-          (${orgAId}, ${openIncidentId}, 'investigating', 'two', ${at}),
-          (${orgAId}, ${openIncidentId}, 'investigating', 'three', ${at})
-        returning id
-      `;
-      return rows.map((row) => row.id);
+    // Fresh ids each run, so rows a crashed run left behind cannot collide.
+    const ids = [randomUUID(), randomUUID(), randomUUID()].sort().reverse();
+    const entries = [
+      ['one', ids[0]],
+      ['two', ids[1]],
+      ['three', ids[2]],
+    ] as const;
+    await withTenantTransaction(orgAId, async ({ sql: tx }) => {
+      for (const [message, entryId] of entries) {
+        await tx`
+          insert into incident_updates (
+            id, org_id, incident_id, status, message, created_at
+          )
+          values (
+            ${entryId}, ${orgAId}, ${openIncidentId}, 'investigating',
+            ${message}, ${at}
+          )
+        `;
+      }
     });
 
     const read = async () => {
@@ -104,17 +158,15 @@ describe('Story 2.11: read incidents and their timelines', () => {
         headers: { cookie: cookieA, origin: ORIGIN },
       });
       assert.equal(response.statusCode, 200, response.body);
-      return (JSON.parse(response.body) as { id: string }[]).map((e) => e.id);
+      return (JSON.parse(response.body) as { message: string }[]).map(
+        (e) => e.message,
+      );
     };
 
     // Declaring the incident wrote the first entry, earlier; these follow it.
     const timeline = await read();
-    assert.ok(!ids.includes(timeline[0]), 'the declaration opens the timeline');
-    const expected = [timeline[0], ...[...ids].sort()];
-    assert.deepEqual(timeline, expected);
-    // Read twice: an order that depends on the planner rather than the index
-    // can differ between identical queries.
-    assert.deepEqual(await read(), expected);
+    assert.deepEqual(timeline.slice(1), ['one', 'two', 'three']);
+    assert.deepEqual(await read(), timeline);
   });
 
   it('returns identical incidents and timelines over REST and GraphQL', async () => {

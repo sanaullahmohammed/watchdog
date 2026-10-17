@@ -37,9 +37,9 @@ export default function incidentRepository({
     },
 
     async timeline(tx: TenantTransaction, incidentId: string) {
-      // (created_at, id): entries written inside one transaction share a
-      // timestamp, so id is what makes the order deterministic rather than
-      // whatever the planner returns.
+      // sequence: assigned by Postgres at insert, under the incident's row
+      // lock, so it follows the lock rather than the clock, which can step
+      // back. It is never selected: it is the order, not part of an entry.
       const rows = await tx.sql<
         {
           id: string;
@@ -50,7 +50,7 @@ export default function incidentRepository({
       >`
         select id, status, message, created_at from incident_updates
         where incident_id = ${incidentId}
-        order by created_at asc, id asc
+        order by sequence asc
       `;
       return rows.map((row) => ({
         id: row.id,

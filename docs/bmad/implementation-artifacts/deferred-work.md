@@ -235,3 +235,30 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: `ROLLUP_RETENTION_DAYS` accepts values below 90. Pruning would then empty the older part of every public 90-day bar, and those days would read as "no checks ran". The minimum could be the window length.
   evidence: Review Triage Log E1; `src/config/check-results-env.ts` (minimum 1, from 5.11's frozen rule); DOMAIN, Public status page.
   target: Epic 8 (default).
+
+## From Story 5.13 (2026-10-17)
+
+- source_spec: `spec-5-13-order-the-admin-timeline-by-sequence-not-the-clock.md`
+  summary: Story 5.14 moves the public timeline to `sequence` and then drops `incident_updates_timeline_idx`, which 5.13 kept because the public read still uses it. Once both timelines are moved, AGENTS.md's clock-step pitfall line ("The lasting fix for timelines is a sequence column, Epic 2 item D-1") is updated.
+  evidence: `db/migrations/20261017130000_incident_updates_sequence.sql`; `src/modules/status-page/database/public-status.repository.ts:243-249`.
+  target: Story 5.14.
+- source_spec: `spec-5-13-order-the-admin-timeline-by-sequence-not-the-clock.md`
+  summary: AGENTS.md's pitfall "A column that orders rows written under a lock needs `clock_timestamp()`" now points a new timeline-like table at the wrong fix, and the comments in `20260910180503_create_incident_updates.sql` (above `incident_updates_timeline_idx`) and `20260911191653_incident_updates_write_time.sql` still call `(created_at, id)` the timeline order. Update them when the public read moves too; comment-only migration edits are allowed.
+  evidence: Review pass 1, B6. The public read still orders by `(created_at, id)` until 5.14, so the comments are half true today.
+  target: Story 5.14.
+- source_spec: `spec-5-13-order-the-admin-timeline-by-sequence-not-the-clock.md`
+  summary: `sequence` is insert order, not commit order. Two posted updates hold only `for share` and can commit in either order, so a reader can see N+1 before N exists. A notification cursor moved from the stamp to `sequence` would still need its overlap.
+  evidence: Review pass 1, E3/B3. The same holds for `created_at` today; ARCHITECTURE's cursor "reads with an overlap".
+  target: Epic 4 (notification cursor).
+- source_spec: `spec-5-13-order-the-admin-timeline-by-sequence-not-the-clock.md`
+  summary: The `incident_updates_sequence` backfill and its `setval` run only against an empty table in CI, and no test starts from pre-migration data. They were checked by hand on 119 local rows.
+  evidence: Review pass 1, B9/V1. The repo has no pattern for testing a migration against existing rows. Settle it with one if a later migration also backfills.
+  target: Epic 8 (default).
+- source_spec: `spec-5-13-order-the-admin-timeline-by-sequence-not-the-clock.md`
+  summary: `incident_updates` now grants `watchdog_app` insert per column, and revokes its access to the identity's sequence. A migration that adds a column there must grant insert on it, or inserts naming it fail with 42501. AGENTS.md has no pitfall saying so, and its append-only bullet no longer describes how the table is protected.
+  evidence: Review pass 2, B5. `db/migrations/20261017130000_incident_updates_sequence.sql`.
+  target: Story 5.14, with the other AGENTS.md timeline lines.
+- source_spec: `spec-5-13-order-the-admin-timeline-by-sequence-not-the-clock.md`
+  summary: Genesis edit (owner). DOMAIN's mermaid `INCIDENT_UPDATE` entity (around l.547) lacks `sequence`, and the IncidentUpdate `sequence` row does not say `watchdog_app` is denied it by a per-column insert grant.
+  evidence: Review pass 2, B6. The owner approved only the IncidentUpdate table rows for 5.13.
+  target: owner decision, with the other "Genesis edit (owner)" entries.
