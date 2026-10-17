@@ -179,11 +179,11 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `spec-5-1-create-and-update-a-monitor.md`
   summary: REST bodies go through Fastify's default ajv options, so unknown keys are silently stripped (a PATCH carrying `type`, a misspelled `config` key) and `null` is coerced (`enabled: null` becomes `false`), where GraphQL and the handler's schema check refuse the same input. Every slice behaves this way.
   evidence: Review Triage Log, loop-1 E1/E2/B11/E3; `src/server/build-app.ts:36-40` sets only `keywords`, leaving `removeAdditional` and `coerceTypes` at Fastify's defaults.
-  target: A cross-cutting story; changing the global options affects every REST route.
+  target: Epic 8 (default). One cross-cutting change, since the global options affect every REST route.
 - source_spec: `spec-5-1-create-and-update-a-monitor.md`
   summary: A U+0000 character in a string field (a monitor's name or keyword, a service's name) reaches Postgres, which rejects it in `text` and `jsonb`; the unmapped error is masked as a 500 instead of a 400. Unverified for monitors; the class is pre-existing for every slice.
   evidence: Review Triage Log, loop-1 E11 and pass-2 E5. Settle by sending `"name": "a\u0000b"` to `POST /api/v1/monitors` and reading the status.
-  target: Same cross-cutting story as the REST options entry.
+  target: Epic 8 (default), with the REST options entry.
 
 ## From Story 5.2 (2026-10-09)
 
@@ -229,7 +229,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 
 - source_spec: `spec-5-12-fill-the-90-day-uptime-in-the-public-payload.md`
   summary: DOMAIN's Public status page still says uptime is "shaped now and filled in Epic 5". Its "90-day query sketch" filters on the session-zone `current_date`, which contradicts its own UTC-day rule, and shows neither gap-filling nor visibility. Both now describe less than the code does.
-  evidence: Review Triage Log B1; `docs/genesis/DOMAIN.md:1117` and `:1265-1275`; `src/modules/status-page/database/public-status.repository.ts` `listPublicUptime`.
+  evidence: Review Triage Log B1; `docs/genesis/DOMAIN.md:1119` and `:1267-1279`; `src/modules/status-page/database/public-status.repository.ts` `listPublicUptime`.
   target: Genesis edit (owner).
 - source_spec: `spec-5-12-fill-the-90-day-uptime-in-the-public-payload.md`
   summary: `ROLLUP_RETENTION_DAYS` accepts values below 90. Pruning would then empty the older part of every public 90-day bar, and those days would read as "no checks ran". The minimum could be the window length.
