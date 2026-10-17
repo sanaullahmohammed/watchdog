@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { failureEpisodeAfter, monitorStateOf } from './monitor-state';
+import {
+  failureEpisodeAfter,
+  monitorStateOf,
+  serviceMonitorStateOf,
+} from './monitor-state';
 
 const CHECKED = new Date('2026-10-09T12:00:00Z');
 const base = {
@@ -82,5 +86,46 @@ describe('failureEpisodeAfter', () => {
     assert.equal(failureEpisodeAfter('failing', null, 2), 2);
     assert.equal(failureEpisodeAfter('healthy', 'degraded', 2), 2);
     assert.equal(failureEpisodeAfter(null, 'healthy', 0), 0);
+  });
+});
+
+describe("serviceMonitorStateOf (worst of a service's monitors)", () => {
+  const failing = { ...base, consecutiveFailures: 3 };
+  const degraded = { ...base, consecutiveFailures: 1 };
+
+  it('is null for no monitors and for all-null inputs', () => {
+    assert.equal(serviceMonitorStateOf([]), null);
+    assert.equal(
+      serviceMonitorStateOf([
+        { ...failing, enabled: false },
+        { ...failing, lastCheckedAt: null },
+      ]),
+      null,
+    );
+  });
+
+  it('ranks failing over degraded over healthy in any order', () => {
+    const orders = [
+      [failing, degraded, base],
+      [base, degraded, failing],
+      [degraded, base, failing],
+    ];
+    for (const order of orders) {
+      assert.equal(serviceMonitorStateOf(order), 'failing');
+    }
+    assert.equal(serviceMonitorStateOf([base, degraded]), 'degraded');
+    assert.equal(serviceMonitorStateOf([degraded, base]), 'degraded');
+    assert.equal(serviceMonitorStateOf([base]), 'healthy');
+  });
+
+  it('ignores a disabled or never-checked failing monitor', () => {
+    assert.equal(
+      serviceMonitorStateOf([{ ...failing, enabled: false }, base]),
+      'healthy',
+    );
+    assert.equal(
+      serviceMonitorStateOf([{ ...failing, lastCheckedAt: null }, degraded]),
+      'degraded',
+    );
   });
 });

@@ -47,6 +47,8 @@ const FOREIGN: Readonly<Record<string, readonly string[]>> = {
     'incident_service_impacts',
     'maintenance',
     'maintenance_services',
+    // Monitor state feeds service status (Story 5.10).
+    'monitors',
   ],
   // The public page is assembled from every other module's tables, and
   // resolves the organization by slug.

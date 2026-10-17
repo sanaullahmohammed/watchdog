@@ -43,3 +43,30 @@ export function failureEpisodeAfter(
 ): number {
   return after === 'failing' && before !== 'failing' ? episode + 1 : episode;
 }
+
+const MONITOR_STATE_RANK: Record<MonitorDerivedState, number> = {
+  healthy: 0,
+  degraded: 1,
+  failing: 2,
+};
+
+/**
+ * A service's monitor-derived state: the worst `monitorStateOf` among its
+ * monitors, `failing` over `degraded` over `healthy`. Null when none
+ * contributes (no monitors, or all disabled or never checked).
+ */
+export function serviceMonitorStateOf(
+  monitors: MonitorStateInput[],
+): MonitorDerivedState | null {
+  let worst: MonitorDerivedState | null = null;
+  for (const monitor of monitors) {
+    const state = monitorStateOf(monitor);
+    if (
+      state !== null &&
+      (worst === null || MONITOR_STATE_RANK[state] > MONITOR_STATE_RANK[worst])
+    ) {
+      worst = state;
+    }
+  }
+  return worst;
+}

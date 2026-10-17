@@ -27,8 +27,9 @@ export type ResolveServiceStatusInput = {
   activeIncidentImpacts: readonly IncidentImpact[];
   hasActiveMaintenance: boolean;
   /**
-   * Null when the service has no monitor. DOMAIN's sketch types this as always
-   * present; a service with no monitor contributes nothing, which is what
+   * Null when no monitor contributes: none exist, or all are disabled or never
+   * checked. DOMAIN's sketch types this as always present; a service with no
+   * contributing monitor adds nothing, which is what
    * `operational` as the reduction's identity already expresses.
    */
   monitorState: MonitorDerivedState | null;
