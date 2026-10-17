@@ -84,6 +84,23 @@ export default function monitorRepository({ monitorMapper }: Dependencies) {
     },
 
     /**
+     * Enabled monitors on unarchived services whose consecutive failures have
+     * reached their threshold. The worker proposes a draft for each one that
+     * has none (Story 5.16).
+     */
+    async listAtThreshold(tx: TenantTransaction) {
+      const rows = await tx.sql<MonitorModel[]>`
+        select m.* from monitors m
+        join services s on s.id = m.service_id and s.org_id = m.org_id
+        where m.enabled
+          and s.archived_at is null
+          and m.consecutive_failures >= m.failure_threshold
+        order by m.id
+      `;
+      return rows.map(monitorMapper.toDomain);
+    },
+
+    /**
      * The row, locked `for no key update`. A read-check-write is not serialized
      * by the transaction alone; this is what makes two concurrent edits queue.
      */

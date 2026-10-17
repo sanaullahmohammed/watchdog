@@ -1,5 +1,9 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { env } from '@/config';
+import {
+  type CreateDraftFromMonitorCommandResult,
+  createDraftFromMonitorCommand,
+} from '@/modules/incident/commands/create-draft-from-monitor/create-draft-from-monitor.handler';
 import { transitionDueMaintenanceCommand } from '@/modules/maintenance/commands/transition-due-maintenance/transition-due-maintenance.handler';
 import { LimiterClosedError } from '@/modules/monitoring/checks/check-limiter';
 import { checkLimiter } from '@/modules/monitoring/checks/process-check-limiter';
@@ -15,6 +19,10 @@ import {
   type RunDueMonitorChecksCommandResult,
   runDueMonitorChecksCommand,
 } from '@/modules/monitoring/commands/run-due-monitor-checks/run-due-monitor-checks.handler';
+import {
+  type ListMonitorsAtThresholdQueryResult,
+  listMonitorsAtThresholdQuery,
+} from '@/modules/monitoring/queries/list-monitors-at-threshold/list-monitors-at-threshold.handler';
 import {
   type RecomputeServiceStatusCommandResult,
   recomputeServiceStatusCommand,
@@ -32,13 +40,13 @@ const MONITOR_LOOP = 'monitor';
 
 /**
  * Background entrypoint. Two loops share the process: maintenance (window
- * transitions, service status reconciliation, uptime rollups, partition
- * maintenance) and the monitor loop (due checks). A later story adds email
+ * transitions, service status and draft reconciliation, uptime rollups,
+ * partition maintenance) and the monitor loop (due checks). A later story adds email
  * dispatch. One image, two commands, separate processes that share no memory.
  */
 /**
- * One pass across every tenant: the work that is due, then reconciliation,
- * then the uptime rollup refresh.
+ * One pass across every tenant: the work that is due, then reconciliation
+ * (service status, then missed monitor drafts), then the uptime rollup refresh.
  *
  * Discovery and work are separate steps because the worker has no request and
  * therefore no organization: it learns which tenants exist from Better Auth's
@@ -61,6 +69,7 @@ export async function runWorkerPass(
   app: FastifyInstance,
   logger: FastifyBaseLogger,
   // Tests pass their own organizations. A pass reconciles every service of
+  // every tenant it visits and opens drafts for every at-threshold monitor of
   // every tenant it visits, so an unscoped one reaches into whatever another
   // test file is asserting at that moment. The worker never passes this.
   options: {
@@ -122,6 +131,57 @@ export async function runWorkerPass(
       logger.error(
         { orgId, err: error },
         'worker pass failed for organization',
+      );
+    }
+
+    // Draft reconciliation. A breach draft is opened by an event, and events
+    // are one-shot; an edit that moves a monitor into failing emits none. The
+    // command is idempotent and returns null when a draft or incident exists.
+    // Its own try, so a failed reconciliation does not skip it. DOMAIN.md,
+    // Consecutive-failure to draft-incident rule, step 6.
+    try {
+      const atThreshold =
+        await app.queryBus.execute<ListMonitorsAtThresholdQueryResult>(
+          listMonitorsAtThresholdQuery({ orgId }),
+        );
+      const opened: string[] = [];
+      for (const monitor of atThreshold) {
+        try {
+          const incidentId =
+            await app.commandBus.execute<CreateDraftFromMonitorCommandResult>(
+              createDraftFromMonitorCommand({
+                orgId,
+                monitorId: monitor.id,
+                serviceId: monitor.serviceId,
+                monitorName: monitor.name,
+                failureEpisode: monitor.failureEpisode,
+              }),
+            );
+          if (incidentId !== null) opened.push(monitor.id);
+        } catch (error) {
+          orgFailed = true;
+          logger.error(
+            {
+              orgId,
+              monitorId: monitor.id,
+              failureEpisode: monitor.failureEpisode,
+              err: error,
+            },
+            'reconciling a monitor draft failed',
+          );
+        }
+      }
+      if (opened.length > 0) {
+        logger.warn(
+          { orgId, opened },
+          'opened monitor drafts no breach event had opened',
+        );
+      }
+    } catch (error) {
+      orgFailed = true;
+      logger.error(
+        { orgId, err: error },
+        'draft reconciliation failed for organization',
       );
     }
 

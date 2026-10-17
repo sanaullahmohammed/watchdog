@@ -456,6 +456,12 @@ describe('Story 5.3: check_results partitions', () => {
             throw new Error(`unexpected command ${command.type}`);
           },
         },
+        queryBus: {
+          async execute(query: { type: string }) {
+            if (query.type === 'monitor/list_at_threshold') return [];
+            throw new Error(`unexpected query ${query.type}`);
+          },
+        },
       } as unknown as Parameters<typeof runWorkerPass>[0];
 
       await runWorkerPass(stubApp, silent);
@@ -508,6 +514,12 @@ describe('Story 5.3: check_results partitions', () => {
               return { created: 0, dropped: 0 };
             }
             throw new Error(`unexpected command ${command.type}`);
+          },
+        },
+        queryBus: {
+          async execute(query: { type: string }) {
+            if (query.type === 'monitor/list_at_threshold') return [];
+            throw new Error(`unexpected query ${query.type}`);
           },
         },
       } as unknown as Parameters<typeof runWorkerPass>[0];

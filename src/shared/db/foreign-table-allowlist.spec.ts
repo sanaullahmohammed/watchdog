@@ -45,7 +45,8 @@ const OWNED: Readonly<Record<string, readonly string[]>> = {
 const FOREIGN: Readonly<Record<string, readonly string[]>> = {
   incident: [],
   maintenance: [],
-  // The due query skips archived services (Story 5.8).
+  // The due query and the at-threshold query (Story 5.16) skip archived
+  // services (Story 5.8).
   monitoring: ['services'],
   // The status computation reads what bears on a service's status.
   service: [
