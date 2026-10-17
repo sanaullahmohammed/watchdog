@@ -41,3 +41,14 @@ export const incidentDismissedEvent =
 export const incidentUpdatePostedEvent = incidentEventCreator<
   IncidentEventPayload & { updateId: string }
 >('update_posted');
+
+/**
+ * Admin-only. A monitor breached its threshold and a draft was proposed. Not a
+ * status input: a draft is never public.
+ */
+export const incidentDraftCreatedEvent = incidentEventCreator<
+  IncidentEventPayload & {
+    originMonitorId: string;
+    originFailureEpisode: number;
+  }
+>('draft_created');

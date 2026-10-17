@@ -170,7 +170,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   evidence: Review Triage Log #3; `grep -rnE "(function|const) (schedule|createWindow)\b" src --include='*.test.ts'`.
   target: The next story that touches a maintenance suite.
 - source_spec: `spec-epic-9-retro-4-shared-test-helpers.md`
-  summary: 23 test files still declare `const ORIGIN = 'http://localhost:3000'`, a copy of `TEST_ORIGIN` from `src/shared/testing/tenant.ts`. Migrated files now send both: the fixtures send `TEST_ORIGIN`, the file's own requests send `ORIGIN`.
+  summary: 22 test files still declare `const ORIGIN = 'http://localhost:3000'`, a copy of `TEST_ORIGIN` from `src/shared/testing/tenant.ts`. Migrated files now send both: the fixtures send `TEST_ORIGIN`, the file's own requests send `ORIGIN`.
   evidence: Review Triage Log #4; `grep -rln "const ORIGIN = 'http://localhost:3000'" src`.
   target: The next story that touches one of those suites.
 
@@ -253,3 +253,10 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: AGENTS.md's ordering pitfall ("`now()` is the transaction's start time. A column that orders rows written under a lock is an identity column ...") no longer says that `sequence` is insert order, not commit order, so it can read as a safe cursor; and its opening `now()` clause now leads nowhere.
   evidence: Review pass 1, B7. The commit-order caveat is recorded for Epic 4's cursor in the 5.13 entries above; the pitfall itself does not carry it.
   target: AGENTS.md edit.
+
+## From Story 5.15 (2026-10-17)
+
+- source_spec: `spec-5-15-open-a-draft-when-a-monitor-breaches-its-threshold.md`
+  summary: A monitor-born draft's `startedAt` is the moment the command runs, because neither `monitor.threshold_breached` nor `createDraftFromMonitorCommand` carries the breaching check's time. On the event path the two differ by milliseconds. Story 5.16's reconciliation reuses the command, so a draft it opens would show the pass time, possibly long after the threshold was crossed. Consider a `breachedAt` in the command payload when 5.16 adds its caller.
+  evidence: Review pass 1, B5; `incidentDomain.proposeDraft` stamps `new Date()`. The spec's Design Notes record the choice.
+  target: Story 5.16.

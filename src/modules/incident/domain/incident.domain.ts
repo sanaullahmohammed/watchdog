@@ -27,14 +27,50 @@ export interface IncidentEntity {
   resolvedAt: Date | null;
   createdByUserId: string | null;
   originMonitorId: string | null;
+  originFailureEpisode: number | null;
   source: 'manual' | 'monitoring' | 'ai_assisted';
   createdAt: Date;
   updatedAt: Date;
   affectedServices: { serviceId: string; impact: IncidentImpact }[];
 }
 
+export interface ProposeDraftProps {
+  monitorId: string;
+  serviceId: string;
+  monitorName: string;
+  failureEpisode: number;
+}
+
 export default function incidentDomain() {
   return {
+    /**
+     * A monitor-born draft: the other starting status DOMAIN.md allows. It has
+     * no author, and it is `critical` on the monitor's service until a human
+     * says otherwise.
+     */
+    proposeDraft: (orgId: string, props: ProposeDraftProps): IncidentEntity => {
+      const now = new Date();
+      const status: IncidentStatus = 'draft';
+      assertTransition(null, status);
+
+      return {
+        id: randomUUID(),
+        orgId,
+        title: `Monitor failure: ${props.monitorName}`,
+        status,
+        impact: 'critical',
+        startedAt: now,
+        resolvedAt: null,
+        createdByUserId: null,
+        originMonitorId: props.monitorId,
+        originFailureEpisode: props.failureEpisode,
+        source: 'monitoring',
+        createdAt: now,
+        updatedAt: now,
+        affectedServices: [{ serviceId: props.serviceId, impact: 'critical' }],
+      };
+    },
+
     declareIncident: (
       orgId: string,
       createdByUserId: string | null,
@@ -59,6 +95,7 @@ export default function incidentDomain() {
         resolvedAt: null,
         createdByUserId,
         originMonitorId: null,
+        originFailureEpisode: null,
         source: 'manual',
         createdAt: now,
         updatedAt: now,

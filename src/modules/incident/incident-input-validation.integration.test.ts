@@ -158,7 +158,7 @@ describe('Story 9.3: GraphQL refuses what REST refuses, incidents', () => {
       }
     }
     // "No event" proves nothing if a type was never listened for.
-    assert.equal(registered.length, 7, registered.join(', '));
+    assert.equal(registered.length, 8, registered.join(', '));
     assert.deepEqual(
       registered.sort(),
       [
@@ -168,6 +168,7 @@ describe('Story 9.3: GraphQL refuses what REST refuses, incidents', () => {
         'incident/state_changed',
         'incident/resolved',
         'incident/dismissed',
+        'incident/draft_created',
         'incident/update_posted',
       ].sort(),
     );
