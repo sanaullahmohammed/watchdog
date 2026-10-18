@@ -49,8 +49,13 @@ services:
       postgres:
         condition: service_healthy
 
+  # api and worker sit behind the `app` profile: a bare `docker compose up -d`
+  # starts only the dependencies, so a worker never checks the integration
+  # suite's monitors. `docker compose --profile app up -d` starts everything.
+  # ARCHITECTURE.md section 8.
   api:
     <<: *watchdog-image
+    profiles: ['app']
     command: ['node', 'dist/index.js', 'api']
     environment:
       NODE_ENV: development
@@ -77,6 +82,7 @@ services:
 
   worker:
     <<: *watchdog-image
+    profiles: ['app']
     command: ['node', 'dist/index.js', 'worker']
     # A check may run for up to 60 s (MONITOR_LIMITS.timeoutSeconds.max) and
     # shutdown waits for it; Docker's default 10 s would kill the worker first.

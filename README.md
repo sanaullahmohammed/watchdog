@@ -74,10 +74,12 @@ corepack enable
 pnpm install
 pnpm run create:env
 
-docker compose up
+docker compose --profile app up
 ```
 
-`docker compose up` runs Postgres, Mailpit, the one-shot `migrate` service, `api`, and `worker` from a single image. Migrations run through `migrate` before `api` and `worker` start, so the Compose path needs no separate local migration command and does not start a second server on port 3000.
+`docker compose --profile app up` runs Postgres, Mailpit, the one-shot `migrate` service, `api`, and `worker` from a single image. Migrations run through `migrate` before `api` and `worker` start, so the Compose path needs no separate local migration command and does not start a second server on port 3000.
+
+`api` and `worker` sit behind the `app` profile (decided 2026-10-18, owner). Without the flag, `docker compose up` starts only Postgres, Mailpit and `migrate`. That is the stack the integration suite and `pnpm run dev:api` want: a running `worker` would check the suite's monitors and drop its partitions.
 
 Once the stack reports healthy:
 
@@ -93,7 +95,7 @@ open http://localhost:8025           # Mailpit
 Use this variant when developing the API process outside Compose while still using Compose for dependencies:
 
 ```bash
-docker compose up postgres mailpit migrate
+docker compose up postgres mailpit migrate   # the same three as a bare `docker compose up`
 
 # In a separate shell. Configuration comes from .env; env-schema validates it
 # and fails fast naming any missing variable.

@@ -71,7 +71,7 @@ Tenant scoping: carries `org_id`.
 
 Archive semantics:
 
-- v1 has no hard service delete.
+- v1 has no hard service delete. A migration enforces it: `watchdog_app` holds no `DELETE` on `services`, the same revoke that makes `check_results` append-only. Deleting an organization still removes its services, through a foreign key's cascade.
 - Archived services are excluded from public status pages and active admin lists.
 - Archiving suspends the service's monitors non-destructively. The worker due-monitor query joins `services` and filters `services.archived_at IS NULL`.
 - Restoring a service clears `archived_at` and automatically resumes its enabled monitors.
@@ -400,7 +400,7 @@ Implementation:
 - Days are UTC days: results are grouped by `checked_at` truncated to its UTC date, never the session's time zone.
 - Each worker pass refreshes today and yesterday for every organization. Yesterday is refreshed again because a check records its `checked_at` when the attempt starts and commits up to its timeout later, so a result for yesterday can land after midnight.
 - Missed days are caught up while their raw results are still retained. Each organization's `uptime_rollup_progress.refreshed_through` is the latest closed UTC day refreshed after it ended. A pass refreshes every closed day after it, oldest first, up to yesterday, then advances it. With no progress row, catch-up starts at the organization's oldest retained result.
-- Catch-up runs before partition maintenance in the same pass, so a day is rolled up before retention can drop its raw results. A day that was still not rolled up when retention dropped it is lost; the worker logs the range rather than writing a row it cannot compute.
+- Catch-up runs before partition maintenance in the same pass, so a day is rolled up before retention can drop its raw results, unless the refresh failed: maintenance runs whatever the refresh did (ARCHITECTURE section 6.1). A day that was still not rolled up when retention dropped it is lost; the worker logs the range rather than writing a row it cannot compute.
 - A refresh that leaves a day's aggregates unchanged leaves its row unchanged.
 
 ### UptimeRollupProgress
@@ -1116,7 +1116,7 @@ Visibility is judged from current rows at read time. Making a service private, o
 
 The second list is why a listed `critical` incident can never sit under an `operational` banner, whether it names no service, names services that are private, or names public ones whose own status has not caught up. The headline impact is the one the page prints beside the incident, so the banner agrees with what a reader sees. An incident the rule leaves off contributes nothing, so a private incident cannot raise the banner by the back door. A window reaches the banner only through the services it puts in `maintenance`.
 
-**Uptime is shaped now and filled in Epic 5.** `uptime.windowDays` is 90. `uptime.services` is empty until rollups exist, which is how an integrator tells "no data yet" from "100% uptime". Once they exist, each service carries one entry per day in the window, oldest first, so a renderer draws its bars without date arithmetic. Decided 2026-10-09 (owner): `uptime.services` holds only the visible services with at least one rollup in the window. A visible service with none is left out of it and stays in the ordinary services list; its absence means no observations in the window, not 100% uptime, and not necessarily a disabled monitor. An included service carries all 90 days. A day the rollups have no row for carries `uptimeRatio: null` and `worstStatus: null`: no checks ran that day, because the monitor did not exist yet or the worker was down, and that is a gap rather than an outage. `worstStatus` is the rollup's `worst_status`, the three-level monitor scale (`operational`, `degraded`, `major_outage`) computed from `check_results` alone, and it is what colours a day's bar. The payload carried no such field until the Epic 3 retrospective added it (R-17), while the contract still had no integrator to break.
+**Uptime comes from the rollups.** `uptime.windowDays` is 90. `uptime.services` is empty until rollups exist, which is how an integrator tells "no data yet" from "100% uptime". Once a visible service has a rollup in the window, it carries one entry per day in the window, oldest first, so a renderer draws its bars without date arithmetic. Decided 2026-10-09 (owner): `uptime.services` holds only the visible services with at least one rollup in the window. A visible service with none is left out of it and stays in the ordinary services list; its absence means no observations in the window, not 100% uptime, and not necessarily a disabled monitor. An included service carries all 90 days. A day the rollups have no row for carries `uptimeRatio: null` and `worstStatus: null`: no checks ran that day, because the monitor did not exist yet or the worker was down, and that is a gap rather than an outage. `worstStatus` is the rollup's `worst_status`, the three-level monitor scale (`operational`, `degraded`, `major_outage`) computed from `check_results` alone, and it is what colours a day's bar. The payload carried no such field until the Epic 3 retrospective added it (R-17), while the contract still had no integrator to break.
 
 This rule is written for the page; it is not yet applied everywhere these items are referenced publicly. `ARCHITECTURE.md` section 5.4 leaves the unimplemented public event gate abstract because its earlier draft-only sketch did not enforce this rule. Epic 4 builds that gate and must apply the full rule there too, including privacy-safe invalidation when public visibility changes.
 
@@ -1264,19 +1264,31 @@ do update set
   updated_at = now();
 ```
 
-90-day query sketch:
+90-day query sketch. The window is the last 90 UTC days, today included, never the session's `current_date`. Only visible services with a rollup in the window are listed, and each carries all 90 days, with the rollup's columns null for a day it has no row for (see Public status page):
 
 ```sql
 select
-  service_id,
-  day,
-  uptime_ratio,
-  worst_status
-from uptime_rollups
-where org_id = current_setting('app.current_org_id', true)
-  and day >= current_date - interval '89 days'
-order by service_id, day;
+  i.service_id,
+  d.day,
+  r.uptime_ratio,
+  r.worst_status
+from (
+  select distinct rr.service_id
+  from uptime_rollups rr
+  join services s on s.id = rr.service_id and s.org_id = rr.org_id
+  where s.is_public = true and s.archived_at is null
+    and rr.day between (now() at time zone 'UTC')::date - 89
+                   and (now() at time zone 'UTC')::date
+) i
+cross join (
+  select (now() at time zone 'UTC')::date - 89 + generate_series(0, 89) as day
+) d
+left join uptime_rollups r
+  on r.service_id = i.service_id and r.day = d.day
+order by i.service_id, d.day;
 ```
+
+Row level security scopes `uptime_rollups` and `services` to the organization, so the sketch carries no `org_id` predicate.
 
 ### Consecutive-failure to draft-incident rule
 

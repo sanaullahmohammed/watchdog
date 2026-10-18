@@ -221,6 +221,8 @@ Binding on step 3. Each was settled deliberately; none is a default.
 7. **Name the files and the layer.** Every story names the paths it touches and whether it is proven by unit, integration or E2E tests.
 8. **Per-story definition of done.** `pnpm run check`, `pnpm run test`, `pnpm run test:integration`, `pnpm run test:e2e` and `pnpm run auth:schema:check` all pass, and `pnpm run test` passes again with `.env` moved aside, because CI's unit job has none; any emitted event exists in the DOMAIN catalog; REST and GraphQL parity for the slice. *Amended after the Epic 9 retrospective (P1):* the no-`.env` run and `test:e2e` match what CI runs.
 9. **Shared test helpers.** A story's tests build fixtures, capture events and send GraphQL through `src/shared/testing/` (`fixtures.ts`, `events.ts`, `graphql.ts`, `tenant.ts`). A helper a story needs that is not there yet goes there, not into the test file. Epics 3 and 9 each ended with the same helpers copied across a dozen suites (Epic 9 retrospective, AV-2).
+10. **A deferral states its premise.** A deferral that rests on a bound states the arithmetic behind it: the figure, what it multiplies and the worst case it covers. A deferral or a triage rejection that relies on a later story names that story in `deferred-work.md`, so the later story's spec checks it. Epic 5 deferred a stall as "at most 60 s", which held for one slow check and not for a queue of them (481 s observed), and rejected an archived-service race because "5.10 and 5.15 consumers read the service themselves", which 5.15 did not (Epic 5 retrospective, P3, DR-1, DR-2).
+11. **A fix's test is mutation-checked.** The test is shown to fail with the fix reverted, and the spec's Implementation Notes record that it did. Stories 5.14, 5.15 and 5.16 each put the old behaviour back and saw the new test fail; the definition of done did not ask for it (Epic 5 retrospective, P2).
 
 ## Epic 1: Tenanted access
 
@@ -1581,8 +1583,10 @@ So that raw results stay cheap to keep and are never edited.
 
 **Given** the two `SECURITY DEFINER` functions the migration creates, owned by `watchdog_owner` with a fixed `search_path`
 **When** `watchdog_app`'s privileges are read
-**Then** it holds `EXECUTE` on those two functions and nothing more of the owner's
+**Then** it holds `EXECUTE` on those two functions, and on the third that Story 5.11 adds, and nothing more of the owner's
 **And** neither function runs SQL beyond the partition names it computes itself, and a retention that is not a positive number is refused
+
+*Reconciled 2026-10-18 (Epic 5 retrospective, E1).* Story 5.11 added `check_results_retained_from()`, so `watchdog_app` holds `EXECUTE` on three functions; `check-result-partitions.integration.test.ts` pins three.
 
 **Given** a worker maintenance pass
 **When** partition maintenance runs
@@ -1605,9 +1609,12 @@ So that raw results stay cheap to keep and are never edited.
 **And** no row-level `DELETE` is issued
 
 **Given** partition maintenance fails
-**When** the worker pass continues
-**Then** the failure is logged with its error and the per-organization work still runs
+**When** the worker pass runs its organizations and then maintenance
+**Then** the failure is logged with its error and the per-organization work has already run
+**And** the pass then rejects, so it does not count as completed
 **And** the command runs once per pass, not per organization, since it touches no tenant rows and so needs no `withTenantTransaction`
+
+*Reconciled 2026-10-18 (Epic 5 retrospective, E2).* Maintenance runs after the organization loop, so a rollup is written before retention can drop its rows, and a failure rejects the pass at the end (`src/worker.ts`).
 
 ### Story 5.4: HTTP and keyword checks behind the target guard
 
@@ -1853,8 +1860,10 @@ So that slow targets never delay maintenance transitions, and a stuck loop or a 
 
 **Given** a tick still running when the next is due
 **When** the interval fires
-**Then** it logs and skips; the loop never overlaps itself
+**Then** it logs and skips; the loop never overlaps itself, and a monitor already queued or running is not queued again
 **And** a tenant-discovery failure costs one tick, and a tick in which every organization failed rejects and does not count as a completed pass
+
+*Reconciled 2026-10-18 (Epic 5 retrospective, DR-1).* A tick queues checks and does not wait for them, so they outlive it. "Never overlaps itself" holds for ticks, and for a monitor through a process-wide registry (ARCHITECTURE 6.0.1).
 
 **Given** the monitor loop is overdue while the maintenance loop completes
 **When** the healthcheck runs
@@ -2184,8 +2193,10 @@ So that a breach is proposed even if the handler failed.
 
 **Given** the worker
 **When** it reconciles
-**Then** it calls the `monitoring` query and the `incident` command through the buses and imports neither module
+**Then** it calls the `monitoring` query and the `incident` command through the buses, importing their factories as Constraint 1 allows the composition root
 **And** one organization's failure is logged and does not stop the others
+
+*Reconciled 2026-10-18 (Epic 5 retrospective, E3).* For this step `src/worker.ts` imports the two factories (`listMonitorsAtThresholdQuery`, `createDraftFromMonitorCommand`) and runs them through the buses; "imports neither module" was stricter than Constraint 1, which lets the composition root import factories.
 
 **Given** the integration suite
 **When** it runs passes
