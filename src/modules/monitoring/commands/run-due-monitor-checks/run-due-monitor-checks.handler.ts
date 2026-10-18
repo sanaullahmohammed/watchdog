@@ -1,15 +1,15 @@
 import { monitoringActionCreator } from '@/modules/monitoring';
-import { checkLimiter } from '@/modules/monitoring/checks/process-check-limiter';
-import { runCheck } from '@/modules/monitoring/checks/run-check';
-import { recordCheckResultCommand } from '@/modules/monitoring/commands/record-check-result/record-check-result.handler';
+import { startMonitorCheck } from '@/modules/monitoring/commands/start-monitor-check';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
 
 export type RunDueMonitorChecksCommandResult = Promise<{ checked: number }>;
 
 /**
- * One organization's pass: find the due monitors, run each under the
- * process-wide cap and record every outcome. Story 5.9 wires it into the
- * worker. No route or resolver: exposing it would let a caller drive checks.
+ * Finds one organization's due monitors, runs each under the process-wide cap
+ * and records every outcome, and resolves once they have all settled. The
+ * worker queues checks without waiting (queue_due_checks); this awaits its
+ * own, and does not await a monitor someone else has registered. No route or
+ * resolver: exposing it would let a caller drive checks.
  */
 export const runDueMonitorChecksCommand = monitoringActionCreator<{
   orgId: string;
@@ -35,20 +35,16 @@ export default function makeRunDueMonitorChecks({
         monitorRepository.listDue(tx, now),
       );
 
-      const settled = await Promise.allSettled(
-        due.map((monitor) =>
-          checkLimiter.run(orgId, async () => {
-            const outcome = await runCheck(monitor);
-            await commandBus.execute(
-              recordCheckResultCommand({
-                orgId,
-                monitorId: monitor.id,
-                outcome,
-              }),
-            );
-          }),
-        ),
-      );
+      const started = due.flatMap((monitor) => {
+        const check = startMonitorCheck(
+          { monitorRepository, commandBus },
+          orgId,
+          monitor.id,
+          now,
+        );
+        return check === null ? [] : [check];
+      });
+      const settled = await Promise.allSettled(started);
 
       const reasons = settled.flatMap((r) =>
         r.status === 'rejected' ? [r.reason] : [],
@@ -60,7 +56,11 @@ export default function makeRunDueMonitorChecks({
           `${reasons.length} due monitor checks failed`,
         );
       }
-      return { checked: due.length };
+      return {
+        checked: settled.filter(
+          (r) => r.status === 'fulfilled' && r.value === 'recorded',
+        ).length,
+      };
     },
     init() {
       commandBus.register(runDueMonitorChecksCommand.type, this.handler);

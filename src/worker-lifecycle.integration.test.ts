@@ -3,10 +3,11 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { after, before, describe, it } from 'node:test';
+import { after, afterEach, before, describe, it } from 'node:test';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { parseAllowedCidrs } from '@/config/allowed-cidrs';
 import config from '@/config/env';
+import { checkRegistry } from '@/modules/monitoring/checks/process-check-limiter';
 import { buildApp } from '@/server/build-app';
 import sql, { closeDbConnection } from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
@@ -14,6 +15,7 @@ import {
   createCheckResultPartitions,
   createMonitor,
   createService,
+  updateMonitor,
 } from '@/shared/testing/fixtures';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 import {
@@ -159,6 +161,12 @@ describe('Story 5.9: checks run on the worker loop', () => {
     await createCheckResultPartitions();
   });
 
+  afterEach(async () => {
+    // Process-wide: checks queued by an in-process tick must not outlive it.
+    await checkRegistry.drain();
+    checkRegistry.reset();
+  });
+
   after(async () => {
     for (const worker of children) {
       if (worker.child.exitCode === null && worker.child.signalCode === null) {
@@ -239,30 +247,78 @@ describe('Story 5.9: checks run on the worker loop', () => {
     assert.equal((await results(org.orgId, monitorId)).length, 1);
   });
 
-  it('fails the healthcheck for a monitor loop that never completes, and finishes the check on SIGTERM', async () => {
+  it('does not let one organization with many slow targets delay another', async () => {
+    const noisy = await newOrg();
+    const quiet = await newOrg();
+    endpoints.reset();
+    for (let n = 0; n < 30; n += 1) {
+      await make(noisy, `/silent?m=${n}`, { timeoutSeconds: 1 });
+    }
+    const path = join(directory, 'noisy-neighbour');
+    const env = {
+      ...childEnv(path, 4_000),
+      MONITOR_CHECK_CONCURRENCY: '2',
+    };
+    const worker = startChild([noisy.orgId, quiet.orgId], env);
+    const count = async (orgId: string) =>
+      withTenantTransaction(
+        orgId,
+        ({ sql: tx }) =>
+          tx<{ n: number }[]>`select count(*)::int as n from check_results`,
+      ).then((rows) => rows[0].n);
+
+    // The noisy backlog is under way (about 15 s at 2 at a time) before the
+    // quiet organization's monitor exists.
+    await waitFor('the backlog to be under way', () =>
+      endpoints.requests.filter((r) => r.startsWith('/silent')).length >= 2
+        ? true
+        : null,
+    );
+    const quietId = await make(quiet, '/ok');
+
+    await waitFor(
+      "the quiet organization's result",
+      async () => (await results(quiet.orgId, quietId)).length === 1,
+      10_000,
+    );
+    // Probe health only once the backlog has run longer than the overdue
+    // window (4 s, so about 8 of the 30 rows at 2 per second), and while it is
+    // unfinished. Counted in rows, not by checked_at.
+    await waitFor(
+      'the backlog to outlast the overdue window',
+      async () => (await count(noisy.orgId)) >= 10,
+      20_000,
+    );
+    assert.ok((await count(noisy.orgId)) < 30);
+    const completed = readHeartbeat(path)?.loops.monitor?.lastCompletedAt;
+    await waitFor(
+      'the monitor loop to complete another tick',
+      () => {
+        const next = readHeartbeat(path)?.loops.monitor?.lastCompletedAt;
+        return next != null && next !== completed;
+      },
+      10_000,
+    );
+    const check = await runHealthcheck(env);
+    assert.equal(check.code, 0, check.output + worker.output());
+
+    worker.child.kill('SIGTERM');
+    assert.equal(await exitWithin(worker, 60_000), 0, worker.output());
+  });
+
+  it('fails the healthcheck when checks are queued and none settles', async () => {
     const org = await newOrg();
-    const monitorId = await make(org, '/silent', {
-      timeoutSeconds: 15,
-      intervalSeconds: 60,
-    });
-    const path = join(directory, 'overdue');
-    const env = childEnv(path, 4_000);
+    endpoints.reset();
+    await make(org, '/silent', { timeoutSeconds: 40 });
+    const path = join(directory, 'stalled');
+    const env = childEnv(path, 3_000);
     const worker = startChild([org.orgId], env);
 
-    await waitFor('the monitor loop to start', () => {
-      const loop = readHeartbeat(path)?.loops.monitor;
-      return loop?.lastStartedAt != null && loop.lastCompletedAt === null;
-    });
-    // Maintenance keeps completing while the monitor pass hangs.
-    const firstMaintenance =
-      readHeartbeat(path)?.loops.maintenance?.lastCompletedAt;
-    await waitFor('maintenance to complete again', () => {
-      const completed = readHeartbeat(path)?.loops.maintenance?.lastCompletedAt;
-      return completed != null && completed !== firstMaintenance;
-    });
-
-    // Rerun the healthcheck until the 4 s threshold has passed; no reading of
-    // this clock against the child's.
+    await waitFor(
+      'the tick to report the stall',
+      () => worker.output().includes('monitor checks stalled'),
+      30_000,
+    );
     const check = await waitFor(
       'the healthcheck to fail on the monitor loop',
       async () => {
@@ -271,23 +327,54 @@ describe('Story 5.9: checks run on the worker loop', () => {
           ? result
           : null;
       },
-      10_000,
+      30_000,
     );
     assert.match(check.output, /loop monitor/);
-    // Still hung: the failure came while the check ran, not after it.
-    assert.equal(readHeartbeat(path)?.loops.monitor?.lastCompletedAt, null);
-    await waitFor('the skipped tick to be logged', () =>
-      worker
-        .output()
-        .includes('monitor pass still running; skipping this tick'),
-    );
+    // Maintenance is unaffected by the stalled checks.
+    assert.doesNotMatch(check.output, /loop maintenance/);
 
+    // The loop stopped completing: two probes a few ticks apart agree.
+    const first = readHeartbeat(path)?.loops.monitor?.lastCompletedAt;
+    await new Promise((resolve) => setTimeout(resolve, 3 * INTERVAL_MS));
+    assert.equal(readHeartbeat(path)?.loops.monitor?.lastCompletedAt, first);
+
+    worker.child.kill('SIGKILL');
+    await worker.exit;
+  });
+
+  it('records the check running on SIGTERM as a timeout and drops the queued ones', async () => {
+    const org = await newOrg();
+    endpoints.reset();
+    const ids = [
+      await make(org, '/silent?m=1', { timeoutSeconds: 15 }),
+      await make(org, '/silent?m=2', { timeoutSeconds: 15 }),
+      await make(org, '/silent?m=3', { timeoutSeconds: 15 }),
+    ];
+    const path = join(directory, 'sigterm-timeout');
+    const worker = startChild([org.orgId], {
+      ...childEnv(path, 20_000),
+      MONITOR_CHECK_CONCURRENCY: '1',
+    });
+
+    await waitFor('/silent to have a request in flight', () =>
+      endpoints.requests.some((r) => r.startsWith('/silent')) ? true : null,
+    );
+    // Let the tick finish queueing before the signal.
+    await waitFor(
+      'the monitor tick to complete',
+      () => readHeartbeat(path)?.loops.monitor?.lastCompletedAt != null,
+    );
     worker.child.kill('SIGTERM');
+
     assert.equal(await exitWithin(worker, 60_000), 0, worker.output());
-    const rows = await results(org.orgId, monitorId);
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].status, 'failure');
-    assert.equal(rows[0].error_code, 'timeout');
+    const rows = await Promise.all(ids.map((id) => results(org.orgId, id)));
+    assert.deepEqual(rows.map((r) => r.length).sort(), [0, 0, 1]);
+    const recorded = rows.flat()[0];
+    assert.equal(recorded.status, 'failure');
+    assert.equal(recorded.error_code, 'timeout');
+    const output = worker.output();
+    assert.match(output, /checks not started; worker is shutting down/);
+    assert.doesNotMatch(output, /"level":50/);
   });
 
   it('finishes and records a check in flight when SIGTERM arrives', async () => {
@@ -300,8 +387,6 @@ describe('Story 5.9: checks run on the worker loop', () => {
     await waitFor('/hold to have a request in flight', () =>
       endpoints.peakInFlight() >= 1 ? true : null,
     );
-    const startedBefore = readHeartbeat(path)?.loops.monitor?.lastStartedAt;
-    assert.ok(startedBefore);
     worker.child.kill('SIGTERM');
 
     assert.equal(await exitWithin(worker, 20_000), 0, worker.output());
@@ -314,10 +399,6 @@ describe('Story 5.9: checks run on the worker loop', () => {
     assert.equal(
       endpoints.requests.filter((r) => r.startsWith('/hold')).length,
       1,
-    );
-    assert.equal(
-      readHeartbeat(path)?.loops.monitor?.lastStartedAt,
-      startedBefore,
     );
   });
 
@@ -468,12 +549,76 @@ describe('Story 5.9: checks run on the worker loop', () => {
     assert.equal(loopHealth.lastCompletedAt, null);
   });
 
+  it('rejects as stalled when every record fails for the overdue window', async () => {
+    checkRegistry.reset();
+    const org = await newOrg();
+    await make(org, '/ok');
+    const repo = app.diContainer.resolve('checkResultRepository' as never) as {
+      append: () => Promise<never>;
+    };
+    const original = repo.append;
+    repo.append = () => Promise.reject(new Error('inserts refused'));
+    const overdueMs = 4_000;
+    try {
+      const tick = () =>
+        runMonitorPass(app, capturingLogger, {
+          orgIds: [org.orgId],
+          overdueMs,
+        });
+      // Well inside the window: the failure is pending but not yet a stall.
+      await tick();
+      await checkRegistry.drain();
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      await tick();
+      await checkRegistry.drain();
+      // Well past it.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      await assert.rejects(tick(), /monitor checks stalled/);
+      await checkRegistry.drain();
+    } finally {
+      repo.append = original;
+      checkRegistry.reset();
+    }
+  });
+
+  it('clears a pending failure when a tick finds nothing due', async () => {
+    checkRegistry.reset();
+    const org = await newOrg();
+    const monitorId = await make(org, '/ok');
+    const repo = app.diContainer.resolve('checkResultRepository' as never) as {
+      append: () => Promise<never>;
+    };
+    const original = repo.append;
+    repo.append = () => Promise.reject(new Error('inserts refused'));
+    const overdueMs = 1_500;
+    const tick = (orgIds: string[]) =>
+      runMonitorPass(app, quietLogger, { orgIds, overdueMs });
+    try {
+      await tick([org.orgId]);
+      await checkRegistry.drain();
+    } finally {
+      repo.append = original;
+    }
+    await updateMonitor(app, org.cookie, monitorId, { enabled: false });
+    await new Promise((resolve) => setTimeout(resolve, overdueMs + 500));
+
+    // With a listing failing too, the tick does not count as idle: stalled.
+    await assert.rejects(
+      tick([org.orgId, BAD_ORG_ID]),
+      /monitor checks stalled/,
+    );
+    // Nothing due and nothing registered: the failure is moot.
+    await tick([org.orgId]);
+    await tick([org.orgId]);
+  });
+
   it('resolves when only some organizations fail, and still records the good one', async () => {
     const org = await newOrg();
     const monitorId = await make(org, '/ok');
     await runMonitorPass(app, quietLogger, {
       orgIds: [org.orgId, BAD_ORG_ID],
     });
+    await checkRegistry.drain();
     assert.equal((await results(org.orgId, monitorId)).length, 1);
   });
 
@@ -481,6 +626,7 @@ describe('Story 5.9: checks run on the worker loop', () => {
     const org = await newOrg();
     await make(org, '/error', { failureThreshold: 1 });
     await runMonitorPass(app, quietLogger, { orgIds: [org.orgId] });
+    await checkRegistry.drain();
     await app.eventBus.drain();
 
     const [row] = await withTenantTransaction(
