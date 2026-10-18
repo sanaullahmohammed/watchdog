@@ -47,6 +47,14 @@ const PUBLIC_BY_DESIGN: ReadonlyMap<string, string> = new Map([
     'The preflight a cross-origin conditional fetch of that page needs. It ' +
       'touches no data: it answers with the CORS headers and nothing else.',
   ],
+  ...['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT'].flatMap(
+    (method): [string, string][] =>
+      ['/status', '/status/*'].map((url) => [
+        `${method} ${url}`,
+        'The uniform miss for whatever the router cannot match under /status, ' +
+          'answered with the public headers. It reads no data and names no organization.',
+      ]),
+  ),
   [
     'Query.publicStatusPage',
     'The same public page over GraphQL, public for the same reason.',

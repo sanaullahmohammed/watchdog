@@ -30,7 +30,7 @@ const ORIGIN = 'https://example.test';
 /** The three public headers, and never credentials. */
 const assertPublicHeaders = (headers: Record<string, unknown>) => {
   assert.equal(headers['access-control-allow-origin'], '*');
-  assert.equal(headers['access-control-expose-headers'], 'ETag');
+  assert.equal(headers['access-control-expose-headers'], 'ETag, Retry-After');
   // Helmet's default would keep a cross-origin reader out even with CORS.
   assert.equal(headers['cross-origin-resource-policy'], 'cross-origin');
   assert.equal(
@@ -153,7 +153,7 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
       },
     });
     assert.equal(preflight.statusCode, 204);
-    assert.equal(preflight.headers['access-control-allow-origin'], '*');
+    assertPublicHeaders(preflight.headers);
     assert.match(
       preflight.headers['access-control-allow-headers'] as string,
       /if-none-match/,
@@ -162,6 +162,171 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
       preflight.headers['access-control-allow-methods'] as string,
       /GET/,
     );
+  });
+
+  it('gives a router miss under /status the uniform miss and the public headers', async () => {
+    const route = await app.inject({
+      method: 'GET',
+      url: `/status/${tag}-missing`,
+      headers: { origin: ORIGIN },
+    });
+    const { correlationId: _r, ...routeBody } = route.json();
+    const cases: [string, string][] = [
+      ['GET', '/status/x/'],
+      ['GET', '/status/a/b'],
+      ['GET', '/status'],
+      ['GET', '//status/x/'],
+      ['POST', `/status/${tag}`],
+      ['HEAD', '/status/a/b'],
+      ['OPTIONS', '/status/x/'],
+      ['DELETE', '/status/a/b'],
+      ['PUT', '/status'],
+      ['PATCH', '/status/x/'],
+    ];
+    for (const [method, url] of cases) {
+      const res = await app.inject({
+        method: method as 'GET',
+        url,
+        headers: { origin: ORIGIN },
+      });
+      const label = `${method} ${url}`;
+      assert.equal(res.statusCode, 404, `${label} ${res.body}`);
+      assertPublicHeaders(res.headers);
+      if (method === 'HEAD') {
+        assert.equal(res.body, '', label);
+        continue;
+      }
+      const { correlationId, ...body } = res.json();
+      assert.ok(correlationId, label);
+      assert.deepEqual(body, routeBody, label);
+    }
+  });
+
+  it('rations router misses like the page', async () => {
+    const limited = await buildApp({ logger: false });
+    await limited.ready();
+    try {
+      const max = env.publicSurface.rateLimit.max;
+      // Each catch-all route keeps its own bucket, so each path is flooded alone.
+      for (const url of ['/status', '/status/a/b']) {
+        let refused: Awaited<ReturnType<typeof app.inject>> | undefined;
+        for (let sent = 1; sent <= max + 2 && !refused; sent += 1) {
+          const res = await limited.inject({
+            method: 'GET',
+            url,
+            headers: { origin: ORIGIN },
+          });
+          if (res.statusCode === 429) refused = res;
+        }
+        assert.ok(refused, `${url}: router misses were not rationed`);
+        assertPublicHeaders(refused.headers);
+        assert.ok(refused.headers['retry-after'], url);
+      }
+    } finally {
+      await limited.close();
+    }
+  });
+
+  it('answers a malformed URL under /status/ with a plain 400 and the public headers', async () => {
+    for (const url of [
+      '/status/%E0',
+      '/status/%E0/events',
+      '//status/%E0',
+      '/status/%E0?x=1',
+    ]) {
+      const res = await app.inject({
+        method: 'GET',
+        url,
+        headers: { origin: ORIGIN },
+      });
+      assert.equal(res.statusCode, 400, `${url} ${res.body}`);
+      assertPublicHeaders(res.headers);
+      assert.ok(!res.body.includes('%E0'), `${url}: the path is not echoed`);
+      assert.deepEqual(Object.keys(res.json()).sort(), [
+        'correlationId',
+        'error',
+        'message',
+        'statusCode',
+      ]);
+    }
+
+    const head = await app.inject({
+      method: 'HEAD',
+      url: '/status/%E0',
+      headers: { origin: ORIGIN },
+    });
+    assert.equal(head.statusCode, 400);
+    assertPublicHeaders(head.headers);
+    assert.equal(head.body, '');
+  });
+
+  it('changes nothing outside /status', async () => {
+    const cases: [string, string, number][] = [
+      ['GET', '/statusx', 404],
+      ['GET', '/statusx%E0', 400],
+      ['GET', '/api/nope', 404],
+      ['GET', '/api/%E0', 400],
+      ['GET', '/api/%E0?r=/status/', 400],
+      ['POST', '/graphql', 400],
+    ];
+    for (const [method, url, status] of cases) {
+      const res = await app.inject({
+        method: method as 'GET',
+        url,
+        headers: { origin: ORIGIN },
+      });
+      const label = `${method} ${url}`;
+      assert.equal(res.statusCode, status, `${label} ${res.body}`);
+      assert.equal(
+        res.headers['access-control-allow-origin'],
+        undefined,
+        label,
+      );
+      assert.equal(res.body.includes('Status page not found'), false, label);
+      if (status === 404 && url === '/statusx') {
+        assert.equal(
+          res.body,
+          '{"message":"Route GET:/statusx not found","error":"Not Found","statusCode":404}',
+        );
+      }
+      if (url === '/graphql') {
+        assert.equal(
+          res.body,
+          '{"data":null,"errors":[{"message":"body must be object"}]}',
+        );
+      }
+      if (url === '/api/nope') {
+        assert.equal(
+          res.body,
+          '{"message":"Route GET:/api/nope not found","error":"Not Found","statusCode":404}',
+        );
+      }
+      if (url.startsWith('/api/%E0') || url === '/statusx%E0') {
+        assert.equal(
+          res.body,
+          JSON.stringify({
+            error: 'Bad Request',
+            code: 'FST_ERR_BAD_URL',
+            message: `'${url}' is not a valid url component`,
+            statusCode: 400,
+          }),
+          label,
+        );
+      }
+    }
+  });
+
+  it('keeps answering after a method the router does not know', async () => {
+    const exotic = ['/api/%E0', '/status/%E0'];
+    for (const url of exotic) {
+      const res = await app.inject({
+        method: 'PROPFIND' as 'GET',
+        url,
+        headers: { origin: ORIGIN },
+      });
+      assert.equal(res.statusCode, 404, `PROPFIND ${url} ${res.body}`);
+    }
+    assert.equal((await fetchPage({ origin: ORIGIN })).statusCode, 200);
   });
 
   it('keeps the admin surface closed to other origins', async () => {
@@ -219,6 +384,10 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
       assert.ok(page.response, `the page was not rationed within ${max + 2}`);
       assert.equal(page.sent, max + 1, 'refused the request after the limit');
       assertPublicHeaders(page.response.headers);
+      assert.match(
+        page.response.headers['access-control-expose-headers'] as string,
+        /Retry-After/,
+      );
       assert.equal(JSON.parse(page.response.body).error, 'Too Many Requests');
       assert.ok(
         page.response.headers['retry-after'],

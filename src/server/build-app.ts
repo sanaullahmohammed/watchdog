@@ -6,6 +6,7 @@ import Fastify, {
 } from 'fastify';
 import { env } from '@/config';
 import server from '@/server';
+import { frameworkErrors } from '@/server/framework-errors';
 import { appLoggerOptions } from '@/shared/db/sql-debug';
 
 /**
@@ -33,6 +34,7 @@ export async function buildApp(
       // exists to bound regex params, and no route declares one.
       maxParamLength: maxHeaderSize,
     },
+    frameworkErrors,
     ajv: {
       customOptions: {
         keywords: ['example'],

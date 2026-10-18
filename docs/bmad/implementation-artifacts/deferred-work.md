@@ -84,21 +84,9 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 ## From Story 9.12 (2026-10-08)
 
 - source_spec: `spec-9-12-public-cors.md`
-  summary: A request the router answers itself never reaches the public route, so its 404 carries no CORS headers. Examples are `/status/x/` (trailing slash) and `/status/a/b`. A browser script on another origin sees an opaque network error for these.
-  evidence: Story 9.12 Boundaries (out of scope); route-level `onSend` runs only for requests the router matched. A fix would be a not-found handler scoped to `/status/`. Epic 4 adds `/status/:orgSlug/events` to the public surface.
-  target: Epic 4, story 4.1.
-- source_spec: `spec-9-12-public-cors.md`
   summary: `HEAD /status/:orgSlug` with a matching `If-None-Match` answers 500 instead of 304. The route's `onSend` returns `null` for a 304, and Fastify's automatic HEAD route then runs its own `onSend` on that `null` and throws.
   evidence: Story 9.12 Review Triage Log #1; reproduced (GET 200 with an ETag, then HEAD with that tag gave 500). Predates Story 9.12. Fix by returning `undefined` for a HEAD 304, or by declaring the HEAD route explicitly, with a test.
   target: Epic 4, story 4.2.
-- source_spec: `spec-9-12-public-cors.md`
-  summary: A malformed percent-encoding such as `/status/%E0` is answered by the router as a 400 with no CORS headers. A not-found handler would not cover it; it needs Fastify's `frameworkErrors`.
-  evidence: Story 9.12 Review Triage Log #2; reproduced, 400 with no `access-control-allow-origin`. Settle with the 9.12 router-404 entry.
-  target: Epic 4, story 4.1.
-- source_spec: `spec-9-12-public-cors.md`
-  summary: A cross-origin script can read the public page's 429 but not its `Retry-After`, because only `ETag` is exposed. Exposing `Retry-After` changes ARCHITECTURE 5.4.1 first; the same edit could say the headers go on every answer.
-  evidence: Story 9.12 Review Triage Log #3 and #4.
-  target: Epic 4, story 4.1.
 
 ## From Story 9.13 (2026-10-08)
 
@@ -226,3 +214,18 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: VG-5. A monitor disabled while a check is in flight is tested for a failure only, not for a success.
   evidence: Epic 5 retro VG-5; `record-check-result.integration.test.ts:418`.
   target: Epic 8 (default).
+
+## From Story 4.1 (2026-10-18)
+
+- source_spec: `spec-4-1-every-answer-under-status-carries-the-public-headers.md`
+  summary: Paths that differ from `/status` only in letter case, such as `/STATUS/x/`, are not the public page's path. They keep the root 404 and the router's echo of the path.
+  evidence: Story 4.1 Boundaries (Never).
+  target: Epic 8 (default).
+- source_spec: `spec-4-1-every-answer-under-status-carries-the-public-headers.md`
+  summary: Triage row #14. AGENTS.md should note the `/status` catch-all route, `frameworkErrors`, and that a not-found handler doubles as the app-wide bad-URL handler (Fastify wires the last-set one into its 404 router's `onBadUrl`, so a throwing one crashes the process).
+  evidence: Story 4.1 Review Triage Log #14 and #1.
+  target: AGENTS.md edit (next AGENTS.md reconciliation).
+- source_spec: `spec-4-1-every-answer-under-status-carries-the-public-headers.md`
+  summary: A cross-origin preflight to a router miss (`OPTIONS /status/x/`) or to a malformed URL (`OPTIONS /status/%E0`) gets a 404 or 400, and a browser fails any non-2xx preflight. So a conditional (`If-None-Match`) fetch of a missing page is opaque to the script even though the answer carries the public headers. A plain fetch is not preflighted and reads the miss.
+  evidence: Story 4.1 Review Triage Log #21. The same was true on master. Answering preflights under `/status` with 204 plus the allowed methods and headers would fix it.
+  target: Epic 4, story 4.5 (its stream adds the next preflight under `/status`, admitting `Last-Event-ID`).

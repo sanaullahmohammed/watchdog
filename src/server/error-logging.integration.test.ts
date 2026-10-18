@@ -85,6 +85,25 @@ describe('Failures logged by who caused them (retrospective AV-9, R-7)', () => {
     await sql.end({ timeout: 5 });
   });
 
+  it('logs a malformed URL under /status once, at info, with no stack', async () => {
+    const id = randomUUID();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/status/%E0',
+      headers: { 'request-id': id },
+    });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().correlationId, id);
+    const entries = logLines
+      .map((line) => JSON.parse(line) as LogEntry)
+      .filter((e) => e.reqId === id || e.correlationId === id)
+      .filter((e) => !ROUTINE.has(e.msg));
+    assert.equal(entries.length, 1, JSON.stringify(entries));
+    assert.equal(entries[0]?.level, 30);
+    assert.equal(entries[0]?.err?.stack, undefined);
+    assert.equal(entries[0]?.correlationId, id);
+  });
+
   it('logs anonymous misses at info with no stack, over both surfaces', async () => {
     // The retrospective's reproduction: three misses once wrote three
     // level-50 lines with stack traces.
