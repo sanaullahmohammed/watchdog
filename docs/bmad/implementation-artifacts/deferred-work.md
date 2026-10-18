@@ -222,3 +222,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: A cross-origin preflight to a router miss (`OPTIONS /status/x/`) or to a malformed URL (`OPTIONS /status/%E0`) gets a 404 or 400, and a browser fails any non-2xx preflight. So a conditional (`If-None-Match`) fetch of a missing page is opaque to the script even though the answer carries the public headers. A plain fetch is not preflighted and reads the miss.
   evidence: Story 4.1 Review Triage Log #21. The same was true on master. Answering preflights under `/status` with 204 plus the allowed methods and headers would fix it.
   target: Epic 4, story 4.5 (its stream adds the next preflight under `/status`, admitting `Last-Event-ID`).
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-3-bridge-domain-events-to-notify.md`
+  summary: Re-check ARCHITECTURE 5.3's NOTIFY bridge sketch against DOMAIN's updated channel sketch (payload built by the application and sent as one parameter; the `uptime.rollup_refreshed` aggregate is the organization).
+  evidence: Story 4.3 changed DOMAIN's sketch, the owning document; the frozen intent allowed no other genesis edit. ARCHITECTURE 5.3 still shows `json_build_object` and does not name the uptime aggregate. Its semantics (six keys, emit-time `occurredAt`) already match.

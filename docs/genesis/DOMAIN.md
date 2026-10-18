@@ -1466,20 +1466,17 @@ Illustrative payload:
 }
 ```
 
-Illustrative SQL emit:
+The payload is exactly these six keys; nothing else from the event's own payload (no title, name, slug, message, `from`/`to` or update id) goes on the wire. `eventName` is the catalog's dotted name; the in-process bus's `incident/created` is sent as `incident.created`.
+
+- `aggregateType` is the event's prefix: `service`, `service_group`, `incident`, `maintenance` or `monitor`.
+- `aggregateId` is the event payload's `id`, or its `monitorId` for `monitor.*` events.
+- `uptime.rollup_refreshed` is the exception: a refresh covers the whole organization, so it carries `aggregateType: 'organization'` and `aggregateId` equal to `orgId`. Decided 2026-10-18.
+- `occurredAt` is when the event was emitted, the bus's `meta.timestamp` as an ISO string (ARCHITECTURE 5.3), not the time the notification is sent. An event without that stamp is refused: the bridge's handler throws, and the bus logs it as a handler failure.
+
+Illustrative SQL emit, with the payload built by the application and passed as one parameter:
 
 ```sql
-select pg_notify(
-  'watchdog_events',
-  json_build_object(
-    'eventName', $1,
-    'orgId', $2,
-    'aggregateType', $3,
-    'aggregateId', $4,
-    'occurredAt', now(),
-    'version', 1
-  )::text
-);
+select pg_notify('watchdog_events', $1);
 ```
 
 Bridge rule:
