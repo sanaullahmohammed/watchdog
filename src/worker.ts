@@ -41,14 +41,200 @@ const MAINTENANCE_LOOP = 'maintenance';
 const MONITOR_LOOP = 'monitor';
 
 /**
- * Background entrypoint. Two loops share the process: maintenance (window
- * transitions, service status and draft reconciliation, uptime rollups,
- * partition maintenance) and the monitor loop (due checks). A later story adds email
- * dispatch. One image, two commands, separate processes that share no memory.
+ * One step of a pass for one organization. A step that throws is logged under
+ * `failureMessage` with the organization's id. A step that already logged a
+ * failure of its own and carried on returns true. Either way the organization
+ * counts as failed, once, however many of its steps fail.
  */
+type OrganizationStep = {
+  failureMessage: string;
+  run: (
+    app: FastifyInstance,
+    logger: FastifyBaseLogger,
+    orgId: string,
+  ) => Promise<boolean>;
+};
+
 /**
- * One pass across every tenant: the work that is due, then reconciliation
- * (service status, then missed monitor drafts), then the uptime rollup refresh.
+ * The work that is due, then reconciliation. Status recomputation is
+ * event-driven and the events are one-shot, so a handler that failed - a
+ * transient database error, a process that died mid-flight - leaves
+ * last_known_status wrong with nothing to re-trigger it. This is the same
+ * recomputation, idempotent and silent when nothing moved. DOMAIN.md, Status
+ * recomputation. The two share one step, so a failed transition skips the
+ * organization's reconciliation.
+ */
+const transitionMaintenanceAndReconcileStatus: OrganizationStep = {
+  failureMessage: 'worker pass failed for organization',
+  async run(app, logger, orgId) {
+    const moved = await app.commandBus.execute<
+      Promise<{ started: number; completed: number }>
+    >(transitionDueMaintenanceCommand({ orgId }));
+
+    if (moved.started > 0 || moved.completed > 0) {
+      logger.info({ orgId, ...moved }, 'maintenance windows transitioned');
+    }
+
+    const corrected =
+      await app.commandBus.execute<RecomputeServiceStatusCommandResult>(
+        recomputeServiceStatusCommand({ orgId }),
+      );
+
+    if (corrected.length > 0) {
+      // Worth a warning rather than an info: a correction means an event was
+      // lost somewhere, and the pass is covering for it.
+      logger.warn(
+        {
+          orgId,
+          corrected: corrected.map(
+            (change) => `${change.slug}: ${change.from} -> ${change.to}`,
+          ),
+        },
+        'reconciled service status that had drifted from its inputs',
+      );
+    }
+    return false;
+  },
+};
+
+/**
+ * Draft reconciliation. A breach draft is opened by an event, and events are
+ * one-shot; an edit that moves a monitor into failing emits none. The command
+ * is idempotent and returns null when a draft or incident exists. One monitor's
+ * failure is logged and the rest still run. DOMAIN.md, Consecutive-failure to
+ * draft-incident rule, step 6.
+ */
+const reconcileMonitorDrafts: OrganizationStep = {
+  failureMessage: 'draft reconciliation failed for organization',
+  async run(app, logger, orgId) {
+    const atThreshold =
+      await app.queryBus.execute<ListMonitorsAtThresholdQueryResult>(
+        listMonitorsAtThresholdQuery({ orgId }),
+      );
+    let failed = false;
+    const opened: string[] = [];
+    for (const monitor of atThreshold) {
+      try {
+        const incidentId =
+          await app.commandBus.execute<CreateDraftFromMonitorCommandResult>(
+            createDraftFromMonitorCommand({
+              orgId,
+              monitorId: monitor.id,
+              serviceId: monitor.serviceId,
+              monitorName: monitor.name,
+              failureEpisode: monitor.failureEpisode,
+            }),
+          );
+        if (incidentId !== null) opened.push(monitor.id);
+      } catch (error) {
+        failed = true;
+        logger.error(
+          {
+            orgId,
+            monitorId: monitor.id,
+            failureEpisode: monitor.failureEpisode,
+            err: error,
+          },
+          'reconciling a monitor draft failed',
+        );
+      }
+    }
+    if (opened.length > 0) {
+      logger.warn(
+        { orgId, opened },
+        'opened monitor drafts no breach event had opened',
+      );
+    }
+    return failed;
+  },
+};
+
+/**
+ * The uptime rollup refresh. It runs inside the organization loop, before the
+ * partition maintenance that follows the loop, so a day is rolled up before
+ * retention can drop its raw results. It touches only this organization, so a
+ * scoped pass runs it too.
+ */
+const refreshUptimeRollups: OrganizationStep = {
+  failureMessage: 'uptime rollup refresh failed for organization',
+  async run(app, logger, orgId) {
+    const lost =
+      await app.commandBus.execute<RefreshUptimeRollupsCommandResult>(
+        refreshUptimeRollupsCommand({ orgId }),
+      );
+    if (lost) {
+      logger.warn(
+        { orgId, from: lost.from, to: lost.to },
+        'uptime rollups lost to retention before they could be computed',
+      );
+    }
+    return false;
+  },
+};
+
+/**
+ * Every organization runs these in order, each in its own try, so a failed
+ * step does not skip the next one. A new per-organization task is one more
+ * entry here. Order matters: a step that relies on another's work goes after
+ * it, and partition maintenance runs after the whole loop, so the rollup step
+ * must stay in it. Every entry joins the "every organization failed" rule: a
+ * step that fails for every organization, say because a dependency is down,
+ * rejects the pass and turns the healthcheck red, even when the other steps
+ * succeeded.
+ */
+const ORGANIZATION_STEPS: readonly OrganizationStep[] = [
+  transitionMaintenanceAndReconcileStatus,
+  reconcileMonitorDrafts,
+  refreshUptimeRollups,
+];
+
+/** Runs one organization's steps. Resolves true when any of them failed. */
+async function runOrganizationSteps(
+  app: FastifyInstance,
+  logger: FastifyBaseLogger,
+  orgId: string,
+): Promise<boolean> {
+  let orgFailed = false;
+  for (const step of ORGANIZATION_STEPS) {
+    try {
+      if (await step.run(app, logger, orgId)) orgFailed = true;
+    } catch (error) {
+      orgFailed = true;
+      logger.error({ orgId, err: error }, step.failureMessage);
+    }
+  }
+  return orgFailed;
+}
+
+/**
+ * Check result partition maintenance: global DDL, after the organization loop,
+ * whose rollup step must come first so a day is rolled up before its raw rows
+ * are dropped. ARCHITECTURE.md 6.1. Resolves true when it failed.
+ */
+async function runPartitionMaintenance(
+  app: FastifyInstance,
+  logger: FastifyBaseLogger,
+): Promise<boolean> {
+  try {
+    const result =
+      await app.commandBus.execute<MaintainCheckResultPartitionsCommandResult>(
+        maintainCheckResultPartitionsCommand({
+          retentionDays: env.monitor.checkResultsRetentionDays,
+        }),
+      );
+    if (result.created > 0 || result.dropped > 0) {
+      logger.info(result, 'check result partitions maintained');
+    }
+    return false;
+  } catch (error) {
+    logger.error({ err: error }, 'check result partition maintenance failed');
+    return true;
+  }
+}
+
+/**
+ * One pass across every tenant: each organization's ORGANIZATION_STEPS, then
+ * partition maintenance.
  *
  * Discovery and work are separate steps because the worker has no request and
  * therefore no organization: it learns which tenants exist from Better Auth's
@@ -94,143 +280,12 @@ export async function runWorkerPass(
 
   let failed = 0;
   for (const orgId of orgIds) {
-    // One boolean per organization, so it counts once however many steps fail.
-    let orgFailed = false;
-    try {
-      const moved = await app.commandBus.execute<
-        Promise<{ started: number; completed: number }>
-      >(transitionDueMaintenanceCommand({ orgId }));
-
-      if (moved.started > 0 || moved.completed > 0) {
-        logger.info({ orgId, ...moved }, 'maintenance windows transitioned');
-      }
-
-      // Reconciliation. Status recomputation is event-driven and the events
-      // are one-shot, so a handler that failed - a transient database error, a
-      // process that died mid-flight - leaves last_known_status wrong with
-      // nothing to re-trigger it. This is the same recomputation, idempotent
-      // and silent when nothing moved. DOMAIN.md, Status recomputation.
-      const corrected =
-        await app.commandBus.execute<RecomputeServiceStatusCommandResult>(
-          recomputeServiceStatusCommand({ orgId }),
-        );
-
-      if (corrected.length > 0) {
-        // Worth a warning rather than an info: a correction means an event was
-        // lost somewhere, and the pass is covering for it.
-        logger.warn(
-          {
-            orgId,
-            corrected: corrected.map(
-              (change) => `${change.slug}: ${change.from} -> ${change.to}`,
-            ),
-          },
-          'reconciled service status that had drifted from its inputs',
-        );
-      }
-    } catch (error) {
-      orgFailed = true;
-      logger.error(
-        { orgId, err: error },
-        'worker pass failed for organization',
-      );
-    }
-
-    // Draft reconciliation. A breach draft is opened by an event, and events
-    // are one-shot; an edit that moves a monitor into failing emits none. The
-    // command is idempotent and returns null when a draft or incident exists.
-    // Its own try, so a failed reconciliation does not skip it. DOMAIN.md,
-    // Consecutive-failure to draft-incident rule, step 6.
-    try {
-      const atThreshold =
-        await app.queryBus.execute<ListMonitorsAtThresholdQueryResult>(
-          listMonitorsAtThresholdQuery({ orgId }),
-        );
-      const opened: string[] = [];
-      for (const monitor of atThreshold) {
-        try {
-          const incidentId =
-            await app.commandBus.execute<CreateDraftFromMonitorCommandResult>(
-              createDraftFromMonitorCommand({
-                orgId,
-                monitorId: monitor.id,
-                serviceId: monitor.serviceId,
-                monitorName: monitor.name,
-                failureEpisode: monitor.failureEpisode,
-              }),
-            );
-          if (incidentId !== null) opened.push(monitor.id);
-        } catch (error) {
-          orgFailed = true;
-          logger.error(
-            {
-              orgId,
-              monitorId: monitor.id,
-              failureEpisode: monitor.failureEpisode,
-              err: error,
-            },
-            'reconciling a monitor draft failed',
-          );
-        }
-      }
-      if (opened.length > 0) {
-        logger.warn(
-          { orgId, opened },
-          'opened monitor drafts no breach event had opened',
-        );
-      }
-    } catch (error) {
-      orgFailed = true;
-      logger.error(
-        { orgId, err: error },
-        'draft reconciliation failed for organization',
-      );
-    }
-
-    // Rollups go after the organization's reconciliation and before partition
-    // maintenance below, so a day is rolled up before retention can drop its
-    // raw results. It touches only this organization, so a scoped pass runs it
-    // too. Its own try, so a failed reconciliation does not skip it.
-    try {
-      const lost =
-        await app.commandBus.execute<RefreshUptimeRollupsCommandResult>(
-          refreshUptimeRollupsCommand({ orgId }),
-        );
-      if (lost) {
-        logger.warn(
-          { orgId, from: lost.from, to: lost.to },
-          'uptime rollups lost to retention before they could be computed',
-        );
-      }
-    } catch (error) {
-      orgFailed = true;
-      logger.error(
-        { orgId, err: error },
-        'uptime rollup refresh failed for organization',
-      );
-    }
-
-    if (orgFailed) failed += 1;
+    if (await runOrganizationSteps(app, logger, orgId)) failed += 1;
   }
 
-  // After the organization loop, whose rollup step must come first: a day is
-  // rolled up before its raw rows are dropped. ARCHITECTURE.md 6.1.
   let maintenanceFailed = false;
   if (options.orgIds === undefined || options.maintainPartitions === true) {
-    try {
-      const result =
-        await app.commandBus.execute<MaintainCheckResultPartitionsCommandResult>(
-          maintainCheckResultPartitionsCommand({
-            retentionDays: env.monitor.checkResultsRetentionDays,
-          }),
-        );
-      if (result.created > 0 || result.dropped > 0) {
-        logger.info(result, 'check result partitions maintained');
-      }
-    } catch (error) {
-      maintenanceFailed = true;
-      logger.error({ err: error }, 'check result partition maintenance failed');
-    }
+    maintenanceFailed = await runPartitionMaintenance(app, logger);
   }
 
   if (orgIds.length > 0 && failed === orgIds.length) {
@@ -385,6 +440,12 @@ export function startLoop(options: {
   };
 }
 
+/**
+ * Background entrypoint. Two loops share the process: maintenance (runWorkerPass:
+ * ORGANIZATION_STEPS for each organization, then partition maintenance) and the
+ * monitor loop (due checks). One image, two commands, separate processes that
+ * share no memory.
+ */
 export async function startWorker(
   // Only the test seam passes this; src/index.ts passes nothing.
   options: { orgIds?: readonly string[] } = {},

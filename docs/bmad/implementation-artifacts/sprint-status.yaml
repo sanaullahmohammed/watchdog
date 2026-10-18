@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-18-2026 11:51
+last_updated: 10-18-2026 12:23
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -299,7 +299,7 @@ action_items:
     action: "Item 9: split runWorkerPass into named per-organization steps before
       Epic 4 adds notification dispatch (before Epic 4)"
     owner: "dev loop"
-    status: open
+    status: done
     ref: "docs/bmad/implementation-artifacts/epic-5-retro-2026-10-17.md"
   - id: "epic-5-retro-item-10-shared-test-wrappers"
     epic: 5
