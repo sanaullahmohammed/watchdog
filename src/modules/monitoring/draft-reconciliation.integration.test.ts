@@ -120,12 +120,18 @@ function stubApp(opts: {
   query?: (orgId: string) => boolean;
   command?: (monitorId: string) => boolean;
   reconcile?: (orgId: string) => boolean;
+  transition?: (orgId: string) => boolean;
   seen?: { type: string; orgId: unknown }[];
 }) {
   return {
     commandBus: {
       execute(command: { type: string; payload: Record<string, unknown> }) {
         opts.seen?.push({ type: command.type, orgId: command.payload.orgId });
+        if (
+          command.type === 'maintenance/transition_due' &&
+          opts.transition?.(command.payload.orgId as string)
+        )
+          throw new Error('transition refused');
         if (
           command.type === 'service/status.reconcile' &&
           opts.reconcile?.(command.payload.orgId as string)
@@ -424,6 +430,34 @@ describe('Story 5.16: reconcile missed drafts', () => {
     );
     assert.equal(errors.length, 1);
     assert.equal(errors[0].obj.orgId, a.orgId);
+  });
+
+  it('skips status reconciliation when the transition fails, and still runs the later steps', async () => {
+    const id = await monitor(a);
+    await atThreshold(a, id);
+    const { logged, log } = logger();
+    const seen: { type: string; orgId: unknown }[] = [];
+    await assert.rejects(
+      runWorkerPass(
+        stubApp({ transition: (org) => org === a.orgId, seen }),
+        log,
+        { orgIds: [a.orgId] },
+      ),
+      { message: 'every organization failed (1)' },
+    );
+    await app.eventBus.drain();
+    const types = seen.filter((s) => s.orgId === a.orgId).map((s) => s.type);
+    // The transition and the reconciliation share one step.
+    assert.ok(types.includes('maintenance/transition_due'));
+    assert.ok(!types.includes('service/status.reconcile'));
+    // The later steps still run.
+    assert.ok(types.includes(CREATE_DRAFT));
+    assert.ok(types.includes('monitor/refresh_uptime_rollups'));
+    assert.equal((await incidentsOf(a, id)).length, 1);
+    const errors = logged.filter(
+      (l) => l.msg === 'worker pass failed for organization',
+    );
+    assert.equal(errors.length, 1);
   });
 
   it('keeps going when one monitor fails', async () => {
