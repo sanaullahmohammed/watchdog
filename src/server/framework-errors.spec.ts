@@ -10,29 +10,31 @@ import { frameworkErrors, isUnderStatus } from '@/server/framework-errors';
 const build = async (withHandler: boolean) => {
   const app = Fastify({
     logger: false,
-    routerOptions: { ignoreDuplicateSlashes: true },
-    constraints: {
-      boom: {
-        name: 'boom',
-        storage() {
-          const handlers = new Map<string, unknown>();
-          return {
-            get: (k: string) => handlers.get(k) ?? null,
-            set: (k: string, v: unknown) => {
-              handlers.set(k, v);
-            },
-          };
-        },
-        validate: () => undefined,
-        deriveConstraint(
-          req: { url?: string },
-          _ctx: unknown,
-          done: (err: Error | null, value?: string) => void,
-        ) {
-          if (req.url === '/async') done(new Error('nope'));
-          else done(null);
-        },
-      } as never,
+    routerOptions: {
+      ignoreDuplicateSlashes: true,
+      constraints: {
+        boom: {
+          name: 'boom',
+          storage() {
+            const handlers = new Map<string, unknown>();
+            return {
+              get: (k: string) => handlers.get(k) ?? null,
+              set: (k: string, v: unknown) => {
+                handlers.set(k, v);
+              },
+            };
+          },
+          validate: () => undefined,
+          deriveConstraint(
+            req: { url?: string },
+            _ctx: unknown,
+            done: (err: Error | null, value?: string) => void,
+          ) {
+            if (req.url === '/async') done(new Error('nope'));
+            else done(null);
+          },
+        } as never,
+      },
     },
     ...(withHandler ? { frameworkErrors } : {}),
   });
