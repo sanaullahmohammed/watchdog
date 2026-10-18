@@ -17,34 +17,26 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: `displayOrder` at or above 2^31 overflows the integer column and answers a masked 500 over REST only (GraphQL's signed 32-bit `Int` refuses it itself); the schemas set a minimum but no maximum.
   evidence: Review Triage Log #19; probe showed both validators accept 2147483648 and the column is `integer`.
   target: Epic 8 (default).
-- source_spec: `spec-9-1-graphql-service-validation.md`, `spec-9-4-graphql-maintenance-validation.md`, `spec-9-6-read-service-groups.md`, `spec-epic-9-retro-1a-service-read-ids.md`
-  summary: `urn:uuid:<uuid>` passes the uuid format of both TypeBox and ajv, so it reaches Postgres, which refuses it, and the caller gets a masked 500. Every `format: 'uuid'` check is affected. That covers the REST route params, the GraphQL mutation and read ids (`service(id)`, `incident(id)` over REST too, `incidentTimeline(id)`, `maintenanceWindow(id)`, `serviceGroup(id)` and `GET /api/v1/service-groups/:id`), and ids inside request bodies: `affectedServices[].serviceId` on incident create and update, `serviceGroupId` on service create and update, and the service ids of maintenance schedule and update. Decide whether `assertUuid` and the schemas should require the plain form. Settle it with the 9.4 letter-case duplicate-id entry, because normalizing ids could fix both.
-  evidence: Story 9.1 Review Triage Log #20, Story 9.4 #16, Story 9.6 #6, and retro 1a #13. `typebox-guard.ts:78` checks `format: 'uuid'` only, and the `ajv-formats` uuid regex allows the `urn:uuid:` prefix. The retro 1c review reproduced it for `incident(id)` and `incidentTimeline(id)` over both surfaces.
+- source_spec: `spec-9-1-graphql-service-validation.md`, `spec-9-4-graphql-maintenance-validation.md`, `spec-9-6-read-service-groups.md`, `spec-epic-9-retro-1a-service-read-ids.md`, `spec-5-2-list-a-services-monitors.md`
+  summary: A uuid is not canonical when it reaches Postgres, and the caller gets a masked 500 instead of a 400. Two forms. `urn:uuid:<uuid>` passes the uuid format of both TypeBox and ajv, and Postgres refuses it. The same service UUID written in two letter cases passes `assertNoDuplicates` (an exact string compare) and hits the `maintenance_services` primary key, an unmapped 23505; incident `affectedServices` is likely the same. Every `format: 'uuid'` check is affected: the REST route params, the GraphQL mutation and read ids (`service(id)`, `incident(id)` over REST too, `incidentTimeline(id)`, `maintenanceWindow(id)`, `serviceGroup(id)`, `GET /api/v1/service-groups/:id`, and Story 5.2's `monitors(serviceId)` and `GET /api/v1/services/:serviceId/monitors`), and ids inside request bodies: `affectedServices[].serviceId` on incident create and update, `serviceGroupId` on service create and update, and the service ids of maintenance schedule and update. Decide whether `assertUuid` and the schemas should require the plain lowercase form, or normalize ids; one change could fix both.
+  evidence: Story 9.1 Review Triage Log #20, Story 9.4 #15 and #16, Story 9.6 #6, retro 1a #13, and Story 5.2 E1/E5/B2. `typebox-guard.ts:78` checks `format: 'uuid'` only, and the `ajv-formats` uuid regex allows the `urn:uuid:` prefix. `maintenance.repository.ts` maps only 23503. The retro 1c review reproduced the `urn:uuid:` case for `incident(id)` and `incidentTimeline(id)` over both surfaces. Pre-existing on both surfaces.
   target: Epic 8 (default).
 - source_spec: `spec-9-1-graphql-service-validation.md`, `spec-9-3-graphql-incident-validation.md`
   summary: Whitespace-only text is stored on both surfaces: service names, and an incident `message` on create and transition, whose schemas have `minLength: 1` without post-update's `pattern: '\S'`. Whether to refuse it is a product rule.
   evidence: Story 9.1 Review Triage Log #21 and Story 9.3 #14. Pre-existing on REST and GraphQL. Fixing it edits the TypeBox schemas.
   target: Epic 8 (default).
-- source_spec: `spec-9-1-graphql-service-validation.md`, `spec-9-4-graphql-maintenance-validation.md`
-  summary: REST coerces null to `0`, `false` or `""` before the handler (Fastify's ajv `coerceTypes`), so REST accepts nulls that GraphQL refuses, and stores different values where GraphQL stores NULL. Examples: `displayOrder: null` gives 0, and a maintenance `description: null` on schedule or update is stored as `""` through the union's string branch. Settle which is intended.
-  evidence: Story 9.1 Review Triage Log #22, and the Story 9.4 spec review probe. Real Fastify with `updateMaintenanceRequestDtoSchema` answered `PATCH {"description":null}` with 200 and `{"description":""}`. Pre-existing. The retro 1a entry on REST-versus-GraphQL row comparison would catch a regression.
-  target: Epic 8 (default).
-- source_spec: `spec-9-1-graphql-service-validation.md`, `spec-9-4-graphql-maintenance-validation.md`
-  summary: The AGENTS.md bullet "Older handlers that still use `src/shared/validation/input.ts` move to this as they are touched" is stale. `input.ts` now exports only `parseDate` and `assertNoDuplicates`, which no schema can express, so they stay. Reword the bullet to say so.
-  evidence: Story 9.1 Review Triage Log #33 and Story 9.4 #4. Story 9.4 deleted `parseOptionalDate` and `assertNoNullFields`, and `assertNotBlank` is gone too (`grep -n "^export" src/shared/validation/input.ts`). Routed defer because the fix edits an agent-context file.
-  target: AGENTS.md edit.
 - source_spec: `spec-9-2-anonymous-graphql-rate-limit.md`
   summary: Authenticated callers are never rationed, and sign-up is open, so anyone can mint a session that exempts them from the GraphQL limit. Decide on an authenticated limit before production exposure.
   evidence: `isRationedGraphqlRequest` exempts any valid session; Better Auth sign-up needs no invitation.
   target: Before production exposure (Epic 8 at the latest).
+- source_spec: `spec-9-1-graphql-service-validation.md`, `spec-9-4-graphql-maintenance-validation.md`, `spec-5-1-create-and-update-a-monitor.md`
+  summary: REST bodies go through Fastify's default ajv options, which differ from GraphQL and from the handler's own schema check, and Postgres refuses what none of them stops. Every slice behaves this way, so it is one cross-cutting change, since the global options affect every REST route. (1) `null` is coerced (`coerceTypes`) to `0`, `false` or `""` before the handler, so REST accepts nulls GraphQL refuses and stores different values where GraphQL stores NULL: `displayOrder: null` gives 0, `enabled: null` becomes `false`, and a maintenance `description: null` on schedule or update is stored as `""` through the union's string branch. (2) Unknown keys are silently stripped (`removeAdditional`): a PATCH carrying `type`, a misspelled `config` key. (3) A U+0000 character in a string field (a monitor's name or keyword, a service's name) reaches Postgres, which rejects it in `text` and `jsonb`; the unmapped error is masked as a 500 instead of a 400. Unverified for monitors; the class is pre-existing for every slice. Settle which behaviour is intended.
+  evidence: Story 9.1 Review Triage Log #22 and the Story 9.4 spec review probe (real Fastify with `updateMaintenanceRequestDtoSchema` answered `PATCH {"description":null}` with 200 and `{"description":""}`); Story 5.1 Review Triage Log loop-1 E1/E2/B11/E3 (`src/server/build-app.ts:36-40` sets only `keywords`, leaving `removeAdditional` and `coerceTypes` at Fastify's defaults) and loop-1 E11 and pass-2 E5 (settle (3) by sending `"name": "a\u0000b"` to `POST /api/v1/monitors` and reading the status). The retro 1a entry on REST-versus-GraphQL row comparison would catch a regression of (1).
+  target: Epic 8 (default).
 - source_spec: `spec-9-2-anonymous-graphql-rate-limit.md`
   summary: The anonymous GraphQL limiter looks up the session before checking the bucket, so a caller replaying a validly signed but signed-out session token costs one session query per request even after its bucket is spent. Unsigned or forged cookies cost nothing, because Better Auth refuses them before querying.
   evidence: Story 9.2 Review Triage Log #4; `node_modules/better-auth/dist/api/routes/session.mjs` returns null on a failed signed-cookie check before any query. Revisit with the 9.2 authenticated-limit entry.
   target: Before production exposure (Epic 8 at the latest).
-- source_spec: `spec-9-2-anonymous-graphql-rate-limit.md`
-  summary: The AGENTS.md "anonymous surface is bounded" bullet now carries a `/graphql`-specific parenthetical inside a list of bounds every new public route inherits. Move it into its own sentence after the list, so it does not read as a rule for every route.
-  evidence: Story 9.2 Review Triage Log #15; routed defer because the fix edits an agent-context file.
-  target: AGENTS.md edit.
 
 ## From Story 9.3 (2026-10-07)
 
@@ -55,13 +47,6 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `spec-9-3-graphql-incident-validation.md`
   summary: `affectedServices` has no `maxItems`, so a very long list is validated in full before refusal; the message is capped at ten fields but the work is not.
   evidence: Story 9.3 Review Triage Log #15; bounded by the body limit, pre-existing on both surfaces.
-  target: Epic 8 (default).
-
-## From Story 9.4 (2026-10-07)
-
-- source_spec: `spec-9-4-graphql-maintenance-validation.md`
-  summary: The same service UUID written in two letter cases passes `assertNoDuplicates` (an exact string compare) and hits the `maintenance_services` primary key, an unmapped 23505 that answers a masked 500. Incident `affectedServices` is likely the same; compare ids case-insensitively or map 23505. Settle it with the 9.1 `urn:uuid:` entry, since both are about canonical uuids.
-  evidence: Story 9.4 Review Triage Log #15; `maintenance.repository.ts` maps only 23503. Pre-existing on both surfaces.
   target: Epic 8 (default).
 
 ## From Story 9.5 (2026-10-07)
@@ -91,10 +76,6 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 
 ## From Story 9.9 (2026-10-07)
 
-- source_spec: `spec-9-9-close-auth-pool.md`
-  summary: Add an AGENTS.md pitfall for test authors: build test apps while another is still open, or use one process per app (Better Auth's pool is process-wide and ends at the last `app.close()`, after which `buildApp()` in that process throws).
-  evidence: Story 9.9 Review Triage Log #6; `holdAuthPool()` in `src/server/auth/auth.ts`. This commit fixed the ARCHITECTURE section 7 wording; only the AGENTS.md pitfall remains.
-  target: AGENTS.md edit.
 - source_spec: `spec-9-9-close-auth-pool.md`
   summary: No test proves the api's shutdown finishes `fastify.close()` (drain, auth pool) before `closeDbConnection()`; removing `syncClose: true` would pass every suite.
   evidence: Story 9.9 Review Triage Log #7. A meaningful test spawns the api, starts a slow event handler, sends SIGTERM and checks the handler's database work completed.
@@ -129,38 +110,26 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: Log redaction covers only top-level `err.parameters`, `err.args`, `error.parameters` and `error.args`. In debug mode, a database error wrapped in another error, inside an `AggregateError`, serialized through `ExceptionBase.toJSON` (which stringifies its `cause`), logged under another key, or printed with `console.error` (seed failures, the event bus's default reporter) still prints parameter values. Consider a recursive scrub in the `err`/`error` serializers before Epic 6, together with the 9.13 entry on values in Postgres error fields.
   evidence: Story 9.13 Review Triage Log #4 and #5. The Epic 9 retro (DR-5) confirmed the `cause` path: `ExceptionBase.toJSON` writes `cause: JSON.stringify(this.cause)` (`src/shared/exceptions/exception-base.ts:52`), and at debug level postgres.js makes `parameters` enumerable, so a database error passed as a cause would print its values. Unverified in practice: nothing in `src` passes a database error as a cause, and `DatabaseErrorException` exists but nothing constructs it today.
   target: Epic 6 prerequisite.
-- source_spec: `spec-9-13-sql-log-redaction.md`
-  summary: Record the logging rule in AGENTS.md: log database errors only as a top-level `err` or `error` through a pino logger, and give `postgres()` a `debug` option only through `sqlDebugOption`.
-  evidence: Story 9.13 Review Triage Log #6; routed defer because the fix edits an agent-context file.
-  target: Epic 6 prerequisite.
 
 ## From Story 9.14 (2026-10-08)
 
 - source_spec: `spec-9-14-revoke-service-delete.md`
-  summary: DOMAIN's "v1 has no hard service delete" could note that a migration enforces it, as its `check_results` entry does. Changes DOMAIN first.
-  evidence: Story 9.14 Tasks.
-  target: Genesis edit (owner).
-- source_spec: `spec-9-14-revoke-service-delete.md`
   summary: Because the runtime role can insert and delete rows in dbmate's `schema_migrations`, a migration can be recorded as applied when it never ran (or hidden), so a revoke like this story's could appear applied while absent; a bare `dbmate up` or `down` as that role does exactly this. The fix is a migration revoking `watchdog_app`'s privileges on `schema_migrations`.
   evidence: Story 9.14 Code Map.
   target: Epic 8 (default).
-- source_spec: `spec-9-14-revoke-service-delete.md`
-  summary: AGENTS.md says "Services are archived, never hard-deleted." as a convention. Note beside it that a migration revokes `DELETE` on `services` from `watchdog_app`, and that `service-delete-privilege.integration.test.ts` guards the grant, as the append-only bullet does for `incident_updates`.
-  evidence: Story 9.14 Review Triage Log #8; routed defer because the fix edits an agent-context file.
-  target: AGENTS.md edit.
 
 ## From Epic 9 retro item 1a (2026-10-08)
 
 - source_spec: `spec-epic-9-retro-1a-service-read-ids.md`
   summary: The REST-versus-GraphQL row comparison covers service create only; service update and service-group create and update are not compared, though REST's null coercion can store different values there.
-  evidence: Review Triage Log #8; `service-input-validation.integration.test.ts` "stores the same columns over REST and GraphQL" creates only. Settle it with the 9.1 REST null coercion entry.
+  evidence: Review Triage Log #8; `service-input-validation.integration.test.ts` "stores the same columns over REST and GraphQL" creates only. Settle it with the REST request options entry.
   target: Epic 8 (default).
 
 ## From Epic 9 retro item 2 (2026-10-08)
 
 - source_spec: `spec-epic-9-retro-2-worker-health-idle-passes.md`
   summary: The api lists `closeDbConnection` unguarded in graceful-server's `closePromises` with `syncClose: true`, so a rejection there skips the remaining steps and the exit, the gap the worker's `closeWorker` now closes.
-  evidence: Review Triage Log #12; `src/api.ts:34`, and the comment above it at `:19-23` describes the skip. Pre-existing.
+  evidence: Review Triage Log #12; `src/api.ts:34` lists `closeDbConnection` bare, `:25` sets `syncClose: true`, and the comment at `:19-24` describes the skip. Pre-existing.
   target: The next change to `src/api.ts`; Epic 8 (default) otherwise.
 
 ## From Epic 9 retro item 4 (2026-10-09)
@@ -173,31 +142,6 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: 22 test files still declare `const ORIGIN = 'http://localhost:3000'`, a copy of `TEST_ORIGIN` from `src/shared/testing/tenant.ts`. Migrated files now send both: the fixtures send `TEST_ORIGIN`, the file's own requests send `ORIGIN`.
   evidence: Review Triage Log #4; `grep -rln "const ORIGIN = 'http://localhost:3000'" src`.
   target: The next story that touches one of those suites.
-
-## From Story 5.1 (2026-10-09)
-
-- source_spec: `spec-5-1-create-and-update-a-monitor.md`
-  summary: REST bodies go through Fastify's default ajv options, so unknown keys are silently stripped (a PATCH carrying `type`, a misspelled `config` key) and `null` is coerced (`enabled: null` becomes `false`), where GraphQL and the handler's schema check refuse the same input. Every slice behaves this way.
-  evidence: Review Triage Log, loop-1 E1/E2/B11/E3; `src/server/build-app.ts:36-40` sets only `keywords`, leaving `removeAdditional` and `coerceTypes` at Fastify's defaults.
-  target: Epic 8 (default). One cross-cutting change, since the global options affect every REST route.
-- source_spec: `spec-5-1-create-and-update-a-monitor.md`
-  summary: A U+0000 character in a string field (a monitor's name or keyword, a service's name) reaches Postgres, which rejects it in `text` and `jsonb`; the unmapped error is masked as a 500 instead of a 400. Unverified for monitors; the class is pre-existing for every slice.
-  evidence: Review Triage Log, loop-1 E11 and pass-2 E5. Settle by sending `"name": "a\u0000b"` to `POST /api/v1/monitors` and reading the status.
-  target: Epic 8 (default), with the REST options entry.
-
-## From Story 5.2 (2026-10-09)
-
-- source_spec: `spec-5-2-list-a-services-monitors.md`
-  summary: Story 5.2's two new reads, `monitors(serviceId)` and `GET /api/v1/services/:serviceId/monitors`, join the 9.1 `urn:uuid:` entry: `urn:uuid:<uuid>` passes `assertUuid` and the params schema, and Postgres refusing it answers a masked 500 rather than a 400.
-  evidence: Review Triage Log E1/E5/B2; the slice checks `serviceId` with the same `format: 'uuid'` the 9.1 entry describes (`typebox-guard.ts:78`, ajv-formats). Settle it with that entry.
-  target: Epic 8 (default).
-
-## From Story 5.3 (2026-10-09)
-
-- source_spec: `spec-5-3-keep-check-results-in-monthly-partitions.md`
-  summary: `docker compose up -d` also starts the `worker` service against the same database the integration suites use, and its unscoped passes interfere with them, now including partition drops with 30-day retention.
-  evidence: Review Triage Log E9. docker-compose.yml defines `worker` with no profile; AGENTS.md says `test:integration` needs `docker compose up -d`. Unverified as a failure: this session ran only `postgres`. Settle by running the suites with the full compose stack up.
-  target: Test infrastructure (owner).
 
 ## From Story 5.6 (2026-10-16)
 
@@ -213,19 +157,8 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   evidence: Review of Story 5.9; the retro item 2 shutdown entry, removed with this story, had this half still open.
   target: Epic 8 (default).
 
-## From Story 5.11 (2026-10-17)
-
-- source_spec: `spec-5-11-refresh-daily-uptime-rollups.md`
-  summary: ARCHITECTURE.md 6.1 says a migration creates "two `SECURITY DEFINER` functions" and grants `watchdog_app` EXECUTE "on those two functions and nothing more". Story 5.11 adds a third, `check_results_retained_from()`, which the lost-range rule needs.
-  evidence: Review Triage Log B1; `docs/genesis/ARCHITECTURE.md:538`; `db/migrations/20261017120000_create_uptime_rollups.sql`. AGENTS.md: a decision changes in its owning document, which is the owner's to edit.
-  target: Genesis edit (owner).
-
 ## From Story 5.12 (2026-10-17)
 
-- source_spec: `spec-5-12-fill-the-90-day-uptime-in-the-public-payload.md`
-  summary: DOMAIN's Public status page still says uptime is "shaped now and filled in Epic 5". Its "90-day query sketch" filters on the session-zone `current_date`, which contradicts its own UTC-day rule, and shows neither gap-filling nor visibility. Both now describe less than the code does.
-  evidence: Review Triage Log B1; `docs/genesis/DOMAIN.md:1119` and `:1267-1279`; `src/modules/status-page/database/public-status.repository.ts` `listPublicUptime`.
-  target: Genesis edit (owner).
 - source_spec: `spec-5-12-fill-the-90-day-uptime-in-the-public-payload.md`
   summary: `ROLLUP_RETENTION_DAYS` accepts values below 90. Pruning would then empty the older part of every public 90-day bar, and those days would read as "no checks ran". The minimum could be the window length.
   evidence: Review Triage Log E1; `src/config/check-results-env.ts` (minimum 1, from 5.11's frozen rule); DOMAIN, Public status page.
@@ -242,30 +175,54 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   evidence: Review pass 1, B9/V1. The repo has no pattern for testing a migration against existing rows. Settle it with one if a later migration also backfills.
   target: Epic 8 (default).
 
-## From Story 5.14 (2026-10-17)
+## From the Epic 5 retrospective (2026-10-17)
 
-- source_spec: `spec-5-14-order-the-public-timeline-by-the-same-sequence.md`
-  summary: AGENTS.md's ordering pitfall ("`now()` is the transaction's start time. A column that orders rows written under a lock is an identity column ...") no longer says that `sequence` is insert order, not commit order, so it can read as a safe cursor; and its opening `now()` clause now leads nowhere.
-  evidence: Review pass 1, B7. The commit-order caveat is recorded for Epic 4's cursor in the 5.13 entries above; the pitfall itself does not carry it.
-  target: AGENTS.md edit.
 
-## From Story 5.16 (2026-10-17)
-
+- source_spec: `spec-5-6-record-a-check-result-and-count-consecutive-failures.md`, `spec-5-15-open-a-draft-when-a-monitor-breaches-its-threshold.md`, `spec-5-16-reconcile-missed-drafts-each-pass.md`
+  summary: The two draft paths disagree about archived services. A check in flight when its service is archived can still open a critical draft through the event path, while the 5.16 reconciler never would. The window is one check timeout. Make the event path refuse an archived service and a disabled monitor, as the reconciler does, and test it by archiving mid-flight.
+  evidence: Epic 5 retro DR-2. 5.6 rejected E2 ("A service archived while its check is in flight still gets state events") on the premise that "5.10 and 5.15 consumers read the service themselves". 5.10 does (`recompute-service-status.integration.test.ts:680`); 5.15 does not (`create-draft-from-monitor.handler.ts` never reads the service, and `insertDraftIfAbsent` in `incident.repository.ts` checks only other incidents); `listAtThreshold` in `monitor.repository.ts` filters `m.enabled and s.archived_at is null`. No case in `monitor-draft.integration.test.ts` or `record-check-result.integration.test.ts` archives a service.
+  target: Epic 8 (default); Epic 5 retro item 2.
+- source_spec: `spec-5-3-keep-check-results-in-monthly-partitions.md`, `spec-5-11-refresh-daily-uptime-rollups.md`
+  summary: Partition retention does not wait for a failed rollup. `runWorkerPass` runs partition maintenance whatever `orgFailed` says, so an organization whose refresh fails on every pass for `CHECK_RESULTS_RETENTION_DAYS` (30) loses those days; they are logged as "lost to retention". Decide whether maintenance should skip, or keep, the months an unrefreshed organization still needs.
+  evidence: Epic 5 retro DR-3; `src/worker.ts` runs maintenance after the organization loop whatever `failed` is, and `check-result-partitions.integration.test.ts:559` and `:583` pin that it still runs. ARCHITECTURE 6.1 now records the exception.
+  target: Epic 8 (default).
+- source_spec: `spec-5-3-keep-check-results-in-monthly-partitions.md`
+  summary: The `SECURITY DEFINER` drop function takes any retention of at least 1 day from `watchdog_app`, so the append-only revoke on `check_results` does not stop the application role dropping every month but the current one. A floor on the argument (or on `CHECK_RESULTS_RETENTION_DAYS`) is a genesis decision, since ARCHITECTURE 6.1 decided the argument is passed in.
+  evidence: Epic 5 retro DR-3; `db/migrations/20261009130000_create_check_results.sql` (`p_retention_days < 1` is the only check) and `src/config/check-results-env.ts` (minimum 1).
+  target: Epic 8 (default), changing ARCHITECTURE 6.1 first (owner).
+- source_spec: `spec-5-1-create-and-update-a-monitor.md`
+  summary: The target guard leaves NAT64 and CGNAT open. A hostname whose AAAA record is `64:ff9b::a9fe:a9fe` reaches `169.254.169.254` on a host with a NAT64 gateway. Classify `64:ff9b::/96` and `64:ff9b:1::/48` by the IPv4 address they embed, as IPv4-mapped addresses already are, and decide CGNAT (`100.64.0.0/10`). Change ARCHITECTURE 6.5 first.
+  evidence: Epic 5 retro DR-5 and decision 3. ARCHITECTURE 6.5 lists the ranges the rule does not classify; the omission is a recorded decision (spec-5-1 B4/B5/E6/E7) with no reason given.
+  target: Before production exposure; Epic 5 retro item 4 (owner decides the rule, then the dev loop).
+- source_spec: `spec-5-1-create-and-update-a-monitor.md`, `spec-5-4-http-and-keyword-checks-behind-the-target-guard.md`
+  summary: The check-time guard uses the same one-try resolver as configure time, so one dropped DNS packet is a failed check, and a hostname known only to `/etc/hosts` never resolves at check time. Decide whether the connect-time guard should retry, and how it should treat `/etc/hosts`.
+  evidence: Epic 5 retro DR-6. `guardHost` falls back to `defaultLookup` (`guarded-connect.ts:122`), which is `new Resolver({ timeout, tries: 1 })` (`target-safety.ts:279`). ARCHITECTURE 6.5 now says both times share it.
+  target: Epic 8 (default).
+- source_spec: `spec-5-4-http-and-keyword-checks-behind-the-target-guard.md`
+  summary: A server that ignores `accept-encoding: identity` and returns gzip makes a keyword check search compressed bytes.
+  evidence: Epic 5 retro, lower findings; `src/modules/monitoring/checks/http-check.ts:56`; spec-5-4 E2.
+  target: Epic 8 (default).
+- source_spec: `spec-5-9-run-checks-on-the-worker-s-own-loop.md`
+  summary: The process-wide check limiter's `close()` is permanent, so a second `startWorker` in one process runs no checks. Only tests do that.
+  evidence: Epic 5 retro, lower findings; `src/modules/monitoring/checks/process-check-limiter.ts`, `src/worker.ts` (shutdown).
+  target: Epic 8 (default).
+- source_spec: `spec-5-11-refresh-daily-uptime-rollups.md`
+  summary: An organization deleted mid-pass fails its rollup step with `23503`, logged at `error` level; it was seen 11 times during one integration run. Decide whether a vanished organization's foreign-key failure should be a skip rather than an error.
+  evidence: Epic 5 retro, lower findings and behavior verification; spec-5-11 B8/E2 predicted it.
+  target: Epic 8 (default).
+- source_spec: `spec-5-9-run-checks-on-the-worker-s-own-loop.md`
+  summary: VG-2. "Drains event handlers" on SIGTERM is never shown with a handler pending; the lifecycle test checks only that the close steps log no failure. Add a case with a slow event handler in flight when the signal arrives.
+  evidence: Epic 5 retro VG-2; `worker-lifecycle.integration.test.ts:293`. The api half is the Story 9.9 entry above.
+  target: Epic 8 (default).
 - source_spec: `spec-5-16-reconcile-missed-drafts-each-pass.md`
-  summary: AGENTS.md's pitfall on unscoped worker passes says `runWorkerPass` "reconciles the status of every service it finds". It now also opens a draft for every at-threshold monitor in every organization, which would break a concurrent file counting its own monitors' incidents, and its list of per-organization alternatives could name `createDraftFromMonitorCommand`.
-  evidence: Review pass 1, B8b; `src/worker.ts` draft reconciliation step.
-  target: AGENTS.md edit.
-- source_spec: `spec-5-16-reconcile-missed-drafts-each-pass.md`
-  summary: ARCHITECTURE.md's "Every pass also reconciles" names only status recomputation through `RecomputeServiceStatusCommand`. The pass now also reconciles drafts through `ListMonitorsAtThresholdQuery` and `CreateDraftFromMonitorCommand`, neither of which the module table lists.
-  evidence: Review pass 1, B9; `docs/genesis/ARCHITECTURE.md:494` and `:46-48`. ARCHITECTURE owns runtime wiring.
-  target: Genesis edit (owner).
-
-- source_spec: `spec-epic-5-retro-1-check-starvation.md`
-  summary: `epics.md:1856` (Story 5.9's acceptance criterion "the loop never overlaps itself") is stale once the monitor loop queues per monitor; add it to Epic 5 retro item 7's epics.md list.
-  evidence: Review pass 1, finding B3b; ARCHITECTURE 6.0.1 now says "never checks one monitor twice at once".
-  target: Epic 5 retro item 7 (owner).
-
-- source_spec: `spec-epic-5-retro-1-check-starvation.md`
-  summary: AGENTS.md has no pitfall saying that `runMonitorPass` returns before its checks finish, so a test must `await checkRegistry.drain()` before asserting and `reset()` the process-wide registry between tests, beside the `eventBus.drain()` pitfall.
-  evidence: Review pass 2, finding B6; only the comment in `src/modules/monitoring/checks/process-check-limiter.ts` records it.
-  target: AGENTS.md edit (Epic 5 retro item 7, owner).
+  summary: VG-3. "The monitor is still checked" after a dismissed draft is shown by calling `recordCheckOutcome` directly, not through the monitor loop.
+  evidence: Epic 5 retro VG-3; `draft-reconciliation.integration.test.ts:328`.
+  target: Epic 8 (default).
+- source_spec: `spec-5-11-refresh-daily-uptime-rollups.md`
+  summary: VG-4. "Rollups survive the raw partitions being dropped" is never combined with an actual partition drop; the test checks the rollup rows alone.
+  evidence: Epic 5 retro VG-4; `uptime-rollups.integration.test.ts:490`.
+  target: Epic 8 (default).
+- source_spec: `spec-5-6-record-a-check-result-and-count-consecutive-failures.md`
+  summary: VG-5. A monitor disabled while a check is in flight is tested for a failure only, not for a success.
+  evidence: Epic 5 retro VG-5; `record-check-result.integration.test.ts:418`.
+  target: Epic 8 (default).
