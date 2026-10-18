@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { after, before, describe, it } from 'node:test';
+import { after, afterEach, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
+import pino from 'pino';
 import { parseAllowedCidrs } from '@/config/allowed-cidrs';
 import config from '@/config/env';
+import { checkRegistry } from '@/modules/monitoring/checks/process-check-limiter';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import * as monitorEvents from '@/shared/events/monitor.events';
 import {
   archiveService,
   createCheckResultPartitions,
@@ -14,12 +17,17 @@ import {
   createService,
   restoreService,
   setMonitorCheckState,
+  updateMonitor,
 } from '@/shared/testing/fixtures';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 import {
   startTestEndpoints,
   type TestEndpoints,
 } from '@/shared/testing/test-endpoints';
+import {
+  type QueueDueMonitorChecksCommandResult,
+  queueDueMonitorChecksCommand,
+} from './commands/queue-due-monitor-checks/queue-due-monitor-checks.handler';
 import {
   type RunDueMonitorChecksCommandResult,
   runDueMonitorChecksCommand,
@@ -51,6 +59,38 @@ async function newOrg(): Promise<Org> {
   orgs.push({ orgId, userId });
   return { cookie, orgId, serviceId: await createService(app, cookie) };
 }
+
+// Every line the app logs, so a test can tell a quiet skip from a logged error.
+const logLines: { level: number; msg?: string; [key: string]: unknown }[] = [];
+const loggerInstance = pino(
+  { level: 'debug' },
+  {
+    write(line: string) {
+      logLines.push(JSON.parse(line));
+    },
+  },
+);
+const errorLines = () => logLines.filter((line) => line.level >= 50);
+
+const queue = (orgId: string, now?: Date) =>
+  app.commandBus.execute<QueueDueMonitorChecksCommandResult>(
+    queueDueMonitorChecksCommand({ orgId, now }),
+  );
+
+async function waitFor(what: string, probe: () => boolean, ms = 10_000) {
+  const deadline = Date.now() + ms;
+  while (!probe()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+type MonitorRepo = {
+  listDue: (...args: never[]) => Promise<unknown[]>;
+  getForUpdate: (...args: never[]) => Promise<unknown>;
+};
+const monitorRepo = () =>
+  app.diContainer.resolve('monitorRepository' as never) as MonitorRepo;
 
 const run = (orgId: string, now?: Date) =>
   app.commandBus.execute<RunDueMonitorChecksCommandResult>(
@@ -96,9 +136,16 @@ describe('Story 5.8: find and run the checks that are due', () => {
   before(async () => {
     config.monitor.allowedCidrs = parseAllowedCidrs('127.0.0.0/8');
     endpoints = await startTestEndpoints();
-    app = await buildApp({ logger: false });
+    app = await buildApp({ loggerInstance });
     await app.ready();
     await createCheckResultPartitions();
+  });
+
+  afterEach(async () => {
+    // The registry is process-wide: nothing queued here may outlive its test.
+    await checkRegistry.drain();
+    checkRegistry.reset();
+    config.monitor.checkConcurrency = savedConcurrency;
   });
 
   after(async () => {
@@ -403,5 +450,188 @@ describe('Story 5.8: find and run the checks that are due', () => {
     for (const id of aIds) {
       assert.equal((await results(a.orgId, id)).length, 1);
     }
+  });
+
+  it('queues a due monitor once, then again only after it is recorded', async () => {
+    const org = await newOrg();
+    const id = await make(org, {
+      target: `${endpoints.origin}/hold?delay=5000`,
+    });
+    const now = new Date();
+
+    assert.deepEqual(await queue(org.orgId, now), { queued: 1, skipped: 0 });
+    // Still queued or running: not queued again, and run_due_checks does not
+    // wait for or repeat a check someone else registered.
+    assert.deepEqual(await queue(org.orgId, now), { queued: 0, skipped: 1 });
+    assert.deepEqual(await run(org.orgId, now), { checked: 0 });
+    await checkRegistry.drain();
+    assert.equal((await results(org.orgId, id)).length, 1);
+
+    const later = new Date(Date.now() + 120_000);
+    assert.deepEqual(await queue(org.orgId, later), { queued: 1, skipped: 0 });
+    await checkRegistry.drain();
+    assert.equal((await results(org.orgId, id)).length, 2);
+  });
+
+  it('skips a monitor whose earlier check recorded between the listing and the queueing', async () => {
+    const org = await newOrg();
+    const id = await make(org);
+    const now = new Date();
+    const repo = monitorRepo();
+    const original = repo.listDue;
+    const stale = await withTenantTransaction(org.orgId, (tx) =>
+      (original as (...a: unknown[]) => Promise<unknown[]>).call(repo, tx, now),
+    );
+    assert.equal(stale.length, 1);
+
+    assert.deepEqual(await run(org.orgId, now), { checked: 1 });
+    repo.listDue = async () => stale;
+    try {
+      assert.deepEqual(await queue(org.orgId, now), { queued: 1, skipped: 0 });
+      await checkRegistry.drain();
+    } finally {
+      repo.listDue = original;
+    }
+    assert.equal((await results(org.orgId, id)).length, 1);
+  });
+
+  it('skips a monitor that no longer exists', async () => {
+    const org = await newOrg();
+    await make(org);
+    const now = new Date();
+    const repo = monitorRepo();
+    const original = repo.listDue;
+    const [real] = (await withTenantTransaction(org.orgId, (tx) =>
+      (original as (...a: unknown[]) => Promise<unknown[]>).call(repo, tx, now),
+    )) as { id: string }[];
+    repo.listDue = async () => [
+      { ...real, id: '00000000-0000-4000-8000-000000000000' },
+    ];
+    const before = errorLines().length;
+    try {
+      assert.deepEqual(await queue(org.orgId, now), { queued: 1, skipped: 0 });
+      await checkRegistry.drain();
+      assert.deepEqual(await run(org.orgId, now), { checked: 0 });
+    } finally {
+      repo.listDue = original;
+    }
+    assert.equal(errorLines().length, before);
+    assert.equal((await results(org.orgId, real.id)).length, 0);
+  });
+
+  it('re-reads a queued monitor: skips a disabled or archived one, checks an edited one against its new target', async () => {
+    const blocked = await newOrg();
+    const disabledOrg = await newOrg();
+    const archivedOrg = await newOrg();
+    await make(blocked, { target: `${endpoints.origin}/hold?delay=5000` });
+    const edited = await make(disabledOrg, {
+      target: `${endpoints.origin}/error`,
+      failureThreshold: 5,
+    });
+    const disabled = await make(disabledOrg, {
+      target: `${endpoints.origin}/ok?m=disabled`,
+    });
+    const archived = await make(archivedOrg);
+    config.monitor.checkConcurrency = 1;
+    endpoints.reset();
+    const before = errorLines().length;
+    const seen: { type: string; payload: Record<string, unknown> }[] = [];
+    for (const creator of Object.values(monitorEvents)) {
+      if (typeof creator === 'function' && 'type' in creator) {
+        app.eventBus.on(creator.type as string, (e: (typeof seen)[number]) =>
+          seen.push({ type: e.type, payload: e.payload }),
+        );
+      }
+    }
+
+    // The blocker holds the one slot, so the others are queued behind it.
+    await queue(blocked.orgId);
+    await waitFor('the blocker to hold the slot', () =>
+      endpoints.requests.some((r) => r.startsWith('/hold')),
+    );
+    await queue(disabledOrg.orgId);
+    await queue(archivedOrg.orgId);
+    await updateMonitor(app, disabledOrg.cookie, disabled, { enabled: false });
+    await updateMonitor(app, disabledOrg.cookie, edited, {
+      target: `${endpoints.origin}/ok?m=edited`,
+    });
+    await archiveService(app, archivedOrg.cookie, archivedOrg.serviceId);
+    await checkRegistry.drain();
+    await app.eventBus.drain();
+
+    assert.equal((await results(disabledOrg.orgId, disabled)).length, 0);
+    assert.equal((await results(archivedOrg.orgId, archived)).length, 0);
+    const editedRows = await results(disabledOrg.orgId, edited);
+    assert.equal(editedRows.length, 1);
+    assert.equal(editedRows[0].status, 'success');
+    assert.equal(errorLines().length, before);
+    // Skipped monitors emit no monitor event.
+    assert.deepEqual(
+      seen.filter(
+        (e) =>
+          (e.payload.monitorId === disabled ||
+            e.payload.monitorId === archived) &&
+          // The test's own edits emit these; a check would emit the rest.
+          e.type !== 'monitor/created' &&
+          e.type !== 'monitor/updated',
+      ),
+      [],
+    );
+  });
+
+  it('logs a failed record with its ids, records the others, and lists the monitor again', async () => {
+    const org = await newOrg();
+    const ids = [await make(org), await make(org), await make(org)];
+    const repo = app.diContainer.resolve('checkResultRepository' as never) as {
+      append: (tx: never, row: { monitorId: string }) => Promise<string>;
+    };
+    const original = repo.append;
+    repo.append = (tx, row) =>
+      row.monitorId === ids[1]
+        ? Promise.reject(new Error('append failed'))
+        : original.call(repo, tx, row);
+    const before = errorLines().length;
+    try {
+      assert.deepEqual(await queue(org.orgId), { queued: 3, skipped: 0 });
+      await checkRegistry.drain();
+    } finally {
+      repo.append = original;
+    }
+    assert.equal((await results(org.orgId, ids[0])).length, 1);
+    assert.equal((await results(org.orgId, ids[1])).length, 0);
+    assert.equal((await results(org.orgId, ids[2])).length, 1);
+    const logged = errorLines().slice(before);
+    assert.ok(
+      logged.some(
+        (line) => line.monitorId === ids[1] && line.orgId === org.orgId,
+      ),
+    );
+
+    // last_checked_at is as it was, so only the failed one is due again.
+    assert.deepEqual(await queue(org.orgId), { queued: 1, skipped: 0 });
+    await checkRegistry.drain();
+    assert.equal((await results(org.orgId, ids[1])).length, 1);
+  });
+
+  it('counts a record that finds the monitor gone as skipped, without an error', async () => {
+    const org = await newOrg();
+    const id = await make(org);
+    const now = new Date();
+    const repo = monitorRepo();
+    // The row is gone by the time the result is recorded.
+    const original = repo.getForUpdate;
+    repo.getForUpdate = async () => null;
+    const before = errorLines().length;
+    try {
+      assert.deepEqual(await queue(org.orgId, now), { queued: 1, skipped: 0 });
+      await checkRegistry.drain();
+      // The monitor is still due (nothing was recorded) and the record path
+      // finds it gone again: run_due_checks resolves, it does not reject.
+      assert.deepEqual(await run(org.orgId, now), { checked: 0 });
+    } finally {
+      repo.getForUpdate = original;
+    }
+    assert.equal(errorLines().length, before);
+    assert.equal((await results(org.orgId, id)).length, 0);
   });
 });

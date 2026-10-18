@@ -6,6 +6,23 @@ import type { TenantTransaction } from '@/shared/db/tenant-transaction';
 const FOREIGN_KEY_VIOLATION = '23503';
 
 /**
+ * The one definition of "due", shared by `listDue` and `findRunnable`: enabled,
+ * on an unarchived service, and its interval elapsed at `now` (equality
+ * counts) or never checked. Expects `monitors m` joined to `services s`.
+ */
+function dueCondition(tx: TenantTransaction, now: Date) {
+  return tx.sql`
+    m.enabled
+    and s.archived_at is null
+    and (
+      m.last_checked_at is null
+      or m.last_checked_at + make_interval(secs => m.interval_seconds)
+        <= ${now}
+    )
+  `;
+}
+
+/**
  * Tenant-scoped: every method takes the caller's `TenantTransaction`. It does
  * not implement `RepositoryPort`, as AGENTS.md records.
  */
@@ -71,16 +88,25 @@ export default function monitorRepository({ monitorMapper }: Dependencies) {
       const rows = await tx.sql<MonitorModel[]>`
         select m.* from monitors m
         join services s on s.id = m.service_id and s.org_id = m.org_id
-        where m.enabled
-          and s.archived_at is null
-          and (
-            m.last_checked_at is null
-            or m.last_checked_at + make_interval(secs => m.interval_seconds)
-              <= ${now}
-          )
+        where ${dueCondition(tx, now)}
         order by m.last_checked_at nulls first, m.id
       `;
       return rows.map(monitorMapper.toDomain);
+    },
+
+    /**
+     * One monitor, if it is still runnable at `now`: the conditions of
+     * `listDue`, so a queued check that gets its slot later re-reads the row
+     * and runs on what it finds. Null when the monitor is gone, disabled, on an
+     * archived service, or no longer due.
+     */
+    async findRunnable(tx: TenantTransaction, id: string, now: Date) {
+      const rows = await tx.sql<MonitorModel[]>`
+        select m.* from monitors m
+        join services s on s.id = m.service_id and s.org_id = m.org_id
+        where m.id = ${id} and ${dueCondition(tx, now)}
+      `;
+      return rows[0] ? monitorMapper.toDomain(rows[0]) : null;
     },
 
     /**

@@ -5,20 +5,22 @@ import {
   createDraftFromMonitorCommand,
 } from '@/modules/incident/commands/create-draft-from-monitor/create-draft-from-monitor.handler';
 import { transitionDueMaintenanceCommand } from '@/modules/maintenance/commands/transition-due-maintenance/transition-due-maintenance.handler';
-import { LimiterClosedError } from '@/modules/monitoring/checks/check-limiter';
-import { checkLimiter } from '@/modules/monitoring/checks/process-check-limiter';
+import {
+  checkLimiter,
+  checkRegistry,
+} from '@/modules/monitoring/checks/process-check-limiter';
 import {
   type MaintainCheckResultPartitionsCommandResult,
   maintainCheckResultPartitionsCommand,
 } from '@/modules/monitoring/commands/maintain-check-result-partitions/maintain-check-result-partitions.handler';
 import {
+  type QueueDueMonitorChecksCommandResult,
+  queueDueMonitorChecksCommand,
+} from '@/modules/monitoring/commands/queue-due-monitor-checks/queue-due-monitor-checks.handler';
+import {
   type RefreshUptimeRollupsCommandResult,
   refreshUptimeRollupsCommand,
 } from '@/modules/monitoring/commands/refresh-uptime-rollups/refresh-uptime-rollups.handler';
-import {
-  type RunDueMonitorChecksCommandResult,
-  runDueMonitorChecksCommand,
-} from '@/modules/monitoring/commands/run-due-monitor-checks/run-due-monitor-checks.handler';
 import {
   type ListMonitorsAtThresholdQueryResult,
   listMonitorsAtThresholdQuery,
@@ -240,21 +242,26 @@ export async function runWorkerPass(
 }
 
 /**
- * One monitor pass: every organization's due checks, all at once. The
- * process-wide limiter caps the checks running and admits them round-robin by
- * organization, so within a pass one organization cannot hold the queue. The
- * loop never overlaps itself, so the next pass still waits for this pass's
- * slowest check (deferred-work, "From Story 5.9").
+ * One monitor tick: every organization's due monitors, queued and not awaited.
+ * Each organization's listing runs in parallel and queues its monitors that are
+ * not already queued or running; the process-wide limiter admits them
+ * round-robin by organization, and the checks finish detached. The tick
+ * completes once its listings are done, so one organization's slow targets
+ * cannot hold up the next tick for the others. ARCHITECTURE 6.0.1.
  *
- * Failure semantics match runWorkerPass: a failed organization is logged, and
- * the pass rejects, with no cause, when discovery failed or every visited
- * organization failed. It never maintains partitions or reconciles.
+ * It rejects, with no cause, when discovery failed, when every visited
+ * organization's listing failed, or when work is unsettled (checks queued or
+ * running, or a check failed since the last settle) and no check has been
+ * recorded or rightly skipped for WORKER_PASS_OVERDUE_MS: a stall, process-wide,
+ * so health is red only when nothing at all is saved. A backlog alone is not
+ * one, and neither is shutdown. It never maintains partitions or reconciles.
  */
 export async function runMonitorPass(
   app: FastifyInstance,
   logger: FastifyBaseLogger,
   // Tests pass their own organizations. The worker never passes this.
-  options: { orgIds?: readonly string[] } = {},
+  // Tests pass their own `overdueMs` too; the worker never does.
+  options: { orgIds?: readonly string[]; overdueMs?: number } = {},
 ): Promise<void> {
   let orgIds: readonly string[];
   try {
@@ -266,24 +273,18 @@ export async function runMonitorPass(
 
   const settled = await Promise.allSettled(
     orgIds.map((orgId) =>
-      app.commandBus.execute<RunDueMonitorChecksCommandResult>(
-        runDueMonitorChecksCommand({ orgId }),
+      app.commandBus.execute<QueueDueMonitorChecksCommandResult>(
+        queueDueMonitorChecksCommand({ orgId }),
       ),
     ),
   );
 
   let failed = 0;
+  let due = 0;
   settled.forEach((result, index) => {
-    if (result.status === 'rejected') {
-      if (isLimiterClosed(result.reason)) {
-        // Shutdown dropped checks that never started. They stay due for the
-        // next worker, so this is not a failure.
-        logger.info(
-          { orgId: orgIds[index] },
-          'checks not started; worker is shutting down',
-        );
-        return;
-      }
+    if (result.status === 'fulfilled') {
+      due += result.value.queued + result.value.skipped;
+    } else {
       failed += 1;
       logger.error(
         { orgId: orgIds[index], err: result.reason },
@@ -295,15 +296,16 @@ export async function runMonitorPass(
   if (orgIds.length > 0 && failed === orgIds.length) {
     throw new Error(`every organization failed (${orgIds.length})`);
   }
-}
-
-function isLimiterClosed(reason: unknown): boolean {
-  if (reason instanceof LimiterClosedError) return true;
-  return (
-    reason instanceof AggregateError &&
-    reason.errors.length > 0 &&
-    reason.errors.every((inner) => inner instanceof LimiterClosedError)
-  );
+  // Nothing due, nothing registered: a failure still pending is moot.
+  if (failed === 0 && due === 0) checkRegistry.idle();
+  // Shutdown drops queued checks on purpose; that is not a stall.
+  if (
+    !checkLimiter.closed &&
+    checkRegistry.stalled(options.overdueMs ?? env.worker.passOverdueMs)
+  ) {
+    // startLoop logs the rejection as `monitor pass failed`.
+    throw new Error('monitor checks stalled');
+  }
 }
 
 /**
@@ -332,7 +334,9 @@ export async function closeWorker(
  * recomputations, and pile up on the connection pool. The gate also gives
  * shutdown something to await. A pass counts as completed only when its
  * promise fulfils; one that rejects does not, which is how runWorkerPass
- * reports a pass that did no work.
+ * reports a pass that did no work. The monitor loop's pass is a tick that only
+ * queues checks, so it is short; its checks outlive it and are guarded by the
+ * registry, not by this gate.
  */
 export function startLoop(options: {
   name: string;
@@ -461,6 +465,10 @@ export async function startWorker(
     await Promise.all(
       inFlight.map(([, pending]) => pending?.catch(() => undefined)),
     );
+    // Checks finish detached from the tick: wait for the running ones and
+    // their records before the app and the pool close.
+    if (checkRegistry.size > 0) logger.info('waiting for checks in flight');
+    await checkRegistry.drain();
     clearInterval(heartbeat);
 
     await closeWorker(app, logger);

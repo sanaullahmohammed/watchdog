@@ -11,6 +11,11 @@ export class LimiterClosedError extends Error {
   }
 }
 
+/** True for a LimiterClosedError: what shutdown does to checks that never started. */
+export function isLimiterClosed(reason: unknown): boolean {
+  return reason instanceof LimiterClosedError;
+}
+
 export function createLimiter(cap: () => number) {
   let active = 0;
   // Every key with a task waiting or running. `lastServed` orders the rotation:
@@ -85,6 +90,9 @@ export function createLimiter(cap: () => number) {
     },
     get active() {
       return active;
+    },
+    get closed() {
+      return closed;
     },
   };
 }

@@ -209,11 +209,6 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 ## From Story 5.9 (2026-10-16)
 
 - source_spec: `spec-5-9-run-checks-on-the-worker-s-own-loop.md`
-  summary: The monitor loop gates a whole pass, so one organization's slow check delays every organization's next pass by up to its timeout (at most 60 s). Lifting that means relaxing "never overlaps itself" per organization, which is the owner's call.
-  evidence: Review Triage Log B1/V-o1; `startLoop` single-flights `runMonitorPass`, which awaits every organization.
-  target: Owner decision (Epic 8 by default).
-
-- source_spec: `spec-5-9-run-checks-on-the-worker-s-own-loop.md`
   summary: The real worker's SIGTERM path is now tested, but shutdown's use of `closeWorker` (the pool still ends when `app.close()` fails, DR-4) is proven only by the `closeWorker` unit-level test. Shutdown calling `app.close()` and `closeDbConnection()` directly would pass every happy-path test. Settling it needs a fault-injection seam in `startWorker`.
   evidence: Review of Story 5.9; the retro item 2 shutdown entry, removed with this story, had this half still open.
   target: Epic 8 (default).
@@ -264,3 +259,13 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: ARCHITECTURE.md's "Every pass also reconciles" names only status recomputation through `RecomputeServiceStatusCommand`. The pass now also reconciles drafts through `ListMonitorsAtThresholdQuery` and `CreateDraftFromMonitorCommand`, neither of which the module table lists.
   evidence: Review pass 1, B9; `docs/genesis/ARCHITECTURE.md:494` and `:46-48`. ARCHITECTURE owns runtime wiring.
   target: Genesis edit (owner).
+
+- source_spec: `spec-epic-5-retro-1-check-starvation.md`
+  summary: `epics.md:1856` (Story 5.9's acceptance criterion "the loop never overlaps itself") is stale once the monitor loop queues per monitor; add it to Epic 5 retro item 7's epics.md list.
+  evidence: Review pass 1, finding B3b; ARCHITECTURE 6.0.1 now says "never checks one monitor twice at once".
+  target: Epic 5 retro item 7 (owner).
+
+- source_spec: `spec-epic-5-retro-1-check-starvation.md`
+  summary: AGENTS.md has no pitfall saying that `runMonitorPass` returns before its checks finish, so a test must `await checkRegistry.drain()` before asserting and `reset()` the process-wide registry between tests, beside the `eventBus.drain()` pitfall.
+  evidence: Review pass 2, finding B6; only the comment in `src/modules/monitoring/checks/process-check-limiter.ts` records it.
+  target: AGENTS.md edit (Epic 5 retro item 7, owner).

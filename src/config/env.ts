@@ -60,9 +60,12 @@ const schema = Type.Object({
     maximum: 2_147_483_647,
   }),
   // How long a worker loop may go without completing a pass before the
-  // healthcheck fails. Four maintenance intervals by default. It must cover
-  // the longest expected pass: for the monitor loop, the interval plus about
-  // ceil(due checks / MONITOR_CHECK_CONCURRENCY) x the slowest timeoutSeconds.
+  // healthcheck fails. Four maintenance intervals by default. For the monitor
+  // loop it is also the stall window: a tick fails when checks are queued or
+  // running and none has settled for this long, so health turns red within
+  // about twice this. A backlog alone is not a stall. It must exceed the
+  // longest check timeout (60 s) plus recording; this is documented, not
+  // enforced, beyond overdue > interval.
   WORKER_PASS_OVERDUE_MS: Type.Number({ default: 120_000, minimum: 1_000 }),
   // Comma-separated CIDR ranges a monitor target may resolve into although they
   // are loopback, private or otherwise blocked. Empty by default. ARCHITECTURE
