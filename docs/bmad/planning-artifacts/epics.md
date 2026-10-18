@@ -1,6 +1,6 @@
 ---
 stepsCompleted: [1, 2, 3]
-epicsWithStories: [1, 2, 3, 9, 5]
+epicsWithStories: [1, 2, 3, 9, 5, 4]
 inputDocuments:
   - docs/bmad/planning-artifacts/PRD.md
   - docs/bmad/planning-artifacts/Architecture.md
@@ -166,6 +166,7 @@ Public and admin surfaces update without a refresh: SSE for public pages, GraphQ
 - Built after Epic 5, so the worker's monitor events are the real cross-process case its Compose test proves.
 - Its public event gate applies DOMAIN's "Public status page" rule, not only the draft check.
 - `/status/:orgSlug/events` inherits ARCHITECTURE 5.4.1's four bounds, including its rule that a cookie is not a session.
+- Stories written 2026-10-18 from the owner's decisions recorded that day in ARCHITECTURE 5.4, 5.4.1, 5.5 and 9: the public stream sends the whole page, streams are capped and expire, a subscription closes within a minute of losing access, and a `compose` CI job proves the cross-process case.
 
 ### Epic 5: Automated monitoring and uptime history
 
@@ -2201,3 +2202,374 @@ So that a breach is proposed even if the handler failed.
 **Given** the integration suite
 **When** it runs passes
 **Then** each is scoped with `{ orgIds }`
+
+## Epic 4: Live updates
+
+Public and admin surfaces update without a refresh: SSE for public pages, GraphQL subscriptions for admin, both fed across processes by the Postgres LISTEN/NOTIFY backplane.
+
+**FRs covered:** FR14, FR15, FR16. Also closes the four `deferred-work.md` entries from story 9.12 whose target is Epic 4.
+
+Written 2026-10-18 from DOMAIN (Canonical event catalog, LISTEN/NOTIFY channel sketch, Public status page), ARCHITECTURE sections 4, 5.1–5.5, 7.1 and 9, and the owner's four decisions of 2026-10-18, recorded in ARCHITECTURE sections 5.4, 5.4.1, 5.5 and 9 before these stories were written:
+
+- **The public stream sends the page.** An SSE client receives the document `/status/:orgSlug` returns, when the stream opens and whenever it changes. A whitelisted event triggers a recomposition; only a changed page is sent. This applies DOMAIN's whole Public status page rule by construction, rather than through a second, event-shaped copy of it.
+- **Streams are capped and expire.** At most 10 per client IP and 1,000 per api process, each closed after an hour, all three configurable.
+- **A subscription closes within a minute of losing access.** Session, active organization and membership are re-checked every 60 s.
+- **The cross-process proof runs in CI,** in a new `compose` job that boots the built image.
+
+Nine stories, in order; each depends only on earlier ones:
+
+- 4.1–4.2 finish the existing public route before a second one inherits its behaviour.
+- 4.3–4.4 build the backplane: every process bridges events to `NOTIFY`, and the api listens and fans out per organization.
+- 4.5–4.6 open the public stream and push the page.
+- 4.7–4.8 open the admin subscription and close it when access is lost.
+- 4.9 proves a worker-originated change reaches both kinds of client across processes, under Compose.
+
+> **Constraint 1 (one module per story).** The bridge, the listener and the realtime hub are infrastructure, not a module: they read no tenant table and decide nothing about the domain, as the event bus does not. They live in `src/shared/realtime/`, so a module may subscribe to the hub without importing `src/server`. The admin subscription relays the hub's signals and reads no tenant data, so it lives in `src/server/realtime/` beside the GraphQL wiring. The public stream is a `status-page` slice, because it composes that module's page.
+>
+> **The contract specs need two deliberate exemptions.** `api-surface-parity.spec.ts` requires every slice with a `.route.ts` to have a `.resolver.ts`. The public stream is REST only, because ARCHITECTURE 5.5 makes GraphQL subscriptions admin-only, so story 4.5 adds a named exemption for that one slice, and ARCHITECTURE 7.1 records it. `authenticated-surface.spec.ts` reads only `src/modules`, so story 4.7 extends it to read the subscription's resolver; otherwise the one operation that most needs the check would escape it.
+>
+> **Event names on the wire.** The in-process bus types events as `<prefix>/<name>` (`incident/created`); DOMAIN's catalog and the `NOTIFY` payload use `<prefix>.<name>` (`incident.created`). The bridge translates; nothing past it sees the slash form.
+>
+> **Deferred work.** Story 4.1 closes the three CORS entries from 9.12 (router-answered misses, malformed percent-encoding, `Retry-After`), and 4.2 the HEAD 304 entry. The 5.13 note on `sequence` as a cursor is retargeted to Epic 6: Epic 4 keeps no cursor, since a stream starts from the current page and a subscription carries signals only (ARCHITECTURE 5.4). The cursor it describes is the notification pass's (ARCHITECTURE 5.6).
+>
+> **Constraint 10, the premise behind not making delivery durable.** `NOTIFY` is a signal (ARCHITECTURE 5.1). A lost one leaves a stream on its last page until the next public change in that organization, or at most `PUBLIC_STREAM_MAX_LIFETIME_SECONDS` (3,600 s by default), when the reconnect sends the current page. An admin client that missed a signal sees the change on its next read, or after the `resync` story 4.4 sends when the listener reconnects.
+
+### Story 4.1: Every answer under /status/ carries the public headers
+
+As an integrator calling the public page from a browser on another origin,
+I want every answer under `/status/` to carry the page's CORS headers, misses and refusals included,
+So that my script can read why a request failed instead of seeing an opaque network error.
+
+**Actor:** human — an integrator
+**Satisfies:** ARCHITECTURE section 5.4.1, CORS for any origin, without credentials; `deferred-work.md`, story 9.12's router-404, malformed-encoding and `Retry-After` entries
+**Files:** `src/server/build-app.ts` or `src/server/index.ts` (a not-found handler scoped to `/status/`, and Fastify's `frameworkErrors`), `src/modules/status-page/queries/get-public-status-page/get-public-status-page.public.route.ts` (`publicHeaders`), `docs/genesis/ARCHITECTURE.md` section 5.4.1 (`Retry-After` exposed; the headers go on every answer under `/status/`)
+**Verification layer:** integration (`src/modules/status-page/` public-route suites)
+
+**Acceptance Criteria:**
+
+**Given** a path under `/status/` that no route matches, such as `/status/x/` or `/status/a/b`
+**When** it is requested
+**Then** the router's 404 carries `access-control-allow-origin: *` and `cross-origin-resource-policy: cross-origin`, as the route's own miss does
+**And** no path outside `/status/` gains these headers
+
+**Given** a malformed percent-encoding under `/status/`, such as `/status/%E0`
+**When** it is requested
+**Then** the 400 carries the same public headers
+
+**Given** a client over the public rate limit
+**When** it is refused with 429
+**Then** `access-control-expose-headers` names `Retry-After` as well as `ETag`, so a cross-origin script can read when to retry
+**And** ARCHITECTURE 5.4.1 records both, and that the headers go on every answer under `/status/`, before the story merges
+
+**Given** each new case
+**When** its fix is reverted
+**Then** its test fails, and the spec's Implementation Notes record that it did (Constraint 11)
+
+### Story 4.2: HEAD revalidation answers 304
+
+As an integrator revalidating the public page with `HEAD`,
+I want a matching `If-None-Match` to answer 304,
+So that a cheap check does not fail with a 500.
+
+**Actor:** human — an integrator
+**Satisfies:** ARCHITECTURE section 5.4.1, cache validators ("a matching `If-None-Match` answers 304 with no body"); `deferred-work.md`, story 9.12's HEAD entry
+**Files:** `src/modules/status-page/queries/get-public-status-page/get-public-status-page.public.route.ts`
+**Verification layer:** integration (`src/modules/status-page/` public-route suites)
+
+**Acceptance Criteria:**
+
+**Given** a `GET /status/:orgSlug` that returned an `ETag`
+**When** `HEAD` is sent with that tag in `If-None-Match`
+**Then** it answers 304 with no body and no `Content-Length`, and carries the public headers
+**And** with a non-matching tag it answers 200 with the `GET`'s headers and no body
+
+**Given** the fix
+**When** it is reverted
+**Then** the `HEAD` test answers 500 again, and the spec records that it did (Constraint 11)
+
+### Story 4.3: Bridge domain events to NOTIFY
+
+As the system,
+I want each process to signal the events DOMAIN marks for bridging on the `watchdog_events` channel,
+So that a change made in one process can reach clients connected to another.
+
+**Actor:** system — an event handler registered in every app instance, so the `api` and the `worker` both bridge
+**Satisfies:** FR16 verification — "Cross-process fanout works between `api` and `worker` using Postgres `LISTEN/NOTIFY`", the sending half; DOMAIN, Canonical event catalog ("Bridge to LISTEN/NOTIFY") and LISTEN/NOTIFY channel sketch; ARCHITECTURE sections 5.1–5.3
+**Files:** `src/shared/realtime/notify-bridge.ts`, `src/shared/realtime/realtime-event.ts` (the payload type, the bridged-name set and the slash-to-dot name mapping), the app wiring that registers the handler (`src/shared/cqrs/` or `src/server/di/`), `src/shared/testing/notifications.ts` (a helper that listens on `watchdog_events` and filters by organization, reused by 4.4 and 4.9), `docs/genesis/DOMAIN.md` (the LISTEN/NOTIFY channel sketch, if this story fixes how `aggregateType` and `aggregateId` are read for monitor and uptime events)
+**Verification layer:** unit (`realtime-event.spec.ts`) and integration (`src/shared/realtime/notify-bridge.integration.test.ts`)
+
+**Acceptance Criteria:**
+
+**Given** the bridged set
+**When** the unit test compares it with DOMAIN's catalog
+**Then** it holds exactly the events ARCHITECTURE 5.3 lists: every event the catalog marks "Yes", plus `uptime.rollup_refreshed`
+**And** it holds none marked "No", and of the four marked "Optional" only `uptime.rollup_refreshed`, so `monitor.check_succeeded`, `monitor.check_failed` and `monitor.state_changed` are not bridged
+**And** every bridged name maps to an event the code emits, so a renamed event fails the test rather than silently stopping
+
+**Given** a test connection listening on `watchdog_events`
+**When** a command commits and emits a bridged event, for example `incident/created`
+**Then** one notification arrives carrying exactly `{ eventName: 'incident.created', orgId, aggregateType: 'incident', aggregateId, occurredAt, version: 1 }`
+**And** `aggregateId` is the event's own id (`id`, or `monitorId` for monitor events); for `uptime.rollup_refreshed`, which names no aggregate, the story records what it carries in DOMAIN's channel sketch
+**And** no title, message, name, slug, address or other field of the event's payload is sent
+
+**Given** an event that is not bridged, such as `monitor/created` or `monitor/check_failed`
+**When** it is emitted
+**Then** no notification is sent
+
+**Given** the database refuses the `pg_notify`
+**When** the handler runs
+**Then** the failure is logged through the bus's `onHandlerError`, the emitting command's response is unchanged, and no other handler is skipped (ARCHITECTURE 5.1)
+
+**Given** a command that fails and rolls back
+**When** it ends
+**Then** no notification is sent, because events are emitted only after commit
+
+**Given** the integration suite
+**When** the test listens
+**Then** it filters notifications by its own organization, since concurrent files emit on the same channel
+
+### Story 4.4: Listen in the api and fan out per organization
+
+As the system,
+I want the api to listen on `watchdog_events` and hand each signal to the subscribers of its organization,
+So that streams and subscriptions in the api see changes made in any process.
+
+**Actor:** system — the api's realtime hub
+**Satisfies:** FR16 verification, the receiving half; ARCHITECTURE section 4 (the `api` runs the `LISTEN` subscriber for client fanout), 5.4 (the subscriber sketch and the re-listen rule of 2026-10-18), and the shutdown rule
+**Files:** `src/shared/realtime/realtime-hub.ts` (per-organization subscribe and publish, public and admin channels), `src/shared/realtime/event-visibility.ts` (the public whitelist), `src/shared/realtime/notify-listener.ts`, `src/api.ts` or the plugin `src/api.ts` enables, so the `worker` never listens; `tests/support/server.ts` if the E2E app must listen too
+**Verification layer:** unit (`event-visibility.spec.ts`, `realtime-hub.spec.ts`) and integration (`src/shared/realtime/notify-listener.integration.test.ts`)
+
+**Acceptance Criteria:**
+
+**Given** the public whitelist
+**When** the unit test compares it with DOMAIN's catalog
+**Then** it holds exactly the events the catalog marks "Public" or "Public, draft-gated", as ARCHITECTURE 5.4's `PUBLIC_EVENT_NAMES` does
+**And** `service.manual_override_*`, `incident.draft_created`, `incident.state_changed`, `incident.dismissed` and every monitor and uptime event are absent
+
+**Given** an api with subscribers for two organizations
+**When** a notification for the first arrives, sent from a different connection than the api's own
+**Then** the first organization's admin subscribers receive it, and its public subscribers receive it only if its name is whitelisted
+**And** the second organization's subscribers receive nothing
+
+**Given** a notification that is not JSON, has a `version` other than 1, names an event outside the bridged set, or carries an `orgId` that fails `assertValidBetterAuthOrgId`
+**When** it arrives
+**Then** it is dropped and logged at `warn`, and later notifications are still delivered
+**And** a subscriber that throws does not stop delivery to the others
+
+**Given** the `LISTEN` connection is lost and re-established
+**When** it is listening again
+**Then** every subscriber is sent a `resync` signal, because notifications sent while it was down are gone (ARCHITECTURE 5.4)
+
+**Given** the api's own command emits a bridged event
+**When** it is delivered
+**Then** subscribers receive it once, through `LISTEN`, and never a second time through the in-process bus
+
+**Given** the worker entrypoint
+**When** it starts
+**Then** it opens no `LISTEN` connection, since Epic 4 gives the worker nothing to react to (ARCHITECTURE section 4, "when needed")
+
+**Given** the app is closed
+**When** `app.close()` resolves
+**Then** the listener has unlistened and its connection is released before the pool closes
+
+### Story 4.5: Open a public status stream
+
+As an integrator,
+I want to open `/status/:orgSlug/events` and receive the organization's current public page,
+So that I render it at once and keep a connection that later pushes arrive on.
+
+**Actor:** human — an integrator
+**Satisfies:** FR14 verification — "E2E tests assert SSE delivery after domain events", the stream it is delivered on; ARCHITECTURE sections 5.4, 5.4.1 (the four bounds and the three stream bounds of 2026-10-18) and 5.5; DOMAIN, Public status page
+**Files:** `src/modules/status-page/queries/open-public-status-stream/` (`open-public-status-stream.public.route.ts`, `.handler.ts`), `src/config/env.ts` (`PUBLIC_STREAM_MAX_PER_IP`, `PUBLIC_STREAM_MAX_TOTAL`, `PUBLIC_STREAM_MAX_LIFETIME_SECONDS`, a heartbeat interval), `.env.example`, `src/shared/api/contract/authenticated-surface.spec.ts` (`PUBLIC_BY_DESIGN` gains `GET /status/:orgSlug/events` and its `OPTIONS`), `src/shared/api/contract/api-surface-parity.spec.ts` (a named, REST-only exemption for this slice), `docs/genesis/ARCHITECTURE.md` section 7.1 (that exemption)
+**Verification layer:** integration (`src/modules/status-page/public-status-stream.integration.test.ts`)
+
+**Acceptance Criteria:**
+
+**Given** a valid slug
+**When** the stream is opened
+**Then** it answers 200 with `content-type: text/event-stream`, `cache-control: no-store`, and the public headers (`access-control-allow-origin: *`, no credentials, `cross-origin-resource-policy: cross-origin`)
+**And** its first event carries the same document `GET /status/:orgSlug` returns at that moment, with that page's `ETag` as the SSE `id`
+**And** a heartbeat comment is written at the configured interval while nothing else is
+
+**Given** an unknown slug, an invalid one, or one over the router's parameter length
+**When** the stream is requested
+**Then** it answers the same 404 body as `GET /status/:orgSlug` does for that miss, through `resolveOrganizationBySlug`, and opens no stream
+
+**Given** a cross-origin `EventSource` reconnecting with `Last-Event-ID`
+**When** the browser sends the preflight
+**Then** `OPTIONS /status/:orgSlug/events` admits `last-event-id`, and the reconnected stream starts from the current page, ignoring the header
+
+**Given** a client IP holding `PUBLIC_STREAM_MAX_PER_IP` open streams, or an api holding `PUBLIC_STREAM_MAX_TOTAL`
+**When** one more is opened
+**Then** it is refused with a 429 that is a `TooManyRequestsException`, carries the public headers, and opens nothing
+**And** closing a stream frees its place at once
+
+**Given** stream openings from one IP beyond the public rate limit
+**When** the next is requested
+**Then** it is refused with 429, as the page is
+
+**Given** a stream open for `PUBLIC_STREAM_MAX_LIFETIME_SECONDS`
+**When** that time passes
+**Then** the server ends it
+
+**Given** open streams
+**When** the client disconnects, or the app is closed
+**Then** the stream's hub subscription and its cap counts are released, and `app.close()` does not wait on the stream
+
+**Given** the contract specs
+**When** they run
+**Then** `authenticated-surface.spec.ts` passes because the two operations are allowlisted by name, and `api-surface-parity.spec.ts` passes because this one slice is exempted by name; any other REST-only slice still fails it
+
+### Story 4.6: Push the public page when it changes
+
+As an integrator with an open stream,
+I want the page pushed to me whenever what it shows changes,
+So that my status page is live, and never shows what the organization did not publish.
+
+**Actor:** human — an integrator
+**Satisfies:** FR14 verification — "E2E tests assert SSE delivery after domain events"; DOMAIN, Public status page (the whole rule, and privacy-safe invalidation) and Canonical event catalog (Visibility); ARCHITECTURE section 5.4 (the decision of 2026-10-18)
+**Files:** `src/modules/status-page/queries/open-public-status-stream/` (the push: coalesced recomposition per organization, per-stream last `ETag`), `tests/status-page/public-status-stream.feature` and `.steps.ts`
+**Verification layer:** integration (`src/modules/status-page/public-status-stream.integration.test.ts`) and E2E (the Cucumber feature)
+
+**Acceptance Criteria:**
+
+**Given** an open stream
+**When** a public incident is declared, an update posted to it, it is resolved, a window is scheduled or starts, or a visible service's status changes
+**Then** the stream receives the new page, equal to what `GET /status/:orgSlug` then returns, with its `ETag` as the SSE `id`
+**And** the Cucumber feature proves at least one incident, one maintenance and one service-status case over a real socket
+
+**Given** an open stream
+**When** a draft is created, edited, has an update posted, or is dismissed; a manual override is set on a private service; or an incident naming only private services changes
+**Then** the stream receives nothing, because the page did not change
+
+**Given** a listed incident or window, or a visible service
+**When** the only service it names is made private or archived, or the window is deleted
+**Then** the stream receives a page without it, and without its affected-service id (DOMAIN, privacy-safe invalidation)
+
+**Given** a draft
+**When** it is confirmed
+**Then** the pushed page lists it, with its timeline opening at the confirmation entry
+
+**Given** an admin-only event such as `incident.draft_created` or `monitor.threshold_breached`
+**When** it arrives
+**Then** no page is composed for it, so it cannot reach a public client even as timing
+
+**Given** a burst of whitelisted events for one organization
+**When** they arrive together
+**Then** at most one composition is in flight per organization, with one more after it if events arrived meanwhile, and each stream receives the final page once
+**And** an organization with no open stream composes nothing
+
+**Given** the hub's `resync` signal
+**When** it arrives
+**Then** every open stream of every organization is recomposed and sent its page if it changed
+
+**Given** a composition that fails
+**When** it fails
+**Then** the failure is logged, the streams stay open on their last page, and the next event tries again
+
+**Given** the gate
+**When** the change that makes a private service's change send nothing is reverted
+**Then** that test fails, and the spec records that it did (Constraint 11)
+
+### Story 4.7: Subscribe to organization events over GraphQL
+
+As an operator,
+I want my dashboard to subscribe to my organization's events over GraphQL,
+So that it shows incident, service and monitor changes as they happen, drafts included.
+
+**Actor:** human — an operator
+**Satisfies:** FR15 verification — "E2E tests assert subscription events for incident and service changes"; FR27 (GraphQL subscriptions cover admin workflows); ARCHITECTURE sections 5.4.1 (every GraphQL transport bounded) and 5.5 (the subscription decisions of 2026-10-18)
+**Files:** `src/server/index.ts` (mercurius `subscription` option and its WebSocket transport, the `Origin` check, the anonymous limit on the upgrade), `src/server/realtime/organization-events.graphql-schema.ts` and `organization-events.resolver.ts`, `src/shared/api/contract/authenticated-surface.spec.ts` (reads `src/server/realtime/` too), `src/shared/testing/graphql.ts` (a subscription client helper), `tests/admin/organization-events.feature` and `.steps.ts`
+**Verification layer:** integration (`src/server/realtime/organization-events.integration.test.ts`) and E2E (the Cucumber feature)
+
+**Acceptance Criteria:**
+
+**Given** an operator with a valid session, connecting from `BETTER_AUTH_URL` or a trusted origin
+**When** they subscribe to `organizationEvents`
+**Then** each bridged event of their active organization arrives as `{ eventName, aggregateType, aggregateId, occurredAt }`, admin-only events included
+**And** after the hub's `resync` they receive one `resync` event, so the client knows to re-read
+**And** the Cucumber feature proves an incident case (`incident.created`, and `incident.draft_created` from a monitor-born draft) and a service case (`service.status_changed`)
+
+**Given** an operator subscribed in one organization
+**When** another organization's events occur
+**Then** none reaches them
+
+**Given** an upgrade with no session cookie, a junk or expired one, or a member whose role fails the ladder
+**When** it subscribes
+**Then** it is refused with `UNAUTHENTICATED`, and the upgrade counts against the anonymous `/graphql` limit, so repeated attempts reach 429
+
+**Given** a valid session cookie on an upgrade whose `Origin` is missing or not trusted
+**When** it subscribes
+**Then** it is refused, because a browser sends the cookie on a cross-site WebSocket upgrade
+
+**Given** a query or mutation sent over the WebSocket connection
+**When** it runs
+**Then** it is refused, so the only GraphQL transport for queries and mutations stays the one 5.4.1's bounds and the resolvers' session check already cover; the story records this in ARCHITECTURE 5.5
+
+**Given** the subscription resolver
+**When** `authenticated-surface.spec.ts` runs
+**Then** it reads the resolver, finds `Subscription.organizationEvents` calling `resolveOrganizationContext`, and would fail on a subscription field that does not
+
+**Given** an open subscription
+**When** the app is closed
+**Then** the connection is closed and `app.close()` does not wait on it
+
+### Story 4.8: Close a subscription when access is lost
+
+As an organization owner,
+I want a subscription to stop within a minute of its operator losing access,
+So that someone removed from my organization, or signed out, stops seeing its events.
+
+**Actor:** human — the owner who removes the member; the re-check itself is the system
+**Satisfies:** ARCHITECTURE section 5.5 (re-checked every `ADMIN_SUBSCRIPTION_RECHECK_SECONDS`, decided 2026-10-18); FR3 (one organization's data invisible to everyone outside it)
+**Files:** `src/server/realtime/organization-events.resolver.ts` (the periodic re-check), `src/config/env.ts` (`ADMIN_SUBSCRIPTION_RECHECK_SECONDS`, default 60), `.env.example`
+**Verification layer:** integration (`src/server/realtime/organization-events-access.integration.test.ts`, with the interval shortened in the test)
+
+**Acceptance Criteria:**
+
+**Given** an open subscription
+**When** its operator signs out, their session expires, or they are removed from the organization through Better Auth
+**Then** the subscription is closed within one re-check interval, and no event of the organization reaches it after the close
+
+**Given** an operator who switches their active organization while subscribed
+**When** the re-check runs
+**Then** the subscription keeps the organization it opened for while they are still a member of it, and closes once they are not
+
+**Given** the re-check
+**When** the session lookup itself fails
+**Then** the subscription is closed, failing closed, and the failure is logged
+
+**Given** the fix
+**When** the re-check is disabled
+**Then** the removal test fails, and the spec records that it did (Constraint 11)
+
+### Story 4.9: Prove worker events reach api clients under Compose
+
+As the system,
+I want a test that runs the real stack and watches a worker-originated change arrive at the api's clients,
+So that the backplane is proven across two processes, not only inside one.
+
+**Actor:** system — CI's new `compose` job
+**Satisfies:** FR16 verification — "Compose-based integration test proves worker-originated events reach API clients"; ARCHITECTURE section 9 (the `compose` job, decided 2026-10-18)
+**Files:** `tests/compose/backplane.compose.test.ts`, a controlled check target the stack provides only to this test (a Compose service under its own profile, or equivalent), `package.json` (`test:compose`, with its glob quoted), `.github/workflows/ci.yml` (the `compose` job), `docker-compose.yml`, `AGENTS.md` (how to run it locally, and that it needs the `app` profile the integration suites need down)
+**Verification layer:** compose (a real `api` and `worker` from the built image)
+
+**Acceptance Criteria:**
+
+**Given** the stack started with `docker compose --profile app up --wait` from a freshly built image
+**When** the test signs up an organization, creates a public service with a monitor whose `failure_threshold` the controlled target will breach, and opens both a public stream and an admin subscription against the `api`
+**Then** the stream receives a page in which that service's status has moved, which only the worker's recomputation could cause
+**And** the subscription receives `monitor.threshold_breached` and `incident.draft_created` for that monitor
+**And** neither event was emitted in the `api` process, which runs no monitor checks
+
+**Given** the monitor's target
+**When** the stack runs
+**Then** `MONITOR_ALLOWED_CIDRS` admits only the controlled target's network, so the target guard is not loosened for anything else
+
+**Given** CI
+**When** a pull request is opened
+**Then** the `compose` job runs this test against its own stack, separate from the `database` job, and fails the build if it fails
+
+**Given** the test's waits
+**When** a delivery does not arrive
+**Then** it fails within a stated bound derived from the monitor's interval and threshold, and its message names what did not arrive

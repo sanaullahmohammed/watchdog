@@ -1120,6 +1120,8 @@ The second list is why a listed `critical` incident can never sit under an `oper
 
 This rule is written for the page; it is not yet applied everywhere these items are referenced publicly. `ARCHITECTURE.md` section 5.4 leaves the unimplemented public event gate abstract because its earlier draft-only sketch did not enforce this rule. Epic 4 builds that gate and must apply the full rule there too, including privacy-safe invalidation when public visibility changes.
 
+Decided 2026-10-18 (owner): the live stream sends this page rather than individual events, so it applies this rule by composing the page, and a visibility change reaches a stream as a page without the item (`ARCHITECTURE.md` section 5.4).
+
 ---
 
 ## Monitoring data

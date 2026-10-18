@@ -86,19 +86,19 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `spec-9-12-public-cors.md`
   summary: A request the router answers itself never reaches the public route, so its 404 carries no CORS headers. Examples are `/status/x/` (trailing slash) and `/status/a/b`. A browser script on another origin sees an opaque network error for these.
   evidence: Story 9.12 Boundaries (out of scope); route-level `onSend` runs only for requests the router matched. A fix would be a not-found handler scoped to `/status/`. Epic 4 adds `/status/:orgSlug/events` to the public surface.
-  target: Epic 4.
+  target: Epic 4, story 4.1.
 - source_spec: `spec-9-12-public-cors.md`
   summary: `HEAD /status/:orgSlug` with a matching `If-None-Match` answers 500 instead of 304. The route's `onSend` returns `null` for a 304, and Fastify's automatic HEAD route then runs its own `onSend` on that `null` and throws.
   evidence: Story 9.12 Review Triage Log #1; reproduced (GET 200 with an ETag, then HEAD with that tag gave 500). Predates Story 9.12. Fix by returning `undefined` for a HEAD 304, or by declaring the HEAD route explicitly, with a test.
-  target: Epic 4.
+  target: Epic 4, story 4.2.
 - source_spec: `spec-9-12-public-cors.md`
   summary: A malformed percent-encoding such as `/status/%E0` is answered by the router as a 400 with no CORS headers. A not-found handler would not cover it; it needs Fastify's `frameworkErrors`.
   evidence: Story 9.12 Review Triage Log #2; reproduced, 400 with no `access-control-allow-origin`. Settle with the 9.12 router-404 entry.
-  target: Epic 4.
+  target: Epic 4, story 4.1.
 - source_spec: `spec-9-12-public-cors.md`
   summary: A cross-origin script can read the public page's 429 but not its `Retry-After`, because only `ETag` is exposed. Exposing `Retry-After` changes ARCHITECTURE 5.4.1 first; the same edit could say the headers go on every answer.
   evidence: Story 9.12 Review Triage Log #3 and #4.
-  target: Epic 4.
+  target: Epic 4, story 4.1.
 
 ## From Story 9.13 (2026-10-08)
 
@@ -169,7 +169,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `spec-5-13-order-the-admin-timeline-by-sequence-not-the-clock.md`
   summary: `sequence` is insert order, not commit order. Two posted updates hold only `for share` and can commit in either order, so a reader can see N+1 before N exists. A notification cursor moved from the stamp to `sequence` would still need its overlap.
   evidence: Review pass 1, E3/B3. The same holds for `created_at` today; ARCHITECTURE's cursor "reads with an overlap".
-  target: Epic 4 (notification cursor).
+  target: Epic 6, the notification pass's cursor (ARCHITECTURE 5.6). Retargeted 2026-10-18 while writing Epic 4's stories: Epic 4 keeps no cursor, since a public stream starts from the current page and an admin subscription carries signals only (ARCHITECTURE 5.4).
 - source_spec: `spec-5-13-order-the-admin-timeline-by-sequence-not-the-clock.md`
   summary: The `incident_updates_sequence` backfill and its `setval` run only against an empty table in CI, and no test starts from pre-migration data. They were checked by hand on 119 local rows.
   evidence: Review pass 1, B9/V1. The repo has no pattern for testing a migration against existing rows. Settle it with one if a later migration also backfills.
