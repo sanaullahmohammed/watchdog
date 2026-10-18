@@ -28,7 +28,7 @@ export default async function getPublicStatusPage(
   fastify: FastifyRouteInstance,
 ) {
   fastify.withTypeProvider<TypeBoxTypeProvider>().route({
-    method: 'GET',
+    method: ['GET', 'HEAD'],
     url: '/status/:orgSlug',
     schema: {
       description: "Read an organization's public status page",
@@ -54,11 +54,25 @@ export default async function getPublicStatusPage(
     // The public headers are set here, not in the handler, so the 404 (thrown
     // by the slug lookup) and the 429 (answered by the limiter before the
     // handler runs) carry them too. A browser cannot read an answer without them.
-    onSend: async (_req, res, payload) => {
+    // The route declares HEAD itself so Fastify adds no automatic HEAD route:
+    // that one appends its own `onSend`, which calls `Buffer.byteLength(null)` on
+    // the 304's null payload and answers 500. Here, a HEAD announces the length
+    // the GET would have had and sends no body, for string and Buffer payloads
+    // only: the only ones this route sends (the serialized page and the error
+    // handler's JSON).
+    onSend: async (req, res, payload) => {
       publicHeaders(res);
-      if (res.statusCode !== 304) return payload;
-      res.removeHeader('content-length');
-      return null;
+      if (res.statusCode === 304) {
+        res.removeHeader('content-length');
+        return null;
+      }
+      if (req.method === 'HEAD') {
+        if (typeof payload === 'string' || Buffer.isBuffer(payload)) {
+          res.header('content-length', Buffer.byteLength(payload));
+          return null;
+        }
+      }
+      return payload;
     },
     handler: async (req, res) => {
       const view =

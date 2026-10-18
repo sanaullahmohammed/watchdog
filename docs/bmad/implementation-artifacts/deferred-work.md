@@ -81,13 +81,6 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   evidence: Story 9.9 Review Triage Log #7. A meaningful test spawns the api, starts a slow event handler, sends SIGTERM and checks the handler's database work completed.
   target: Epic 8 (boot and container checks, audit F-11).
 
-## From Story 9.12 (2026-10-08)
-
-- source_spec: `spec-9-12-public-cors.md`
-  summary: `HEAD /status/:orgSlug` with a matching `If-None-Match` answers 500 instead of 304. The route's `onSend` returns `null` for a 304, and Fastify's automatic HEAD route then runs its own `onSend` on that `null` and throws.
-  evidence: Story 9.12 Review Triage Log #1; reproduced (GET 200 with an ETag, then HEAD with that tag gave 500). Predates Story 9.12. Fix by returning `undefined` for a HEAD 304, or by declaring the HEAD route explicitly, with a test.
-  target: Epic 4, story 4.2.
-
 ## From Story 9.13 (2026-10-08)
 
 - source_spec: `spec-9-13-sql-log-redaction.md`

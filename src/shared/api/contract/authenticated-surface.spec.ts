@@ -43,6 +43,11 @@ const PUBLIC_BY_DESIGN: ReadonlyMap<string, string> = new Map([
       'read behind it is still tenant-scoped.',
   ],
   [
+    'HEAD /status/:orgSlug',
+    "The same page's GET without a body: its headers, or a 304 to a matching " +
+      'If-None-Match. It shares the GET rate-limit bucket.',
+  ],
+  [
     'OPTIONS /status/:orgSlug',
     'The preflight a cross-origin conditional fetch of that page needs. It ' +
       'touches no data: it answers with the CORS headers and nothing else.',
