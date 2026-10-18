@@ -100,6 +100,7 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
     const conditional = await fetchPage({ 'if-none-match': etag });
     assert.equal(conditional.statusCode, 304);
     assert.equal(conditional.body, '');
+    assert.equal(conditional.headers['content-length'], undefined);
     assert.equal(conditional.headers.etag, etag);
 
     const stale = await fetchPage({ 'if-none-match': '"not-this-one"' });
@@ -162,6 +163,96 @@ describe('The public surface, bounded (retrospective R-5, R-15)', () => {
       preflight.headers['access-control-allow-methods'] as string,
       /GET/,
     );
+  });
+
+  const headPage = (url: string, headers: Record<string, string> = {}) =>
+    app.inject({
+      method: 'HEAD',
+      url,
+      headers: { origin: ORIGIN, ...headers },
+    });
+
+  it('answers HEAD with a matching tag 304, with no body and no content-length', async () => {
+    const get = await fetchPage({ origin: ORIGIN });
+    assert.equal(get.statusCode, 200);
+    const etag = get.headers.etag as string;
+
+    const matching = await headPage(`/status/${tag}`, {
+      'if-none-match': etag,
+    });
+    assert.equal(matching.statusCode, 304);
+    assert.equal(matching.body, '');
+    assert.equal(matching.headers['content-length'], undefined);
+    assert.equal(matching.headers.etag, etag);
+    assertPublicHeaders(matching.headers);
+  });
+
+  it('answers HEAD with another tag like the GET, without a body', async () => {
+    const get = await fetchPage({ origin: ORIGIN });
+    const other = await headPage(`/status/${tag}`, {
+      'if-none-match': '"not-this-one"',
+    });
+    assert.equal(other.statusCode, 200);
+    assert.equal(other.body, '');
+    assert.ok(other.headers['content-length']);
+    assert.equal(
+      other.headers['content-length'],
+      get.headers['content-length'],
+    );
+    assert.equal(other.headers.etag, get.headers.etag);
+    assert.equal(other.headers['cache-control'], get.headers['cache-control']);
+    assertPublicHeaders(other.headers);
+  });
+
+  it('answers HEAD for an unknown slug 404, like the GET, without a body', async () => {
+    for (const slug of [`${tag}-missing`, 'Not_A_Slug']) {
+      const get = await app.inject({
+        method: 'GET',
+        url: `/status/${slug}`,
+        headers: { origin: ORIGIN },
+      });
+      const miss = await headPage(`/status/${slug}`);
+      assert.equal(miss.statusCode, 404, slug);
+      assert.equal(miss.body, '', slug);
+      assert.equal(
+        miss.headers['content-length'],
+        get.headers['content-length'],
+        slug,
+      );
+      assertPublicHeaders(miss.headers);
+    }
+  });
+
+  it('rations HEAD and GET of the page from one bucket', async () => {
+    const limited = await buildApp({ logger: false });
+    await limited.ready();
+    try {
+      let lastGet: Awaited<ReturnType<typeof limited.inject>> | undefined;
+      for (let sent = 0; sent <= env.publicSurface.rateLimit.max; sent += 1) {
+        lastGet = await limited.inject({
+          method: 'GET',
+          url: `/status/${tag}`,
+          headers: { origin: ORIGIN },
+        });
+        if (lastGet.statusCode === 429) break;
+      }
+      assert.equal(lastGet?.statusCode, 429);
+      const head = await limited.inject({
+        method: 'HEAD',
+        url: `/status/${tag}`,
+        headers: { origin: ORIGIN },
+      });
+      assert.equal(head.statusCode, 429);
+      assert.equal(head.body, '');
+      assert.equal(
+        head.headers['content-length'],
+        lastGet.headers['content-length'],
+      );
+      assertPublicHeaders(head.headers);
+      assert.ok(head.headers['retry-after']);
+    } finally {
+      await limited.close();
+    }
   });
 
   it('gives a router miss under /status the uniform miss and the public headers', async () => {
