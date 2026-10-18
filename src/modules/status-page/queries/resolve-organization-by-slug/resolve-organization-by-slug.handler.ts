@@ -1,6 +1,7 @@
 import { statusPageActionCreator } from '@/modules/status-page';
 import type { PublicOrganization } from '@/modules/status-page/database/organization.repository';
 import { assertValidBetterAuthOrgId } from '@/shared/db/tenant-transaction';
+import { PUBLIC_PAGE_NOT_FOUND as NOT_FOUND } from '@/shared/domain/public-page-miss';
 import { isSlug } from '@/shared/domain/slug';
 import { NotFoundException } from '@/shared/exceptions';
 
@@ -13,9 +14,6 @@ export type ResolveOrganizationBySlugQueryResult = Promise<PublicOrganization>;
  * SSE route at `/status/:orgSlug/events` needs exactly this and nothing else.
  * ARCHITECTURE.md section 5.5 already sketches it making this call.
  */
-/** The one answer every miss gets, whatever was asked for. */
-const NOT_FOUND = 'Status page not found';
-
 export const resolveOrganizationBySlugQuery = statusPageActionCreator<{
   slug: string;
 }>('organization.resolve');

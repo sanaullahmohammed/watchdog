@@ -4,6 +4,9 @@ import { env } from '@/config';
 import { publicPageETag } from '@/modules/status-page/dtos/public-status-page.etag';
 import { toPublicStatusPage } from '@/modules/status-page/dtos/public-status-page.present';
 import { publicStatusPageResponseDtoSchema } from '@/modules/status-page/dtos/public-status-page.response.dto';
+import { publicHeaders } from '@/shared/api/public-surface';
+import { PUBLIC_PAGE_NOT_FOUND } from '@/shared/domain/public-page-miss';
+import { NotFoundException } from '@/shared/exceptions';
 import {
   type GetPublicStatusPageQueryResult,
   getPublicStatusPageQuery,
@@ -98,26 +101,44 @@ export default async function getPublicStatusPage(
       return res.code(204).send();
     },
   });
-}
 
-/**
- * Headers that let a browser on any origin read the page.
- *
- * CORS is registered globally with `origin: false`, which is right for every
- * authenticated surface: a page anyone may fetch is not one any site may read
- * with a session attached. So this route says so for itself, without
- * credentials. Helmet's default `Cross-Origin-Resource-Policy: same-origin`
- * would block a cross-origin read even with CORS, so it is relaxed here only
- * (Epic 3 retrospective, R-15). `ETag` has to be exposed, or a script cannot
- * read the tag it needs for a conditional request.
- *
- * The GET route applies it in `onSend`, which runs for every answer the route
- * gives, errors included; a handler only runs when nothing refused first.
- */
-function publicHeaders(res: {
-  header: (name: string, value: string) => unknown;
-}) {
-  res.header('access-control-allow-origin', '*');
-  res.header('access-control-expose-headers', 'ETag');
-  res.header('cross-origin-resource-policy', 'cross-origin');
+  // Whatever under /status the router cannot match (`/status/x/`, `/status/a/b`,
+  // `/status`) gets the page's uniform miss and the public headers, instead of
+  // the router's 404, which echoes the path and carries no CORS. An ordinary
+  // route, not a not-found handler: Fastify wires the last-set not-found
+  // handler into its 404 router's bad-URL path for the whole app. Literal
+  // `method` and `url` because authenticated-surface.spec.ts reads only that.
+  const rationed = {
+    rateLimit: {
+      max: env.publicSurface.rateLimit.max,
+      timeWindow: env.publicSurface.rateLimit.windowMs,
+    },
+  };
+  const uniformMiss = async () => {
+    throw new NotFoundException(PUBLIC_PAGE_NOT_FOUND);
+  };
+  const withPublicHeaders = async (
+    _req: unknown,
+    res: Parameters<typeof publicHeaders>[0],
+    payload: unknown,
+  ) => {
+    publicHeaders(res);
+    return payload;
+  };
+  fastify.route({
+    method: ['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT'],
+    url: '/status',
+    schema: { hide: true },
+    config: rationed,
+    onSend: withPublicHeaders,
+    handler: uniformMiss,
+  });
+  fastify.route({
+    method: ['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT'],
+    url: '/status/*',
+    schema: { hide: true },
+    config: rationed,
+    onSend: withPublicHeaders,
+    handler: uniformMiss,
+  });
 }
