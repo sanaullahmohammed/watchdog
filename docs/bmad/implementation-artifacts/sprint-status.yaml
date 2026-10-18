@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-17-2026 20:39
+last_updated: 10-18-2026 07:11
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -89,7 +89,7 @@ development_status:
   5-14-order-the-public-timeline-by-the-same-sequence: done
   5-15-open-a-draft-when-a-monitor-breaches-its-threshold: done
   5-16-reconcile-missed-drafts-each-pass: done
-  epic-5-retrospective: optional
+  epic-5-retrospective: done
 
   epic-6: backlog
   epic-6-retrospective: optional
@@ -156,7 +156,7 @@ action_items:
     action: "Item 23: foreign-table allowlist test, before the next new foreign-table
       read; extend it in each later story"
     owner: "dev loop"
-    status: open
+    status: done
   - epic: 3
     action: "Item 24a: apply the slug rule at organization creation (story 9.5)"
     owner: "dev loop"
@@ -231,3 +231,80 @@ action_items:
     owner: "owner"
     status: done
     ref: "docs/bmad/implementation-artifacts/epic-9-retro-2026-10-08.md"
+  - id: "epic-5-retro-item-1-one-org-cannot-stall-every-orgs-checks"
+    epic: 5
+    action: "Item 1: one organization's backlog of slow checks cannot stall every
+      organization's checks or turn the worker unhealthy; rule in ARCHITECTURE 6.0.1
+      first, test with many timing-out monitors in one org; correct the 5.9 deferred
+      entry; re-weigh DR-4 (before acceptance)"
+    owner: "owner (rule), then dev loop"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-5-retro-2026-10-17.md"
+  - id: "epic-5-retro-item-2-draft-event-path-refuses-archived-service"
+    epic: 5
+    action: "Item 2: the monitor draft event path refuses an archived service and
+      a disabled monitor, as the 5.16 reconciler does; test by archiving mid-flight
+      (Epic 8)"
+    owner: "dev loop"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-5-retro-2026-10-17.md"
+  - id: "epic-5-retro-item-3-local-worker-out-of-integration-suite"
+    epic: 5
+    action: "Item 3: keep the compose worker out of the integration suite's way (start
+      only postgres, or a Compose profile for worker and api) and record it in AGENTS.md
+      (before Epic 4)"
+    owner: "owner"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-5-retro-2026-10-17.md"
+  - id: "epic-5-retro-item-4-close-nat64-gap-in-target-guard"
+    epic: 5
+    action: "Item 4: classify NAT64 (64:ff9b::/96, 64:ff9b:1::/48) by its embedded
+      IPv4 address in the target guard; decide CGNAT with item 1; ARCHITECTURE 6.5
+      first (before production exposure)"
+    owner: "owner (rule), then dev loop"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-5-retro-2026-10-17.md"
+  - id: "epic-5-retro-item-5-tidy-deferred-work"
+    epic: 5
+    action: "Item 5: tidy deferred-work.md: correct the 5.9 entry, mark 5.3 verified,
+      fix stale retro-2 lines, merge the urn:uuid and REST-options families, add DR-2/3/5/6
+      and VG-1..5 (with item 1)"
+    owner: "dev loop"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-5-retro-2026-10-17.md"
+  - id: "epic-5-retro-item-6-genesis-edits-g1-g5"
+    epic: 5
+    action: "Item 6: genesis edits G1-G5 from the Epic 5 retro AV-5, each in its owning
+      document; G5 follows item 1 (before Epic 4)"
+    owner: "owner"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-5-retro-2026-10-17.md"
+  - id: "epic-5-retro-item-7-agents-and-epics-edits"
+    epic: 5
+    action: "Item 7: AGENTS.md edits A1-A3 plus the carried AGENTS entries in deferred-work.md,
+      and epics.md E1-E3 (before Epic 4)"
+    owner: "owner"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-5-retro-2026-10-17.md"
+  - id: "epic-5-retro-item-8-deferral-premises-and-mutation-checks"
+    epic: 5
+    action: "Item 8: Story Generation Constraints: a deferral resting on a bound states
+      its arithmetic, one relying on a later story names it in deferred-work.md; a
+      fix's test is mutation-checked (before Epic 4)"
+    owner: "owner"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-5-retro-2026-10-17.md"
+  - id: "epic-5-retro-item-9-split-run-worker-pass"
+    epic: 5
+    action: "Item 9: split runWorkerPass into named per-organization steps before
+      Epic 4 adds notification dispatch (before Epic 4)"
+    owner: "dev loop"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-5-retro-2026-10-17.md"
+  - id: "epic-5-retro-item-10-shared-test-wrappers"
+    epic: 5
+    action: "Item 10: move eventsFor and the other duplicated test wrappers into src/shared/testing/
+      (next story touching those suites)"
+    owner: "dev loop"
+    status: open
+    ref: "docs/bmad/implementation-artifacts/epic-5-retro-2026-10-17.md"
