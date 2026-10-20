@@ -43,6 +43,25 @@ const schema = Type.Object({
   PUBLIC_PAGE_MAX_AGE_SECONDS: Type.Number({ default: 10, minimum: 0 }),
   PUBLIC_RATE_LIMIT_MAX: Type.Number({ default: 120, minimum: 1 }),
   PUBLIC_RATE_LIMIT_WINDOW_MS: Type.Number({ default: 60_000, minimum: 1_000 }),
+  // The public stream's bounds (story 4.5, ARCHITECTURE 5.4.1). A stream is
+  // long-lived, so it is capped per client IP and per api process, and closed
+  // after its lifetime, after which the client reconnects. The heartbeat is
+  // not one of 5.4.1's bounds: it keeps intermediaries from cutting a stream
+  // that has been idle. The two times are in seconds and become timer delays,
+  // so they stop at the largest delay Node's setTimeout honours; above it the
+  // timer fires at once.
+  PUBLIC_STREAM_MAX_PER_IP: Type.Number({ default: 10, minimum: 1 }),
+  PUBLIC_STREAM_MAX_TOTAL: Type.Number({ default: 1000, minimum: 1 }),
+  PUBLIC_STREAM_MAX_LIFETIME_SECONDS: Type.Number({
+    default: 3600,
+    minimum: 1,
+    maximum: 2_147_483,
+  }),
+  PUBLIC_STREAM_HEARTBEAT_SECONDS: Type.Number({
+    default: 30,
+    minimum: 1,
+    maximum: 2_147_483,
+  }),
   WORKER_MAINTENANCE_INTERVAL_MS: Type.Number({
     default: 30_000,
     // A zero or negative interval would spin setInterval as a tight loop.
@@ -113,6 +132,12 @@ export default {
     rateLimit: {
       max: env.PUBLIC_RATE_LIMIT_MAX,
       windowMs: env.PUBLIC_RATE_LIMIT_WINDOW_MS,
+    },
+    stream: {
+      maxPerIp: env.PUBLIC_STREAM_MAX_PER_IP,
+      maxTotal: env.PUBLIC_STREAM_MAX_TOTAL,
+      maxLifetimeSeconds: env.PUBLIC_STREAM_MAX_LIFETIME_SECONDS,
+      heartbeatSeconds: env.PUBLIC_STREAM_HEARTBEAT_SECONDS,
     },
   },
   monitor: {

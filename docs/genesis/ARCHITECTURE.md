@@ -816,6 +816,8 @@ The contract makes two assertions, and runs with the unit suite because it needs
 
 This was verified against the repository as it stood: the boilerplate's `delete-user` shipped a route and no resolver, and the check reported it on its first run rather than tolerating it.
 
+**One capability is REST-only by design: the public status stream** (`status-page/queries/open-public-status-stream`, `GET /status/:orgSlug/events`, story 4.5). It is Server-Sent Events, which has no SDL form, and the GraphQL equivalent would be a subscription, which is admin-only (section 5.5). So it has a route and no resolver. The parity spec names it, with that reason, in `REST_ONLY_BY_DESIGN`, which the coverage assertion skips. The exemption is held to the slice: an entry that names no discovered slice, or one that has no route or has gained a resolver, fails the spec, and any other capability reachable over one surface still fails coverage. Decided 2026-10-20 (owner).
+
 ---
 
 ## 8. Compose topology
