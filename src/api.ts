@@ -5,9 +5,9 @@ import sql, { closeDbConnection } from '@/shared/db/postgres';
 import { assertTenantBoundRole } from '@/shared/db/runtime-role';
 
 export async function startApi() {
-  const fastify = await buildApp();
+  const fastify = await buildApp({}, { listen: true });
 
-  // Before listening: a role exempt from RLS would serve every tenant's rows.
+  // Before serving requests: a role exempt from RLS would serve every tenant's rows.
   try {
     await assertTenantBoundRole(sql);
   } catch (error) {

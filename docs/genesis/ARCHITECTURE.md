@@ -196,7 +196,7 @@ Several reactions to one event is the design here, not an edge case: the NOTIFY 
 
 The command and query buses hold exactly one handler per type, and registering a second throws at boot, so a copied slice that reuses a type fails loudly instead of silently replacing another handler.
 
-Each app instance owns its command, query and event buses and its DI container, so its handlers bind to its own buses, and closing one app disposes only its own container. The Better Auth instance, its `authPool` and the postgres.js pool stay process-wide and are shared by every app in the process.
+Each app instance owns its command, query and event buses and its DI container, so its handlers bind to its own buses, and closing one app disposes only its own container. The Better Auth instance, its `authPool` and the postgres.js pool stay process-wide and are shared by every app in the process. The `LISTEN` connection does not: an app built to listen (the api's, section 5.4) opens its own, named `watchdog-listener:<pid>`, and closes it in its own `onClose`.
 
 `NOTIFY` payloads are intentionally small. Subscribers re-query read models by `orgId`, `aggregateType`, and `aggregateId` under the appropriate tenant context.
 
@@ -209,7 +209,7 @@ flowchart LR
   C --> D[NOTIFY bridge handler]
   D --> E[(Postgres channel: watchdog_events)]
   E --> F[LISTEN subscriber in api]
-  E --> G[LISTEN subscriber in worker]
+  E -.->|when needed| G[LISTEN subscriber in worker]
   F --> H[Public SSE fanout]
   F --> I[Admin GraphQL subscription fanout]
   G --> J[Notification / background reactions]
@@ -375,6 +375,8 @@ declare function isPubliclyVisibleEvent(
   payload: WatchdogNotifyPayload,
 ): Promise<boolean>;
 ```
+
+**As built (story 4.4).** Only the api listens; `buildApp` listens only when asked, the api's entrypoint asks, and the worker opens no `LISTEN` connection. The listener holds a dedicated postgres.js client of its own, named `watchdog-listener:<pid>` in `pg_stat_activity`, rather than the shared pool, so `app.close()` can end it before the entrypoint closes the pool: closing first sends every hub subscriber `closed`, then unlistens and ends that client. Each notification is validated before it reaches the in-memory hub, which delivers to the organization's admin subscribers, and to its public subscribers only when the name is in `PUBLIC_EVENT_NAMES`. A notification that is not JSON, has a `version` other than 1, names an event outside the bridged set, or carries an invalid `orgId` is dropped and logged at `warn`, and the listener keeps running. postgres.js re-listens on its own after the connection is lost; every re-listen after the first is logged at `warn` and sends every subscriber, admin and public, a `resync`, because notifications sent while it was down are gone.
 
 The public event-name whitelist is necessary but not sufficient. The gate must also enforce DOMAIN's Public status page rule: drafts are private, services must be public and unarchived, and incidents/windows naming only hidden services must not expose their data or affected-service ids. Tenant-scoped reads run inside `withTenantTransaction`; an absent row is not permission to publish. Epic 4 must define privacy-safe invalidation for deletion, archive and visibility changes, rather than assuming every event can be judged from a row that still exists. `aggregateType` never bypasses the whitelist. Draft dismissal emits `incident.dismissed` only, never `incident.resolved`.
 
@@ -792,7 +794,7 @@ Three consequences worth stating plainly:
 
 - `"member"."role"` is unconstrained text. The `owner`/`admin`/`member` ladder is a Better Auth convention, not a database guarantee, so the organization-context helper validates the value rather than trusting it.
 - Better Auth reaches Postgres through Kysely over `pg`, which it brings as an optional peer. WatchDog's own data access stays on raw `postgres.js` and the two never share a connection. This does not breach the no-ORM non-goal, which governs WatchDog's data access, but the process does load two Postgres drivers.
-- Better Auth's `pg` pool is process-wide and reference-counted. Each app holds it; its `onClose` hook drains the event bus and releases its hold. Only the last release ends the pool, after which another app cannot be built in that process. The shared postgres.js pool is closed separately by the entrypoint. The API's `graceful-server` exits the process after its shutdown steps; `app.close()` alone neither closes every shared connection nor exits the process (audit F-07).
+- Better Auth's `pg` pool is process-wide and reference-counted. Each app holds it; its `onClose` hook drains the event bus and releases its hold. Only the last release ends the pool, after which another app cannot be built in that process. The shared postgres.js pool is closed separately by the entrypoint. The api's `LISTEN` connection, `watchdog-listener:<pid>`, is the app's own and is ended by its `onClose`, before the entrypoint closes the pool. The API's `graceful-server` exits the process after its shutdown steps; `app.close()` alone neither closes every shared connection nor exits the process (audit F-07).
 
 `pnpm run auth:schema:check` regenerates against a migrated database and fails if anything is emitted, which is what pins the `better-auth` version to the committed contract. It runs in the `database` CI job. Upgrades to `better-auth` are expected to fail this check; the fix is a new migration plus a refreshed artifact, never an edit to the applied migration.
 

@@ -226,3 +226,8 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-3-bridge-domain-events-to-notify.md`
   summary: Re-check ARCHITECTURE 5.3's NOTIFY bridge sketch against DOMAIN's updated channel sketch (payload built by the application and sent as one parameter; the `uptime.rollup_refreshed` aggregate is the organization).
   evidence: Story 4.3 changed DOMAIN's sketch, the owning document; the frozen intent allowed no other genesis edit. ARCHITECTURE 5.3 still shows `json_build_object` and does not name the uptime aggregate. Its semantics (six keys, emit-time `occurredAt`) already match.
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-4-listen-in-the-api-and-fan-out-per-organization.md`
+  summary: AGENTS.md should record story 4.4's conventions. `buildApp(overrides, { listen })` opens a dedicated `watchdog-listener:<pid>` connection, a name shared by every listening app in one process. The test sentinel is `uptime.rollup_refreshed` with `aggregateType: 'test.sentinel'`, which admin subscribers in a listening test app receive unless they filter it. `subscribeForOrg` and `notifyRaw` are the helpers.
+  evidence: Story 4.4 Review Triage Log #12. The fix edits an agent-context file, which the owner has held until the open row #14 is reconciled.
+  target: AGENTS.md edit (next AGENTS.md reconciliation, with row #14).
