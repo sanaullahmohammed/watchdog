@@ -7,6 +7,7 @@ import Fastify, {
 import { env } from '@/config';
 import server from '@/server';
 import { frameworkErrors } from '@/server/framework-errors';
+import { startRealtimeListener } from '@/server/realtime/listener';
 import { appLoggerOptions } from '@/shared/db/sql-debug';
 
 /**
@@ -15,9 +16,14 @@ import { appLoggerOptions } from '@/shared/db/sql-debug';
  * Shared by the `api` entrypoint and by tests so that both exercise the same
  * plugin graph. A test that builds its own Fastify would silently diverge from
  * production as plugins are added.
+ *
+ * `listen` opens the app's `LISTEN` on `watchdog_events` (story 4.4). Off by
+ * default: only the api turns it on, so the worker never listens and a test
+ * app opens no listen connection unless it asks for one.
  */
 export async function buildApp(
   overrides: FastifyServerOptions = {},
+  { listen = false }: { listen?: boolean } = {},
 ): Promise<FastifyInstance> {
   const app = Fastify({
     genReqId: (req) => {
@@ -49,6 +55,17 @@ export async function buildApp(
   });
 
   await server(app);
+
+  if (listen) {
+    try {
+      await startRealtimeListener(app);
+    } catch (error) {
+      // The listener has already ended its own client. Closing the app gives
+      // back what the plugins hold, so nothing keeps the process alive.
+      await app.close().catch(() => undefined);
+      throw error;
+    }
+  }
 
   return app;
 }
