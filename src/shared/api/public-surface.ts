@@ -13,8 +13,10 @@
  * Every answer under `/status` carries them, except where Fastify keeps its
  * default (a method the catch-all does not declare, a failed async
  * constraint): the page route's own answers (in `onSend`, errors included),
- * the catch-all route's uniform miss, and the malformed-URL answer of
- * `frameworkErrors`.
+ * the catch-all route's uniform miss, the malformed-URL answer of
+ * `frameworkErrors`, and the head of the status stream, which is written past
+ * `onSend` after a hijack: there they are applied before `writeHead`, last,
+ * so their `cross-origin-resource-policy` overrides helmet's.
  */
 export function publicHeaders(res: {
   header: (name: string, value: string) => unknown;

@@ -18,7 +18,8 @@ import { parse, type TypeNode } from 'graphql';
  *   validation constraints Swagger needs and SDL cannot express them.
  *
  * Two checks, in increasing strength. Coverage: a capability exposed over one
- * surface must be exposed over both. Fields: where a capability has both a
+ * surface must be exposed over both, unless it is named in
+ * `REST_ONLY_BY_DESIGN` below. Fields: where a capability has both a
  * `.schema.ts` and a `.graphql-schema.ts`, their request field names must
  * agree, and a pair the check cannot compare fails rather than passing
  * unexamined. It once skipped such a pair silently, and the public status page
@@ -157,6 +158,20 @@ function typeBoxFieldNames(
   return byExport;
 }
 
+/**
+ * Capabilities reachable over REST only, by design, each with its reason
+ * (ARCHITECTURE 7.1). Keyed by slice label. The coverage check skips them, and
+ * the stale-entry check holds each to a slice that exists, has a route and has
+ * no resolver, so an exemption cannot outlive the reason it was granted.
+ */
+const REST_ONLY_BY_DESIGN: ReadonlyMap<string, string> = new Map([
+  [
+    'status-page/queries/open-public-status-stream',
+    'The public status stream is Server-Sent Events, which has no SDL form, and ' +
+      'its GraphQL equivalent would be a subscription, which is admin-only (story 4.5).',
+  ],
+]);
+
 const capabilities = discoverCapabilities();
 
 describe('REST and GraphQL surface parity', () => {
@@ -170,6 +185,7 @@ describe('REST and GraphQL surface parity', () => {
 
   it('exposes every capability over both surfaces', () => {
     const gaps = capabilities
+      .filter((c) => !REST_ONLY_BY_DESIGN.has(c.label))
       .filter((c) => Boolean(c.routeFile) !== Boolean(c.resolverFile))
       .map((c) => ({
         capability: c.label,
@@ -182,6 +198,25 @@ describe('REST and GraphQL surface parity', () => {
       gaps,
       [],
       'a capability reachable over one surface must be reachable over both',
+    );
+  });
+
+  it('keeps the REST-only exemptions honest', () => {
+    const byLabel = new Map(capabilities.map((c) => [c.label, c]));
+    const stale = [...REST_ONLY_BY_DESIGN.keys()].flatMap((label) => {
+      const capability = byLabel.get(label);
+      if (!capability) return [`${label}: no such slice`];
+      if (!capability.routeFile) return [`${label}: it has no route`];
+      if (capability.resolverFile) {
+        return [`${label}: it has a resolver, ${capability.resolverFile}`];
+      }
+      return [];
+    });
+
+    assert.deepEqual(
+      stale,
+      [],
+      'a REST-only exemption must name a slice reachable over REST and not over GraphQL',
     );
   });
 

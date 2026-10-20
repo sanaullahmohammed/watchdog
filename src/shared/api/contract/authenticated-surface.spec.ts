@@ -61,6 +61,17 @@ const PUBLIC_BY_DESIGN: ReadonlyMap<string, string> = new Map([
       ]),
   ),
   [
+    'GET /status/:orgSlug/events',
+    'The same public page, and each later version of it, as Server-Sent Events. ' +
+      'No session, for the same reason as the page; the organization comes from ' +
+      'the slug and the page is read under it.',
+  ],
+  [
+    'OPTIONS /status/:orgSlug/events',
+    'The preflight a cross-origin read of that stream needs when it sends ' +
+      'Last-Event-ID. It touches no data: it answers with the CORS headers and nothing else.',
+  ],
+  [
     'Query.publicStatusPage',
     'The same public page over GraphQL, public for the same reason.',
   ],

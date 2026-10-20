@@ -221,7 +221,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `spec-4-1-every-answer-under-status-carries-the-public-headers.md`
   summary: A cross-origin preflight to a router miss (`OPTIONS /status/x/`) or to a malformed URL (`OPTIONS /status/%E0`) gets a 404 or 400, and a browser fails any non-2xx preflight. So a conditional (`If-None-Match`) fetch of a missing page is opaque to the script even though the answer carries the public headers. A plain fetch is not preflighted and reads the miss.
   evidence: Story 4.1 Review Triage Log #21. The same was true on master. Answering preflights under `/status` with 204 plus the allowed methods and headers would fix it.
-  target: Epic 4, story 4.5 (its stream adds the next preflight under `/status`, admitting `Last-Event-ID`).
+  target: Epic 8 (default). Retargeted 2026-10-20 by story 4.5 (owner): 4.5 added only its own stream's preflight, `OPTIONS /status/:orgSlug/events`, admitting `Last-Event-ID`; preflights to misses under `/status` still get the 404 or 400.
 
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-3-bridge-domain-events-to-notify.md`
   summary: Re-check ARCHITECTURE 5.3's NOTIFY bridge sketch against DOMAIN's updated channel sketch (payload built by the application and sent as one parameter; the `uptime.rollup_refreshed` aggregate is the organization).
@@ -231,3 +231,18 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: AGENTS.md should record story 4.4's conventions. `buildApp(overrides, { listen })` opens a dedicated `watchdog-listener:<pid>` connection, a name shared by every listening app in one process. The test sentinel is `uptime.rollup_refreshed` with `aggregateType: 'test.sentinel'`, which admin subscribers in a listening test app receive unless they filter it. `subscribeForOrg` and `notifyRaw` are the helpers.
   evidence: Story 4.4 Review Triage Log #12. The fix edits an agent-context file, which the owner has held until the open row #14 is reconciled.
   target: AGENTS.md edit (next AGENTS.md reconciliation, with row #14).
+
+## From Story 4.5 (2026-10-20)
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-5-open-a-public-status-stream.md`
+  summary: The public stream's writes ignore backpressure. Before 4.6 pushes full pages, a stream needs a policy for a reader that does not drain, such as ending it once `writableLength` passes a bound.
+  evidence: Story 4.5 Review Triage Log #5. In 4.5 a stream writes one page and then a 13-byte heartbeat every 30 s. With 4.6's pushes, up to 1,000 streams could each buffer whole pages without bound.
+  target: Epic 4, story 4.6.
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-5-open-a-public-status-stream.md`
+  summary: The stream caps key on the full socket address, so one actor with many addresses, or an IPv6 /64, can hold every `PUBLIC_STREAM_MAX_TOTAL` place and leave every organization's viewers with a 429.
+  evidence: Story 4.5 Review Triage Log #12. Keying on the full address is ARCHITECTURE 5.4.1's decision, shared with the rate limit (F-18). Prefix grouping or a per-organization share would be a new policy, and the owner has not recorded it as an accepted risk.
+  target: Epic 8 (default).
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-5-open-a-public-status-stream.md`
+  summary: ARCHITECTURE 5.4.1 should record `PUBLIC_STREAM_HEARTBEAT_SECONDS` (default 30), the stream's heartbeat interval, which is not a bound but is part of the stream's contract.
+  evidence: Story 4.5 Review Triage Log #2. Story 4.5 added the setting, and the owner allowed only the 7.1 genesis edit. 5.4.1 names three stream bounds and no heartbeat.
+  target: Next ARCHITECTURE reconciliation (owner).

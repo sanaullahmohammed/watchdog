@@ -11,13 +11,21 @@ import {
  * `fastify-plugin` so the decoration is visible outside this plugin.
  *
  * Closing the app sends every subscriber `closed`, so no stream or
- * subscription holds shutdown open.
+ * subscription holds shutdown open. In `preClose`, not `onClose`: Fastify
+ * registers its own `onClose` (`closeIdleConnections`, then `server.close`)
+ * after every plugin's, and avvio runs `onClose` hooks last-in-first-out, so
+ * `server.close` would run first and wait forever on an open stream whose
+ * `closed` never came. `preClose` runs before it; a stream that hears
+ * `closed` ends its response, which leaves its connection idle, and Fastify
+ * then closes that connection (story 4.5). The listener's own `onClose`
+ * (`src/server/realtime/listener.ts`) still runs after this, so `closed`
+ * still precedes the unlisten.
  */
 const realtimePlugin = fp(
   (fastify, _opts, done) => {
     const hub = createRealtimeHub(fastify.log);
     fastify.decorate('realtimeHub', hub);
-    fastify.addHook('onClose', async () => {
+    fastify.addHook('preClose', async () => {
       hub.close();
     });
     done();
