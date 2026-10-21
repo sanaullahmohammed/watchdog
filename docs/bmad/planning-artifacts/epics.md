@@ -2213,7 +2213,7 @@ Written 2026-10-18 from DOMAIN (Canonical event catalog, LISTEN/NOTIFY channel s
 
 - **The public stream sends the page.** An SSE client receives the document `/status/:orgSlug` returns, when the stream opens and whenever it changes. A whitelisted event triggers a recomposition; only a changed page is sent. This applies DOMAIN's whole Public status page rule by construction, rather than through a second, event-shaped copy of it.
 - **Streams are capped and expire.** At most 10 per client IP and 1,000 per api process, each closed after an hour, all three configurable.
-- **A subscription closes within a minute of losing access.** Session, active organization and membership are re-checked every 60 s.
+- **A subscription closes within a minute of losing access.** The session and membership are re-checked every 60 s. *Amended by story 4.8:* membership is re-checked for the organization the subscription was admitted for, not the session's current active organization (spec 4.8, triage #10).
 - **The cross-process proof runs in CI,** in a new `compose` job that boots the built image.
 
 Nine stories, in order; each depends only on earlier ones:
@@ -2242,7 +2242,7 @@ So that my script can read why a request failed instead of seeing an opaque netw
 
 **Actor:** human — an integrator
 **Satisfies:** ARCHITECTURE section 5.4.1, CORS for any origin, without credentials; `deferred-work.md`, story 9.12's router-404, malformed-encoding and `Retry-After` entries
-**Files:** `src/server/build-app.ts` or `src/server/index.ts` (a not-found handler scoped to `/status/`, and Fastify's `frameworkErrors`), `src/modules/status-page/queries/get-public-status-page/get-public-status-page.public.route.ts` (`publicHeaders`), `docs/genesis/ARCHITECTURE.md` section 5.4.1 (`Retry-After` exposed; the headers go on every answer under `/status/`)
+**Files:** `src/server/build-app.ts` (Fastify's `frameworkErrors`), `src/server/framework-errors.ts`, `src/modules/status-page/queries/get-public-status-page/get-public-status-page.public.route.ts` (`publicHeaders`), `docs/genesis/ARCHITECTURE.md` section 5.4.1 (`Retry-After` exposed; the headers go on every answer under `/status/`)
 **Verification layer:** integration (`src/modules/status-page/` public-route suites)
 
 **Acceptance Criteria:**
@@ -2264,6 +2264,8 @@ So that my script can read why a request failed instead of seeing an opaque netw
 **Given** each new case
 **When** its fix is reverted
 **Then** its test fails, and the spec's Implementation Notes record that it did (Constraint 11)
+
+*Amended during implementation:* the router's misses are answered by catch-all routes, `/status` and `/status/*`, in `get-public-status-page.public.route.ts`, not by a not-found handler. Fastify wires the last-set not-found handler into its router as the app-wide bad-URL handler and does not catch what it throws, so the first pass crashed the api on `PROPFIND /api/%E0`. A malformed URL under `/status` gets a plain 400 whose message is the fixed string `Bad Request`, so no path is echoed (spec 4.1, loopback 1 and triage #1).
 
 ### Story 4.2: HEAD revalidation answers 304
 
@@ -2496,7 +2498,8 @@ So that it shows incident, service and monitor changes as they happen, drafts in
 
 **Given** an upgrade with no session cookie, a junk or expired one, or a member whose role fails the ladder
 **When** it subscribes
-**Then** it is refused with `UNAUTHENTICATED`, and the upgrade counts against the anonymous `/graphql` limit, so repeated attempts reach 429
+**Then** it is refused with `UNAUTHENTICATED`
+**And** an upgrade without a valid session counts against the anonymous `/graphql` limit, so repeated attempts reach 429, while a valid session with no membership or a role off the ladder is refused but not rationed
 
 **Given** a valid session cookie on an upgrade whose `Origin` is missing or not trusted
 **When** it subscribes
@@ -2513,6 +2516,13 @@ So that it shows incident, service and monitor changes as they happen, drafts in
 **Given** an open subscription
 **When** the app is closed
 **Then** the connection is closed and `app.close()` does not wait on it
+
+*Amended during implementation (owner, loopback 1):* only an upgrade without a valid session is rationed. The original third AC also rationed a member whose role fails the ladder. Three socket bounds were added, and ARCHITECTURE 5.5 records them:
+- A socket with no accepted subscription within 10 s of its upgrade is closed with 4408.
+- One socket holds at most 10 live subscriptions; beyond that a subscribe is refused with `TOO_MANY_SUBSCRIPTIONS`.
+- A refusal closes the socket with 4401, and a lookup failure masked as an internal error closes it with 4500.
+
+See spec 4.7's owner decisions and triage rows #1–#3.
 
 ### Story 4.8: Close a subscription when access is lost
 
@@ -2551,12 +2561,12 @@ So that the backplane is proven across two processes, not only inside one.
 
 **Actor:** system — CI's new `compose` job
 **Satisfies:** FR16 verification — "Compose-based integration test proves worker-originated events reach API clients"; ARCHITECTURE section 9 (the `compose` job, decided 2026-10-18)
-**Files:** `tests/compose/backplane.compose.test.ts`, a controlled check target the stack provides only to this test (a Compose service under its own profile, or equivalent), `package.json` (`test:compose`, with its glob quoted), `.github/workflows/ci.yml` (the `compose` job), `docker-compose.yml`, `AGENTS.md` (how to run it locally, and that it needs the `app` profile the integration suites need down)
+**Files:** `tests/compose/backplane.compose.test.ts`, a controlled check target the stack provides only to this test (a Compose service under its own profile, or equivalent), `package.json` (`test:compose`, with its glob quoted), `.github/workflows/ci.yml` (the `compose` job), `docker-compose.backplane.yml`, `AGENTS.md` (how to run it locally on its own stack)
 **Verification layer:** compose (a real `api` and `worker` from the built image)
 
 **Acceptance Criteria:**
 
-**Given** the stack started with `docker compose --profile app up --wait` from a freshly built image
+**Given** the stack started as its own `watchdog-backplane` project (`COMPOSE_FILE=docker-compose.yml:docker-compose.backplane.yml`, `COMPOSE_PROFILES=app,backplane`, `up --build --wait`) from a freshly built image
 **When** the test signs up an organization, creates a public service with a monitor whose `failure_threshold` the controlled target will breach, and opens both a public stream and an admin subscription against the `api`
 **Then** the stream receives a page in which that service's status has moved, which only the worker's recomputation could cause
 **And** the subscription receives `monitor.threshold_breached` and `incident.draft_created` for that monitor
@@ -2573,3 +2583,9 @@ So that the backplane is proven across two processes, not only inside one.
 **Given** the test's waits
 **When** a delivery does not arrive
 **Then** it fails within a stated bound derived from the monitor's interval and threshold, and its message names what did not arrive
+
+*Amended during implementation (owner, 2026-10-21):*
+- The stack runs as a separate Compose project, with its own database volume, from a `docker-compose.backplane.yml` override. It publishes only the api, on `127.0.0.1:3100`, so it never collides with the dev stack.
+- The original AC started it with `docker compose --profile app up`, and AGENTS.md was to say that the integration suites need the `app` profile down. As built, AGENTS.md says the stack's own project exempts it from that rule.
+
+See spec 4.9's owner decisions.
