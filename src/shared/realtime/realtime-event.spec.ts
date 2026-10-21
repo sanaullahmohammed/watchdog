@@ -8,6 +8,7 @@ import * as incidentEvents from '@/shared/events/incident.events';
 import * as maintenanceEvents from '@/shared/events/maintenance.events';
 import * as monitorEvents from '@/shared/events/monitor.events';
 import * as serviceEvents from '@/shared/events/service.events';
+import * as subscriberEvents from '@/shared/events/subscriber.events';
 import {
   BRIDGED_EVENT_NAMES,
   BRIDGED_EVENTS,
@@ -79,13 +80,18 @@ const BRIDGED_OPTIONAL = ['uptime.rollup_refreshed'];
 
 /** Every creator `src/shared/events/` exports, by its export name. */
 const EXPORTED_CREATORS: ReadonlyMap<string, CommandCreator<unknown>> = new Map(
-  [incidentEvents, maintenanceEvents, monitorEvents, serviceEvents].flatMap(
-    (module) =>
-      Object.entries(module).filter(
-        (entry): entry is [string, CommandCreator<unknown>] =>
-          typeof entry[1] === 'function' &&
-          typeof (entry[1] as { type?: unknown }).type === 'string',
-      ),
+  [
+    incidentEvents,
+    maintenanceEvents,
+    monitorEvents,
+    serviceEvents,
+    subscriberEvents,
+  ].flatMap((module) =>
+    Object.entries(module).filter(
+      (entry): entry is [string, CommandCreator<unknown>] =>
+        typeof entry[1] === 'function' &&
+        typeof (entry[1] as { type?: unknown }).type === 'string',
+    ),
   ),
 );
 
@@ -95,6 +101,7 @@ const IMPORTED_EVENT_FILES = [
   'maintenance.events.ts',
   'monitor.events.ts',
   'service.events.ts',
+  'subscriber.events.ts',
 ];
 
 const EVENTS_ROOT = join(__dirname, '../events');

@@ -26,7 +26,51 @@ export const notificationEnvProperties = {
   SMTP_PASSWORD: Type.Optional(Type.String()),
   // The origin emailed links are built on. Unset, it is BETTER_AUTH_URL's.
   PUBLIC_BASE_URL: Type.Optional(Type.String()),
+  // The anonymous subscribe route's own IP limit (story 6.3), and the
+  // per-address bounds. The TTL is in hours, the resend window in seconds; 0
+  // turns the throttle off.
+  SUBSCRIBE_RATE_LIMIT_MAX: Type.Integer({ default: 5, minimum: 1 }),
+  SUBSCRIBE_RATE_LIMIT_WINDOW_MS: Type.Integer({
+    default: 3_600_000,
+    minimum: 1_000,
+  }),
+  SUBSCRIBER_CONFIRMATION_TTL_HOURS: Type.Integer({
+    default: 24,
+    minimum: 1,
+    maximum: 8760,
+  }),
+  SUBSCRIBER_CONFIRMATION_RESEND_SECONDS: Type.Integer({
+    default: 600,
+    minimum: 0,
+    maximum: 86_400,
+  }),
 };
+
+/**
+ * The subscribe route takes one limiter, so ARCHITECTURE 5.4.1's "inherits the
+ * public bounds" is kept here: it may be stricter than the public page's limit,
+ * never looser. Names both variables of the pair that breaks the rule and never
+ * quotes anything else. Pure, so a unit spec can call it without a `.env`.
+ */
+export function assertSubscribeLimits(values: {
+  SUBSCRIBE_RATE_LIMIT_MAX: number;
+  SUBSCRIBE_RATE_LIMIT_WINDOW_MS: number;
+  PUBLIC_RATE_LIMIT_MAX: number;
+  PUBLIC_RATE_LIMIT_WINDOW_MS: number;
+}): void {
+  if (values.SUBSCRIBE_RATE_LIMIT_MAX > values.PUBLIC_RATE_LIMIT_MAX) {
+    throw new Error(
+      `SUBSCRIBE_RATE_LIMIT_MAX (${values.SUBSCRIBE_RATE_LIMIT_MAX}) must not exceed PUBLIC_RATE_LIMIT_MAX (${values.PUBLIC_RATE_LIMIT_MAX})`,
+    );
+  }
+  if (
+    values.SUBSCRIBE_RATE_LIMIT_WINDOW_MS < values.PUBLIC_RATE_LIMIT_WINDOW_MS
+  ) {
+    throw new Error(
+      `SUBSCRIBE_RATE_LIMIT_WINDOW_MS (${values.SUBSCRIBE_RATE_LIMIT_WINDOW_MS}) must not be shorter than PUBLIC_RATE_LIMIT_WINDOW_MS (${values.PUBLIC_RATE_LIMIT_WINDOW_MS})`,
+    );
+  }
+}
 
 export type EmailSettings = {
   host: string;

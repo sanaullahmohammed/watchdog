@@ -4,6 +4,7 @@ import { parseAllowedCidrs } from './allowed-cidrs';
 import { authEnvProperties } from './auth-env';
 import { checkResultsEnvProperties } from './check-results-env';
 import {
+  assertSubscribeLimits,
   notificationEnvProperties,
   resolveEmailSettings,
 } from './notification-env';
@@ -111,6 +112,7 @@ const env = envSchema<Static<typeof schema>>({
 });
 
 assertWorkerIntervals(env);
+assertSubscribeLimits(env);
 
 // An invalid entry fails boot, naming it.
 const monitorAllowedCidrs = parseAllowedCidrs(env.MONITOR_ALLOWED_CIDRS);
@@ -157,6 +159,14 @@ export default {
   // The origin emailed links are built on: PUBLIC_BASE_URL, or
   // BETTER_AUTH_URL's origin when that is unset.
   publicBaseUrl,
+  subscribe: {
+    rateLimit: {
+      max: env.SUBSCRIBE_RATE_LIMIT_MAX,
+      windowMs: env.SUBSCRIBE_RATE_LIMIT_WINDOW_MS,
+    },
+    confirmationTtlHours: env.SUBSCRIBER_CONFIRMATION_TTL_HOURS,
+    confirmationResendSeconds: env.SUBSCRIBER_CONFIRMATION_RESEND_SECONDS,
+  },
   realtime: {
     adminSubscriptionRecheckSeconds: env.ADMIN_SUBSCRIPTION_RECHECK_SECONDS,
   },

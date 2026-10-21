@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { Type } from 'typebox';
 import { Value } from 'typebox/value';
 import {
+  assertSubscribeLimits,
   notificationEnvProperties,
   resolveEmailSettings,
 } from './notification-env';
@@ -164,6 +165,91 @@ describe('story 6.2: PUBLIC_BASE_URL', () => {
     assert.throws(
       () => resolve({}, 'not a url'),
       /PUBLIC_BASE_URL.*BETTER_AUTH_URL/,
+    );
+  });
+});
+
+describe('story 6.3: the subscribe settings', () => {
+  it('defaults to 5 per hour, a 24 hour token and a 10 minute resend window', () => {
+    const value = Value.Default(schema, {}) as Record<string, number>;
+    assert.equal(value.SUBSCRIBE_RATE_LIMIT_MAX, 5);
+    assert.equal(value.SUBSCRIBE_RATE_LIMIT_WINDOW_MS, 3_600_000);
+    assert.equal(value.SUBSCRIBER_CONFIRMATION_TTL_HOURS, 24);
+    assert.equal(value.SUBSCRIBER_CONFIRMATION_RESEND_SECONDS, 600);
+    assert.equal(Value.Check(schema, value), true);
+  });
+
+  it('refuses values below each minimum', () => {
+    const base = Value.Default(schema, {}) as Record<string, unknown>;
+    for (const [name, bad] of [
+      ['SUBSCRIBE_RATE_LIMIT_MAX', 0],
+      ['SUBSCRIBE_RATE_LIMIT_WINDOW_MS', 999],
+      ['SUBSCRIBER_CONFIRMATION_TTL_HOURS', 0],
+      ['SUBSCRIBER_CONFIRMATION_RESEND_SECONDS', -1],
+    ] as const) {
+      assert.equal(Value.Check(schema, { ...base, [name]: bad }), false, name);
+    }
+    assert.equal(
+      Value.Check(schema, {
+        ...base,
+        SUBSCRIBER_CONFIRMATION_RESEND_SECONDS: 0,
+      }),
+      true,
+    );
+  });
+
+  it('refuses a fraction and a value over each maximum', () => {
+    const base = Value.Default(schema, {}) as Record<string, unknown>;
+    for (const [name, bad] of [
+      ['SUBSCRIBE_RATE_LIMIT_MAX', 1.5],
+      ['SUBSCRIBE_RATE_LIMIT_WINDOW_MS', 1000.5],
+      ['SUBSCRIBER_CONFIRMATION_TTL_HOURS', 1.5],
+      ['SUBSCRIBER_CONFIRMATION_TTL_HOURS', 8761],
+      ['SUBSCRIBER_CONFIRMATION_RESEND_SECONDS', 0.5],
+      ['SUBSCRIBER_CONFIRMATION_RESEND_SECONDS', 86_401],
+    ] as const) {
+      assert.equal(
+        Value.Check(schema, { ...base, [name]: bad }),
+        false,
+        `${name} ${bad}`,
+      );
+    }
+  });
+
+  const limits = (overrides: Record<string, number> = {}) => ({
+    SUBSCRIBE_RATE_LIMIT_MAX: 5,
+    SUBSCRIBE_RATE_LIMIT_WINDOW_MS: 3_600_000,
+    PUBLIC_RATE_LIMIT_MAX: 120,
+    PUBLIC_RATE_LIMIT_WINDOW_MS: 60_000,
+    ...overrides,
+  });
+
+  it('accepts a limit no looser than the public one', () => {
+    assert.doesNotThrow(() => assertSubscribeLimits(limits()));
+    assert.doesNotThrow(() =>
+      assertSubscribeLimits(
+        limits({
+          SUBSCRIBE_RATE_LIMIT_MAX: 120,
+          SUBSCRIBE_RATE_LIMIT_WINDOW_MS: 60_000,
+        }),
+      ),
+    );
+  });
+
+  it('refuses a larger max, naming both variables', () => {
+    assert.throws(
+      () => assertSubscribeLimits(limits({ SUBSCRIBE_RATE_LIMIT_MAX: 121 })),
+      /SUBSCRIBE_RATE_LIMIT_MAX.*PUBLIC_RATE_LIMIT_MAX/,
+    );
+  });
+
+  it('refuses a shorter window, naming both variables', () => {
+    assert.throws(
+      () =>
+        assertSubscribeLimits(
+          limits({ SUBSCRIBE_RATE_LIMIT_WINDOW_MS: 59_999 }),
+        ),
+      /SUBSCRIBE_RATE_LIMIT_WINDOW_MS.*PUBLIC_RATE_LIMIT_WINDOW_MS/,
     );
   });
 });

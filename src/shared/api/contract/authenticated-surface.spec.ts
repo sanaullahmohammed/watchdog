@@ -80,6 +80,17 @@ const PUBLIC_BY_DESIGN: ReadonlyMap<string, string> = new Map([
       'Last-Event-ID. It touches no data: it answers with the CORS headers and nothing else.',
   ],
   [
+    'POST /status/:orgSlug/subscribers',
+    'FR21: anyone may ask to be told about changes, with no session. The ' +
+      'organization comes from the slug through the pre-tenant path and the row ' +
+      'is written under it. Bounded by its own IP limit and a per-address throttle.',
+  ],
+  [
+    'OPTIONS /status/:orgSlug/subscribers',
+    'The preflight a cross-origin subscribe form needs for its JSON body. It ' +
+      'touches no data: it answers with the CORS headers and nothing else.',
+  ],
+  [
     'Query.publicStatusPage',
     'The same public page over GraphQL, public for the same reason.',
   ],
