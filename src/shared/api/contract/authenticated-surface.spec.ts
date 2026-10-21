@@ -32,7 +32,15 @@ import ts from 'typescript';
  */
 
 // This project compiles to CommonJS, so __dirname rather than import.meta.
-const MODULES_ROOT = join(__dirname, '../../../modules');
+const SRC = join(__dirname, '../../..');
+
+/**
+ * Where surface files live: the modules, which the route and resolver
+ * autoloaders read, and the admin subscription beside the GraphQL wiring,
+ * which `src/server/index.ts` registers itself (story 4.7). Each file is
+ * labelled by its path under `src/`, so the two roots cannot be confused.
+ */
+const SURFACE_ROOTS = [join(SRC, 'modules'), join(SRC, 'server/realtime')];
 
 /** Operations that are public by design, each with its reason. */
 const PUBLIC_BY_DESIGN: ReadonlyMap<string, string> = new Map([
@@ -209,10 +217,9 @@ function resolverOperations(source: ts.SourceFile, label: string): Operation[] {
   });
 }
 
-const files = surfaceFiles(MODULES_ROOT).map((path) => ({
-  path,
-  label: relative(MODULES_ROOT, path),
-}));
+const files = SURFACE_ROOTS.flatMap((root) =>
+  surfaceFiles(root).map((path) => ({ path, label: relative(SRC, path) })),
+);
 
 const operations = files.flatMap(({ path, label }) => {
   const source = parse(path);
@@ -226,7 +233,13 @@ describe('Authenticated API surface', () => {
     // Guards the guard twice over: an empty walk would make the check below
     // vacuous, and a file whose shape the parser does not recognise would
     // drop out of it silently, which is how a surface goes unexamined.
-    assert.ok(files.length > 0, 'no route or resolver files found');
+    for (const root of SURFACE_ROOTS) {
+      const label = relative(SRC, root);
+      assert.ok(
+        files.some((file) => file.label.startsWith(`${label}/`)),
+        `no route or resolver files found under src/${label}`,
+      );
+    }
 
     const silent = files
       .filter(({ label }) => !operations.some((o) => o.file === label))
