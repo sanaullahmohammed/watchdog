@@ -297,27 +297,36 @@ export async function bridgeDomainEventToNotify(
     return;
   }
 
-  await sql`
-    select pg_notify(
-      ${NOTIFY_CHANNEL},
-      json_build_object(
-        'eventName', ${event.name},
-        'orgId', ${event.orgId},
-        'aggregateType', ${event.aggregateType},
-        'aggregateId', ${event.aggregateId},
-        'occurredAt', ${event.occurredAt.toISOString()},
-        'version', 1
-      )::text
-    )
-  `;
+  // Built by the application and sent as one parameter, as DOMAIN's
+  // LISTEN/NOTIFY channel sketch specifies.
+  const payload = {
+    eventName: event.name,
+    orgId: event.orgId,
+    aggregateType: event.aggregateType,
+    aggregateId: event.aggregateId,
+    occurredAt: event.occurredAt.toISOString(),
+    version: 1,
+  };
+
+  await sql`select pg_notify(${NOTIFY_CHANNEL}, ${JSON.stringify(payload)})`;
 }
 ```
 
 The handler for append-only incident timeline updates keys on `incident.update_posted`. No PascalCase event names are used.
 
+**As built (story 4.3).**
+- The bridge is `src/shared/realtime/notify-bridge.ts`, and the payload is built by `toRealtimeEvent` in `src/shared/realtime/realtime-event.ts`.
+- `occurredAt` is the bus's emit-time `meta.timestamp`.
+- `uptime.rollup_refreshed` covers the whole organization, so it carries `aggregateType: 'organization'` and `aggregateId` equal to `orgId` (DOMAIN, LISTEN/NOTIFY channel sketch).
+
 ### 5.4 LISTEN subscriber sketch
 
-**Unimplemented design sketch.** The visibility gate is deliberately left abstract: Epic 4 must apply DOMAIN's full public-status-page visibility rule inside `withTenantTransaction`, not copy a draft-only query on the global connection.
+**The pre-Epic 4 design sketch, kept for its reasoning.** The visibility gate is deliberately left abstract: Epic 4 must apply DOMAIN's full public-status-page visibility rule inside `withTenantTransaction`, not copy a draft-only query on the global connection.
+
+The "As built" paragraph after the sketch describes what Epic 4 implemented, and where it differs from the sketch, the as-built text is the contract:
+- The listener is a dedicated client, not `sql.listen` on the shared pool.
+- A re-listen is detected by counting `onlisten` calls (`src/shared/realtime/notify-listener.ts`), and it sends a `resync`.
+- The gate is the composed page, not a per-event visibility query.
 
 ```ts
 type WatchdogNotifyPayload = {
@@ -395,6 +404,18 @@ Decided 2026-09-21 by the Epic 3 retrospective (R-5, R-15), after the first anon
 
 How `/status/:orgSlug/events` inherits them, decided 2026-10-18 (owner). The GraphQL page limit does not apply, since the stream is REST only. The rate limit counts stream openings by client IP. A stream is not cacheable (`Cache-Control: no-store`) and has no `ETag` of its own; each page it pushes carries that page's `ETag` as its SSE `id`. CORS is the page's: any origin, no credentials, and a preflight answer that admits `Last-Event-ID`. Because a stream is long-lived, three bounds are added that a request-shaped page never needed: at most `PUBLIC_STREAM_MAX_PER_IP` open streams per client IP (default 10) and `PUBLIC_STREAM_MAX_TOTAL` per api process (default 1,000), each answered beyond the cap with the same `TooManyRequestsException` 429; and every stream is closed after `PUBLIC_STREAM_MAX_LIFETIME_SECONDS` (default 3,600), after which the client reconnects. Closing the app ends every open stream and subscription, so shutdown is not held open by them.
 
+Two more rules are part of the stream's contract, though neither is a cap.
+
+**Heartbeat (story 4.5).**
+- A stream is sent an SSE comment, `: heartbeat`, after every `PUBLIC_STREAM_HEARTBEAT_SECONDS` (default 30) with nothing else written.
+
+**Backpressure (decided 2026-10-20, owner, story 4.6).**
+- While a stream's socket has not drained, it is sent neither a page nor a heartbeat.
+- The latest page wins. A stream holds at most one undelivered page, replaced by each newer one.
+- On `drain`, the stream is sent that page only if its `ETag` differs from the last page it was sent, and the heartbeat is re-armed.
+- A slow reader is never cut off for being slow. Only its lifetime ends it, so a reader that never drains still frees its place within `PUBLIC_STREAM_MAX_LIFETIME_SECONDS`.
+- A refused opening has already cost one page composition, because a 404 for a missing page wins over a 429. The rate limit bounds that cost.
+
 ### 5.5 SSE handler skeleton
 
 Public status pages use REST for initial state and SSE for live updates.
@@ -447,7 +468,26 @@ async function openStatusSseStream(
 
 GraphQL subscriptions are admin-only and subscribe to the same API-process realtime hub after Better Auth session and active-org membership checks.
 
-**Decided 2026-10-18 (owner).** The skeleton above predates the decision in section 5.4: the stream writes the composed public page, not the `NOTIFY` payload. An admin subscription carries the signal itself (`eventName`, `aggregateType`, `aggregateId`, `occurredAt`) for every bridged event of the subscriber's active organization, admin-only ones included, and the client re-reads through the ordinary queries. The session, active organization and membership are resolved when the subscription opens, from the upgrade request, and re-checked every `ADMIN_SUBSCRIPTION_RECHECK_SECONDS` (default 60): a subscriber who signs out, whose session expires or who is removed from the organization is disconnected within that interval. The upgrade is refused unless its `Origin` is `BETTER_AUTH_URL` or a trusted origin, because a browser attaches the session cookie to a cross-site WebSocket upgrade. An upgrade without a valid session is refused and counts against section 5.4.1's anonymous limit, as every `/graphql` transport does. Queries and mutations sent over the WebSocket are refused, so HTTP `/graphql` stays their only transport.
+**Decided 2026-10-18 (owner).** The skeleton above predates the decision in section 5.4, so it is superseded where it differs. Two differences matter:
+- **What the stream writes.** It writes the composed public page, not the `NOTIFY` payload. Each frame is unnamed, so `EventSource.onmessage` receives it. Its `id` is the page's `ETag`, and its `data` is the page's JSON.
+- **The response headers.** `Cache-Control` is `no-store`, and the page's public headers are sent too (section 5.4.1).
+
+An admin subscription carries the signal itself (`eventName`, `aggregateType`, `aggregateId`, `occurredAt`) for every bridged event of the organization it was admitted for, admin-only events included. The client then re-reads through the ordinary queries.
+
+The session and the active organization are resolved from the upgrade request when the subscription opens. A periodic re-check (story 4.8) follows the first accepted subscription:
+- It runs every `ADMIN_SUBSCRIPTION_RECHECK_SECONDS` (default 60).
+- It re-checks the session, which must still belong to the same user, and membership of the organization the socket was admitted for. That is not the session's current active organization, so an operator who switches organization keeps the subscription they opened.
+- A subscriber who signs out, whose session expires or who is removed from that organization is closed with 4401 within one interval.
+- Each lookup is cut off at `min(interval, 10 s)`. A lookup that fails or runs out of time closes the socket with 4500 (fail closed).
+
+The upgrade is refused with 403 unless its `Origin` is `BETTER_AUTH_URL` or a trusted origin, because a browser attaches the session cookie to a cross-site WebSocket upgrade.
+
+The upgrade is `GET /graphql`, so one without a valid session counts against section 5.4.1's anonymous limit, as every `/graphql` transport does. It is still answered 101 and `connection_ack`. The refusal comes at `subscribe`: `UNAUTHENTICATED`, then close 4401. The same applies to a member whose role is off the ladder, which is refused and not rationed.
+
+Three bounds keep an admitted socket in check (story 4.7):
+- A socket with no accepted subscription within 10 s of its upgrade is closed with 4408.
+- One socket holds at most 10 live subscriptions. Beyond that a subscribe is refused with `TOO_MANY_SUBSCRIPTIONS`, and the socket stays open.
+- Queries and mutations sent over the WebSocket are refused, so HTTP `/graphql` stays their only transport.
 
 ### 5.6 Notification delivery
 
@@ -838,6 +878,7 @@ One image is built for `migrate`, `api`, and `worker`; command decides runtime m
 
 - All three of `migrate`, `api` and `worker` share one `image: watchdog:dev` through a YAML anchor, so the stack builds once rather than three times.
 - `api` and `worker` sit behind the `app` profile (decided 2026-10-18, owner, Epic 5 retrospective item 3). A bare `docker compose up -d` starts `postgres`, `mailpit` and `migrate`; `docker compose --profile app up -d` starts everything. The integration suites share the database with any running `worker`, and an unscoped worker pass checks their monitors, reconciles their statuses and drops their partitions (the retrospective saw all three in one run), so the `app` profile stays down while they run.
+- `docker-compose.backplane.yml` (story 4.9) overrides this file to run the cross-process test as its own project, `watchdog-backplane`. That project has its own database volume, adds a `backplane-target` check target under the `backplane` profile, and publishes only the api, on `127.0.0.1:3100`. Its worker shares nothing with the dev stack's database, so it is the one exception to keeping the `app` profile down: it can run beside the integration suites. AGENTS.md gives the commands. The override needs Compose v2.24.4 or later.
 - `migrate` runs `dbmate --wait ... up` as `watchdog_owner`; `api` and `worker` connect as `watchdog_app` and never see the owner URL. That split is what makes `FORCE ROW LEVEL SECURITY` meaningful, since a superuser bypasses RLS regardless.
 - `api` and `worker` gate on `migrate: service_completed_successfully`, so neither starts against an unmigrated database.
 - The `api` healthcheck targets `http://127.0.0.1:3000/live`, not `localhost`. Inside the container `localhost` resolves to `::1` first while Fastify binds IPv4, so a `localhost` probe is refused and the container never turns healthy.
@@ -866,7 +907,7 @@ The toolchain is `tsx` in development and `tsc` plus `resolve-tspaths` in produc
 
 **Planned checks, not current CI coverage:** k6 smoke/load tests arrive with ROADMAP phase 5. The `compose` job already boots the built container; Epic 8's container smoke test builds on that boot rather than adding a second.
 
-Decided 2026-10-18 (owner): Epic 4 adds a `compose` job that builds the image, starts the whole stack with `docker compose --profile app up`, and runs the cross-process test ROADMAP's LISTEN/NOTIFY row asks for: a worker-originated change reaching an api client. It runs on every pull request, against its own stack rather than the `database` job's, so its worker cannot disturb the integration suites. It boots the built image, which is part of what Epic 8's container smoke test tracks; Epic 8 builds on it rather than adding a second boot.
+Decided 2026-10-18 (owner): Epic 4 adds a `compose` job that builds the image, starts the whole stack as the separate `watchdog-backplane` project (`COMPOSE_FILE=docker-compose.yml:docker-compose.backplane.yml`, `COMPOSE_PROFILES=app,backplane`, `up --wait`, section 8), and runs the cross-process test ROADMAP's LISTEN/NOTIFY row asks for: a worker-originated change reaching an api client. It runs on every pull request, against its own stack rather than the `database` job's, so its worker cannot disturb the integration suites. It boots the built image, which is part of what Epic 8's container smoke test tracks; Epic 8 builds on it rather than adding a second boot.
 
 CI does not deploy. Deployment is explicitly outside v1 genesis scope.
 

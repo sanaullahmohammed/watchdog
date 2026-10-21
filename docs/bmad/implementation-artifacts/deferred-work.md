@@ -217,7 +217,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `spec-4-1-every-answer-under-status-carries-the-public-headers.md`
   summary: Triage row #14. AGENTS.md should note the `/status` catch-all route, `frameworkErrors`, and that a not-found handler doubles as the app-wide bad-URL handler (Fastify wires the last-set one into its 404 router's `onBadUrl`, so a throwing one crashes the process).
   evidence: Story 4.1 Review Triage Log #14 and #1.
-  target: AGENTS.md edit (next AGENTS.md reconciliation).
+  target: AGENTS.md edit (next AGENTS.md reconciliation). RESOLVED by Epic 4 retro item 1 (2026-10-21): AGENTS.md's Known pitfalls says never to call `setNotFoundHandler`, and names the `/status` catch-all routes and `frameworkErrors`.
 - source_spec: `spec-4-1-every-answer-under-status-carries-the-public-headers.md`
   summary: A cross-origin preflight to a router miss (`OPTIONS /status/x/`) or to a malformed URL (`OPTIONS /status/%E0`) gets a 404 or 400, and a browser fails any non-2xx preflight. So a conditional (`If-None-Match`) fetch of a missing page is opaque to the script even though the answer carries the public headers. A plain fetch is not preflighted and reads the miss.
   evidence: Story 4.1 Review Triage Log #21. The same was true on master. Answering preflights under `/status` with 204 plus the allowed methods and headers would fix it.
@@ -226,11 +226,12 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-3-bridge-domain-events-to-notify.md`
   summary: Re-check ARCHITECTURE 5.3's NOTIFY bridge sketch against DOMAIN's updated channel sketch (payload built by the application and sent as one parameter; the `uptime.rollup_refreshed` aggregate is the organization).
   evidence: Story 4.3 changed DOMAIN's sketch, the owning document; the frozen intent allowed no other genesis edit. ARCHITECTURE 5.3 still shows `json_build_object` and does not name the uptime aggregate. Its semantics (six keys, emit-time `occurredAt`) already match.
+  target: Next ARCHITECTURE reconciliation (owner). RESOLVED by Epic 4 retro item 1 (2026-10-21): ARCHITECTURE 5.3's sketch builds the payload in the application and sends it as one parameter, and its As built note names the `uptime.rollup_refreshed` aggregate.
 
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-4-listen-in-the-api-and-fan-out-per-organization.md`
   summary: AGENTS.md should record story 4.4's conventions. `buildApp(overrides, { listen })` opens a dedicated `watchdog-listener:<pid>` connection, a name shared by every listening app in one process. The test sentinel is `uptime.rollup_refreshed` with `aggregateType: 'test.sentinel'`, which admin subscribers in a listening test app receive unless they filter it. `subscribeForOrg` and `notifyRaw` are the helpers.
   evidence: Story 4.4 Review Triage Log #12. The fix edits an agent-context file, which the owner has held until the open row #14 is reconciled.
-  target: AGENTS.md edit (next AGENTS.md reconciliation, with row #14).
+  target: AGENTS.md edit (next AGENTS.md reconciliation, with row #14). RESOLVED by Epic 4 retro item 1 (2026-10-21): AGENTS.md's Known pitfalls records `buildApp(overrides, { listen: true })`, `watchdog-listener:<pid>`, the sentinel, `subscribeForOrg` and `notifyRaw`.
 
 ## From Story 4.5 (2026-10-20)
 
@@ -245,7 +246,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-5-open-a-public-status-stream.md`
   summary: ARCHITECTURE 5.4.1 should record `PUBLIC_STREAM_HEARTBEAT_SECONDS` (default 30), the stream's heartbeat interval, which is not a bound but is part of the stream's contract.
   evidence: Story 4.5 Review Triage Log #2. Story 4.5 added the setting, and the owner allowed only the 7.1 genesis edit. 5.4.1 names three stream bounds and no heartbeat.
-  target: Next ARCHITECTURE reconciliation (owner).
+  target: Next ARCHITECTURE reconciliation (owner). RESOLVED by Epic 4 retro item 1 (2026-10-21): ARCHITECTURE 5.4.1 records the heartbeat and `PUBLIC_STREAM_HEARTBEAT_SECONDS`.
 
 ## From Story 4.6 (2026-10-21)
 
@@ -264,7 +265,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-6-push-the-public-page-when-it-changes.md`
   summary: ARCHITECTURE 5.4.1 should record the stream's backpressure rule: the latest page wins, and a stream holds at most one page in its buffer.
   evidence: Story 4.6 Review Triage Log #13. The owner decided the rule on 2026-10-20. It is a runtime bound of the anonymous surface, which ARCHITECTURE owns, and editing `docs/genesis` needs the owner.
-  target: Next ARCHITECTURE reconciliation (owner).
+  target: Next ARCHITECTURE reconciliation (owner). RESOLVED by Epic 4 retro item 1 (2026-10-21): ARCHITECTURE 5.4.1 records the backpressure rule.
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-6-push-the-public-page-when-it-changes.md`
   summary: A `resync` composes every organization with an open stream at once, and every composition draws on the shared pool.
   evidence: Story 4.6 Review Triage Log #21. This happens only when LISTEN reconnects, bounded by the number of organizations with streams (at most `PUBLIC_STREAM_MAX_TOTAL`). A concurrency cap would be a new policy.
@@ -283,7 +284,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-7-subscribe-to-organization-events-over-graphql.md`
   summary: ARCHITECTURE 5.5 says an upgrade without a valid session "is refused". In fact the upgrade is answered 101 and `connection_ack`, and the refusal (`UNAUTHENTICATED`, close 4401) comes at `subscribe`, with a 10 s deadline closing any socket that never has a subscription accepted.
   evidence: Story 4.7 Review Triage Log #14. The owner allowed one 5.5 sentence in this story, so the wording is left for the owner.
-  target: Next ARCHITECTURE reconciliation (owner).
+  target: Next ARCHITECTURE reconciliation (owner). RESOLVED by Epic 4 retro item 1 (2026-10-21): ARCHITECTURE 5.5 says the upgrade is answered 101 and `connection_ack`, the refusal comes at `subscribe` with 4401, and the 10 s deadline closes with 4408.
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-7-subscribe-to-organization-events-over-graphql.md`
   summary: Story 4.8's access re-check must also reset a socket's cached admission (`state.admission` in `organization-events.resolver.ts`), not only close live subscriptions. Otherwise a later subscribe on the same socket is admitted from the first lookup after the session or membership is gone.
   evidence: Story 4.7 Review Triage Log #30. The admission is resolved once per socket and kept for its lifetime.
@@ -298,11 +299,11 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-8-close-a-subscription-when-access-is-lost.md`
   summary: ARCHITECTURE 5.5 says the session, active organization and membership are re-checked. Story 4.8's AC instead keeps the organization a subscription was admitted for when the operator switches their active one, and re-checks membership of that organization.
   evidence: Story 4.8 Review Triage Log #10, `docs/genesis/ARCHITECTURE.md:450`. The AC owns the behaviour, and editing `docs/genesis` needs the owner.
-  target: Next ARCHITECTURE reconciliation (owner).
+  target: Next ARCHITECTURE reconciliation (owner). RESOLVED by Epic 4 retro item 1 (2026-10-21): ARCHITECTURE 5.5 says the re-check keeps the organization the socket was admitted for.
 
 ## From Story 4.9 (2026-10-21)
 
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-9-prove-worker-events-reach-api-clients-under-compose.md`
   summary: ARCHITECTURE still describes the `compose` job as `docker compose --profile app up` (the "Decided 2026-10-18" paragraph after section 9's table). Section 8 says the `app` profile stays down while the integration suites run, without the `watchdog-backplane` exception AGENTS.md now states, and it does not list `docker-compose.backplane.yml`. The reworded line 866 still sits under the "Planned checks, not current CI coverage" lead-in.
   evidence: Story 4.9 Review Triage Log #11. The owner allowed only the section 9 row and the line 866 rewording in this story.
-  target: Next ARCHITECTURE reconciliation (owner).
+  target: Next ARCHITECTURE reconciliation (owner). RESOLVED by Epic 4 retro item 1 (2026-10-21): section 8 records `docker-compose.backplane.yml` and the `watchdog-backplane` exception, and section 9's decision paragraph describes the separate project.

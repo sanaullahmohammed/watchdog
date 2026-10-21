@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-21-2026 15:07
+last_updated: 10-21-2026 15:34
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -324,7 +324,7 @@ action_items:
       8/9 compose; AGENTS.md row #14 and the 4.4 conventions; then resolve the eight
       deferred rows"
     owner: "owner (genesis and AGENTS.md), then dev loop"
-    status: open
+    status: done
     ref: "docs/bmad/implementation-artifacts/epic-4-retro-2026-10-21.md"
   - id: "epic-4-retro-item-2-reconcile-epics-md"
     epic: 4
@@ -332,7 +332,7 @@ action_items:
       4.1 mechanism, 4.7 rationing, deadline, close codes and cap, the admitted-organization
       re-check, the 4.9 Compose project"
     owner: "owner, then dev loop"
-    status: open
+    status: done
     ref: "docs/bmad/implementation-artifacts/epic-4-retro-2026-10-21.md"
   - id: "epic-4-retro-item-3-heal-stale-public-stream"
     epic: 4
