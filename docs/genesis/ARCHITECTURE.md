@@ -46,7 +46,7 @@ Event names below reference the canonical event catalog in [DOMAIN.md](./DOMAIN.
 | `incident` | Incident aggregate, append-only updates, affected-service impact, lifecycle transitions, monitor-triggered draft creation and reconciliation, draft confirmation/dismissal. | `CreateIncidentCommand`, `TransitionIncidentCommand` (every move on the ladder, including confirming and dismissing a draft, and resolving), `UpdateIncidentCommand`, `PostIncidentUpdateCommand`, `CreateDraftFromMonitorCommand`, `ListIncidentsQuery`, `GetIncidentTimelineQuery` | `incident.created`, `incident.draft_created`, `incident.confirmed`, `incident.updated`, `incident.update_posted`, `incident.state_changed`, `incident.resolved`, `incident.dismissed` |
 | `maintenance` | Scheduled maintenance windows, affected services, idempotent worker-driven lifecycle transitions. | `CreateMaintenanceCommand`, `UpdateMaintenanceCommand`, `DeleteMaintenanceCommand`, `StartDueMaintenanceCommand`, `CompleteDueMaintenanceCommand`, `ListMaintenanceQuery`, `GetMaintenanceQuery` | `maintenance.created`, `maintenance.updated`, `maintenance.started`, `maintenance.completed`, `maintenance.deleted` |
 | `monitoring` | Synthetic monitor configuration, worker check execution, check result persistence, consecutive-failure tracking, derived monitor state and threshold events, uptime rollup refresh, partition maintenance. The incident module owns draft creation. | `CreateMonitorCommand`, `UpdateMonitorCommand`, `DeleteMonitorCommand` (deferred past v1), `QueueDueMonitorChecksCommand`, `RunDueMonitorChecksCommand`, `RecordCheckResultCommand`, `RefreshUptimeRollupsCommand`, `MaintainCheckResultPartitionsCommand`, `ListMonitorsQuery`, `ListMonitorsAtThresholdQuery`, `GetMonitorResultsQuery` (deferred past v1) | `monitor.created`, `monitor.updated`, `monitor.deleted` (deferred past v1), `monitor.check_succeeded`, `monitor.check_failed`, `monitor.state_changed`, `monitor.recovered`, `monitor.threshold_breached`, `monitor.ssl_expiry_warning`, `uptime.rollup_refreshed` |
-| `notification` | Public subscribers, confirmation/unsubscribe flow, email dispatch via Mailpit, RSS/Atom feed generation, durable-history-driven delivery through a ledger. Events only wake the worker pass. | `CreateSubscriberCommand`, `ConfirmSubscriberCommand`, `UnsubscribeCommand`, `QueueEmailNotificationCommand`, `SendQueuedEmailCommand`, `GetRssFeedQuery`, `GetAtomFeedQuery` | `subscriber.created`, `subscriber.confirmed`, `subscriber.unsubscribed`, `notification.email_queued`, `notification.email_sent`, `notification.email_failed` |
+| `notification` | Public subscribers, confirmation/unsubscribe flow, email dispatch via Mailpit, Atom feed generation (Atom only, decided 2026-10-21), durable-history-driven delivery through a ledger. Events only wake the worker pass. | `CreateSubscriberCommand`, `ConfirmSubscriberCommand`, `UnsubscribeCommand`, `QueueEmailNotificationCommand`, `SendQueuedEmailCommand`, `GetAtomFeedQuery` | `subscriber.created`, `subscriber.confirmed`, `subscriber.unsubscribed`, `notification.email_queued`, `notification.email_sent`, `notification.email_failed` |
 | `ai` | Provider port, incident copilot, postmortem draft, NL query over status history, weekly digest draft. All customer-facing actions stay human-in-the-loop. | `DraftIncidentUpdateCommand`, `DraftPostmortemCommand`, `DraftWeeklyDigestCommand`, `AnswerStatusHistoryQuestionQuery` | `ai.incident_update_drafted`, `ai.postmortem_drafted`, `ai.weekly_digest_drafted`, `ai.nl_query_answered` |
 | `status-page` | Public per-org read side, status page payload composition, 90-day uptime payload, public SSE stream. | `GetPublicStatusPageQuery` (the 90-day uptime is read inside it), `OpenPublicStatusEventStreamQuery` | None; consumes bridged events and read models. |
 | `auth` | Not a domain module. Better Auth Fastify plugin plus explicit session/organization-context resolution outside the CQRS bus; centralized CQRS context middleware is planned. |
@@ -501,6 +501,47 @@ Decided 2026-10-06 (DEC-NTF, `docs/bmad/planning-artifacts/sprint-change-proposa
 - **The anonymous subscribe route** inherits section 5.4.1's four bounds, and adds a per-address throttle on confirmation emails so the form cannot be used to mail-bomb someone. Every email carries a `List-Unsubscribe` header. v1 serves no HTML (ROADMAP, non-goals), so confirm and unsubscribe links land on API endpoints that answer in plain text.
 - **Subscriber addresses never reach logs.** SQL debug logging prints no parameter values (story 9.13) before the notification module exists, and a delivery's `last_error` never contains the address.
 
+**Decided 2026-10-21 (owner), for Epic 6.** These fill in the rules above. Every number is a setting in `src/config`, with the default given.
+
+- **Logs are scrubbed first (story 6.1).** Before any address is stored, two places are scrubbed:
+  - The `err` and `error` serializers scrub recursively: nested errors, each error of an `AggregateError`, a `cause`, and `ExceptionBase`'s serialized `cause`.
+  - The fields postgres.js copies from a Postgres error (`message`, `detail`, `where`, `hint`, `internal_query`) are redacted. A duplicate subscription's unique-key violation names the address in `detail`.
+- **The cursor** is one `notification_cursors` row per organization (DOMAIN, NotificationCursor).
+  - Incident entries are read by `incident_updates.sequence`, and maintenance by its window's `created_at`, `started_at` and `completed_at`.
+  - Each pass also re-reads everything recorded within `NOTIFICATION_CURSOR_OVERLAP_SECONDS` (default 300) before its previous read. `sequence` is insert order, not commit order, so a cursor over it needs the same overlap a timestamp does.
+  - The pass runs every `NOTIFICATION_PASS_INTERVAL_MS` (default 30,000). In v1 nothing wakes it early: it only polls.
+- **No lock is held across a send.**
+  - A pass claims due rows with `for update skip locked` in a short transaction. It leases each one by moving its `next_attempt_at` forward, then commits.
+  - It sends outside any transaction, and records the outcome in a second transaction. So a slow SMTP server never holds a pool connection, and a crash mid-send leaves a lease that expires and is retried, which is the at-least-once rule.
+  - Before sending, a pass drops any `pending` delivery whose maintenance window has been deleted.
+- **Retry numbers.**
+  - The first retry waits `NOTIFICATION_RETRY_BASE_SECONDS` (default 60). Each later wait doubles, up to `NOTIFICATION_RETRY_MAX_DELAY_SECONDS` (default 3,600).
+  - After `NOTIFICATION_MAX_ATTEMPTS` (default 8) the delivery is `abandoned`.
+  - With the defaults, the waits are 1, 2, 4, 8, 16, 32 and 60 minutes, so a delivery is abandoned about 2 hours after its first failed attempt.
+- **Email transport.**
+  - SMTP through `nodemailer`, configured by `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and optional `SMTP_USER`, `SMTP_PASSWORD` and `SMTP_SECURE`. Compose points them at `mailpit`.
+  - Emails are plain text only.
+  - Every link in an email starts with `PUBLIC_BASE_URL`, the origin the api is reached at.
+  - The unsubscribe link is signed with `NOTIFICATION_LINK_SECRET` (DOMAIN, Subscriber). The worker builds it for each email. Nothing per subscriber is stored for it, and both the api and the worker need the secret.
+  - Each notification carries a `List-Unsubscribe` header with the subscriber's unsubscribe link, and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058).
+- **The links act on GET.**
+  - Opening the confirmation link confirms, and opening the unsubscribe link unsubscribes. Unsubscribe also accepts the one-click POST.
+  - Both answer in plain text.
+  - A wrong, expired or already-used token gets one uniform plain-text answer.
+  - That a mail scanner may open a link before the person does is accepted for v1.
+- **The subscribe route** is `POST /status/:orgSlug/subscribers` with `{ email }`.
+  - It answers 202 with the same body whatever the address's state (DOMAIN, Subscriber), so it cannot be used to test whether an address is subscribed.
+  - An unknown slug gets the public page's uniform miss.
+  - Besides section 5.4.1's bounds, it has a limit of its own by client IP: `SUBSCRIBE_RATE_LIMIT_MAX` (default 5) per `SUBSCRIBE_RATE_LIMIT_WINDOW_MS` (default one hour).
+  - It applies DOMAIN's per-address throttle.
+  - Its preflight admits `Content-Type`.
+- **The public feed** is Atom only, at `GET /status/:orgSlug/feed.atom`, served by the `notification` module.
+  - It holds the organization's latest 50 notifiable public changes, newest first, with ties settled by id, and each entry's id is a stable `tag:` URI.
+  - It applies the same public-page rule as the page and the emails.
+  - It inherits section 5.4.1's bounds: the rate limit, cache validators (`ETag` and 304) and CORS without credentials.
+  - Its XML is built by hand, with escaping, and needs no new dependency.
+- **One rule for what is public.** The Public status page rule moves from `status-page/domain/public-page.ts` into `src/shared`. The status page, the feed and the notification pass then apply the same code, and none keeps a copy. The `notification` module's reads of `incident_updates` and `maintenance` are listed in the foreign-table allowlist.
+
 ---
 
 ## 6. Multi-tenancy enforcement
@@ -857,6 +898,13 @@ The contract makes two assertions, and runs with the unit suite because it needs
 This was verified against the repository as it stood: the boilerplate's `delete-user` shipped a route and no resolver, and the check reported it on its first run rather than tolerating it.
 
 **One capability is REST-only by design: the public status stream** (`status-page/queries/open-public-status-stream`, `GET /status/:orgSlug/events`, story 4.5). It is Server-Sent Events, which has no SDL form, and the GraphQL equivalent would be a subscription, which is admin-only (section 5.5). So it has a route and no resolver. The parity spec names it, with that reason, in `REST_ONLY_BY_DESIGN`, which the coverage assertion skips. The exemption is held to the slice: an entry that names no discovered slice, or one that has no route or has gained a resolver, fails the spec, and any other capability reachable over one surface still fails coverage. Decided 2026-10-20 (owner).
+
+**The `notification` module's public surface is also REST-only by design** (decided 2026-10-21, owner, Epic 6). That covers subscribe, confirm, unsubscribe and the Atom feed:
+- Confirm and unsubscribe are links in an email, which must answer in plain text over GET (section 5.6).
+- The feed is XML.
+- A public GraphQL mutation would add an anonymous mutation surface that section 5.4.1 does not bound.
+
+Each slice is named in `REST_ONLY_BY_DESIGN` with that reason, under the same rules as the stream. There is no admin GraphQL read of subscribers or deliveries in v1, because no requirement asks for one.
 
 ---
 

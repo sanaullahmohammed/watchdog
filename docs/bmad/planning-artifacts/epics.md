@@ -1,6 +1,6 @@
 ---
 stepsCompleted: [1, 2, 3]
-epicsWithStories: [1, 2, 3, 9, 5, 4]
+epicsWithStories: [1, 2, 3, 9, 5, 4, 6]
 inputDocuments:
   - docs/bmad/planning-artifacts/PRD.md
   - docs/bmad/planning-artifacts/Architecture.md
@@ -180,10 +180,20 @@ Outages are detected rather than noticed. Synthetic checks run on schedule, resu
 
 ### Epic 6: Subscriber notifications
 
-People find out without watching the page: email to confirmed subscribers, RSS/Atom feeds, and a public subscribe flow. This is the first output a human consumes without needing a client.
+People find out without watching the page: email to confirmed subscribers, an Atom feed (Atom only, decided 2026-10-21), and a public subscribe flow. This is the first output a human consumes without needing a client.
 **FRs covered:** FR19, FR20, FR21
 
 - Built from the decisions recorded on 2026-10-06: delivery is derived from durable history into a ledger, at-least-once (ARCHITECTURE section 5.6; DOMAIN, NotificationDelivery). Confirm and unsubscribe links answer in plain text, since v1 is API-only. Story 9.13 must be merged before any story here begins.
+- Stories written 2026-10-21 from the owner's sixteen decisions of that day (`epic-6-open-decisions.md`), recorded first in DOMAIN (Subscriber, NotificationDelivery, NotificationCursor) and ARCHITECTURE (5.6, 7.1):
+  - a subscription covers the whole page;
+  - the subscribe, confirm, unsubscribe and feed surface is REST only;
+  - the feed is Atom only, and emails are plain text over SMTP;
+  - the anonymous form is throttled by IP and by address;
+  - delivery runs from a cursor with an overlap, and no lock is held across a send;
+  - the public rule is shared;
+  - a log scrub comes first.
+
+  Story 9.13 is merged.
 
 ### Epic 7: AI assistance
 
@@ -2589,3 +2599,400 @@ So that the backplane is proven across two processes, not only inside one.
 - The original AC started it with `docker compose --profile app up`, and AGENTS.md was to say that the integration suites need the `app` profile down. As built, AGENTS.md says the stack's own project exempts it from that rule.
 
 See spec 4.9's owner decisions.
+
+## Epic 6: Subscriber notifications
+
+People find out without watching the page. A visitor subscribes by email and confirms, and is then told about every public change: each public incident timeline entry, and each maintenance window being scheduled, starting or completing. Anyone can also follow the page as an Atom feed.
+
+**FRs covered:** FR19, FR20, FR21
+
+Written 2026-10-21 from the following sources:
+- DOMAIN (Subscriber, NotificationDelivery, NotificationCursor, the event catalog);
+- ARCHITECTURE sections 5.4.1, 5.6 and 7.1;
+- ROADMAP's three verification lines;
+- the owner's sixteen decisions of 2026-10-21 (`docs/bmad/planning-artifacts/epic-6-open-decisions.md`).
+
+Those decisions were recorded in DOMAIN and ARCHITECTURE before these stories were written. The ones that shape the stories:
+
+- **A subscription covers the whole public page** of one organization.
+- **REST only.** Subscribe, confirm, unsubscribe and the feed have no GraphQL form. ARCHITECTURE 7.1 records the exemption, and no admin GraphQL read of subscribers exists in v1.
+- **Delivery comes from durable history, not from events.** A per-organization cursor reads `incident_updates.sequence` and maintenance timestamps, and re-reads 5 minutes behind itself. A ledger row is owed per subscriber and change. A dispatch step leases rows, sends outside any transaction, and retries 60 s, doubling to 1 h, for at most 8 attempts.
+- **Plain text everywhere.** Emails are plain text over SMTP (`nodemailer`, Mailpit in Compose). Confirm and unsubscribe links act on GET and answer in plain text, and unsubscribe also takes RFC 8058's one-click POST.
+- **The unsubscribe link is signed, not stored.** It carries the subscriber id and an HMAC keyed by `NOTIFICATION_LINK_SECRET`, so the worker can build it for every email (decision D17, taken while these stories were reviewed).
+- **The anonymous form is bounded.** It allows 5 subscriptions per hour per client IP and one confirmation email per address every 10 minutes, and gives the same 202 whatever the address's state.
+- **Atom only**, with the latest 50 entries.
+- **One rule for what is public**, moved into `src/shared`, so the page, the feed and the emails cannot drift apart.
+
+Ten stories, in order. Each depends only on earlier ones:
+
+- 6.1 stops subscriber addresses reaching the logs before any is stored, as `deferred-work.md` requires.
+- 6.2 sends email; 6.3–6.4 subscribe, confirm and unsubscribe.
+- 6.5 shares the public rule; 6.6–6.7 owe and send the notifications.
+- 6.8 serves the feed; 6.9 prunes; 6.10 proves the whole flow end to end.
+
+The story order refines decision D16 in two places:
+- The SMTP sender comes before subscribe, because subscribing sends the confirmation email.
+- Sharing the public rule is a story of its own, because it touches the `status-page` module and the notification stories touch only `notification` (Constraint 1).
+
+> **Constraint 5, surfaced.** Stories 6.1, 6.5 and 6.9 map to no ROADMAP verification line. 6.1 is the prerequisite `deferred-work.md` records against Epic 6. 6.5 is ARCHITECTURE 5.6's "one rule for what is public". 6.9 is DOMAIN's Retention rule. Each traces to a rule the owner decided, rather than to a line.
+>
+> **Cross-module reads.** The `notification` module reads `organization` (by slug), `incident_updates`, `incidents`, `incident_service_impacts`, `maintenance`, `maintenance_services` and `services`. Each story adds the tables it reads to `foreign-table-allowlist.spec.ts` before it reads them.
+>
+> **The worker.** The notification pass is a third worker loop beside maintenance and monitors (ARCHITECTURE 6.0). A test runs it scoped to its own organizations (`{ orgIds }`), never unscoped (AGENTS.md).
+>
+> **Mailpit in tests.** A test reads Mailpit's HTTP API through a helper in `src/shared/testing/`. It filters by a recipient address unique to the test, because integration files run concurrently and share one Mailpit.
+
+### Story 6.1: Subscriber addresses never reach the logs
+
+As the system,
+I want every value a Postgres error or a wrapped error carries scrubbed from the logs,
+So that a subscriber's address, once stored, cannot leak through an error message.
+
+**Actor:** system — the loggers of the api and the worker
+**Satisfies:** ARCHITECTURE 5.6 ("Subscriber addresses never reach logs"; "Logs are scrubbed first"); `deferred-work.md`, the two "Epic 6 prerequisite" entries from story 9.13 (Postgres error fields; nested, aggregate and `cause` errors)
+**Files:** `src/shared/db/sql-debug.ts` (`LOG_REDACT_PATHS`, `appLoggerOptions`: the `err` and `error` serializers), `src/server/error-logging.ts`, `src/shared/exceptions/exception-base.ts` (`toJSON`'s `cause`), the worker's logger options in `src/worker.ts`
+**Verification layer:** unit (the serializers and redaction), integration (a real unique-key violation logged through the error handler)
+
+**Acceptance Criteria:**
+
+**Given** a Postgres error whose `message`, `detail`, `where`, `hint` or `internal_query` holds a value, such as a unique violation's `Key (email)=(...)`
+**When** it is logged as `err` or `error` by the api or the worker
+**Then** each of those fields is redacted, and the error's code, constraint name and stack still print
+
+**Given** a database error nested inside another error, inside an `AggregateError`, or carried as a `cause`, including `ExceptionBase`'s serialized `cause`
+**When** it is logged
+**Then** the nested error's values are redacted exactly as a top-level one's are
+
+**Given** the event bus's default failure reporter and the seed script, which `deferred-work.md` lists as writing through `console.error`
+**When** they report an error
+**Then** they log through the scrubbed pino logger instead
+
+**Given** the scrub
+**When** each redaction is reverted
+**Then** its test fails, and the spec records that it did (Constraint 11)
+
+**And** both `deferred-work.md` entries are marked resolved by this story
+
+### Story 6.2: Send email through SMTP
+
+As the system,
+I want one email sender that talks SMTP and is configured from `src/config`,
+So that the subscribe flow and the notification pass both send mail the same way, to Mailpit locally.
+
+**Actor:** system — the api (confirmation email) and the worker (notifications)
+**Satisfies:** FR19 verification — "Integration tests verify messages are delivered to Mailpit"; ARCHITECTURE 5.6 (email transport)
+**Files:** `src/modules/notification/domain/email-sender.port.ts`, `src/modules/notification/infrastructure/smtp-email-sender.ts` (`nodemailer`), `src/config/env.ts` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, optional `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_SECURE`, and `PUBLIC_BASE_URL`), `.env.example`, `docker-compose.yml` (`SMTP_FROM` and `PUBLIC_BASE_URL` for `api` and `worker`), `package.json`, `src/shared/testing/mailpit.ts` (read Mailpit's HTTP API by recipient)
+**Verification layer:** unit (the SMTP result is classified as accepted, transient or permanent), integration (a message delivered to Mailpit)
+
+**Acceptance Criteria:**
+
+**Given** the sender configured for Compose's `mailpit`
+**When** it sends a plain-text message
+**Then** Mailpit holds exactly that message for that recipient, with `From` equal to `SMTP_FROM`, and with no HTML part
+
+**Given** the SMTP server's answer
+**When** the sender reports it
+**Then** it says accepted, transient (a network error or a 4xx) or permanent (a 5xx), and its diagnostic never contains the recipient's address
+
+**Given** the new settings
+**When** `.env` omits them
+**Then** the api and the worker still boot: the SMTP settings default to `localhost` on 1025, where Compose publishes Mailpit (inside Compose, `SMTP_HOST` is `mailpit`), and `PUBLIC_BASE_URL` defaults to `BETTER_AUTH_URL`'s origin
+**And** `pnpm run test` passes with `.env` moved aside
+
+### Story 6.3: Subscribe to an organization's status page
+
+As a visitor to a public status page,
+I want to subscribe with my email address,
+So that I am told about the organization's incidents and maintenance without watching the page.
+
+**Actor:** human — an anonymous visitor
+**Satisfies:** FR21 verification — "E2E tests cover subscribe, …"; DOMAIN Subscriber (scope, tokens, subscribing again, throttle); ARCHITECTURE 5.4.1 (the four bounds), 5.6 (the subscribe route), 7.1 (REST-only)
+**Files:**
+- `db/migrations/*_create_subscribers.sql`;
+- `src/modules/notification/commands/create-subscriber/` (`.handler.ts`, `.schema.ts`, `.public.route.ts`);
+- `src/modules/notification/database/subscriber.repository.ts` and `organization-by-slug.repository.ts`, which read `organization` with `src/shared/domain/slug.ts`'s rule and `public-page-miss.ts`'s uniform miss;
+- `src/shared/events/subscriber.events.ts`;
+- `src/config/env.ts` (`SUBSCRIBE_RATE_LIMIT_MAX`, `SUBSCRIBE_RATE_LIMIT_WINDOW_MS`, `SUBSCRIBER_CONFIRMATION_TTL_HOURS`, `SUBSCRIBER_CONFIRMATION_RESEND_SECONDS`);
+- `api-surface-parity.spec.ts` (`REST_ONLY_BY_DESIGN`), `authenticated-surface.spec.ts` (`PUBLIC_BY_DESIGN`), `foreign-table-allowlist.spec.ts` (`organization`).
+
+**Verification layer:** integration (`src/modules/notification/` suites, reading Mailpit)
+
+**Acceptance Criteria:**
+
+**Given** the migration
+**When** it runs
+**Then** `subscribers` matches DOMAIN, Subscriber, including `subscribers_org_email_uk` on `(org_id, lower(email))`, with RLS enabled and `FORCE`d and the standard policy on `org_id`, and `tenant-rls-coverage.integration.test.ts` passes
+
+**Given** `POST /status/:orgSlug/subscribers` with `{ email }` for a new address
+**When** it is accepted
+**Then** it answers 202, and a `pending` subscriber is stored with the address trimmed and lowercased
+**And** its confirmation token is 32 random bytes, of which only the SHA-256 hash is stored, with `confirmation_expires_at` set `SUBSCRIBER_CONFIRMATION_TTL_HOURS` (default 24) ahead and `confirmation_sent_at` set
+**And** a plain-text confirmation email reaches Mailpit, carrying a link under `PUBLIC_BASE_URL` with the confirmation token
+**And** `subscriber.created` is emitted after the commit
+
+**Given** the same request for an address that is `pending`, `confirmed` or `unsubscribed`
+**When** it is accepted
+**Then** the answer is byte-for-byte the same 202 as for a new address
+**And** a `pending` address gets a new token and email
+**And** a `confirmed` address is sent nothing
+**And** an `unsubscribed` address returns to `pending` with a new token and email
+**And** in every state, no confirmation email is sent if one was sent to that address for that organization within `SUBSCRIBER_CONFIRMATION_RESEND_SECONDS` (default 600), so repeating subscribe and unsubscribe cannot mail an address repeatedly
+
+**Given** two first-time requests for the same address at once
+**When** both run
+**Then** both answer the same 202, exactly one subscriber row and one confirmation email result, and no unique-key violation reaches the client or the logs
+**And** the throttle's read and write are serialized by a row lock, which a concurrency test proves (AGENTS.md, "One transaction does not serialize a read-check-write")
+
+**Given** an unknown or malformed slug, or an invalid or over-long address
+**When** it is posted
+**Then** the unknown slug gets the public page's uniform miss, and the bad address a 400 that does not echo the address
+
+**Given** one client IP
+**When** it posts more than `SUBSCRIBE_RATE_LIMIT_MAX` times in a window
+**Then** the next is refused with a 429 carrying the public headers and `Retry-After`
+**And** the route answers its CORS preflight admitting `Content-Type`, without credentials
+
+**Given** the confirmation email fails to send
+**When** the request completes
+**Then** the answer is still 202, and the failure is logged without the address
+
+**Given** the contract specs
+**When** they run
+**Then** the slice is in `REST_ONLY_BY_DESIGN` and the operation in `PUBLIC_BY_DESIGN`, each with its reason
+
+### Story 6.4: Confirm and unsubscribe through the emailed links
+
+As a subscriber,
+I want the links in my emails to confirm my subscription and to end it,
+So that I receive notifications only after I have confirmed, and stop with one click.
+
+**Actor:** human — a subscriber, through a link in an email
+**Satisfies:** FR21 verification — "E2E tests cover … confirmation, unsubscribe …"; DOMAIN Subscriber (tokens); ARCHITECTURE 5.6 (links act on GET, plain text, one-click POST)
+**Files:** `src/modules/notification/commands/confirm-subscriber/` and `unsubscribe/` (a cohesive pair over `subscribers`: one repository, one route pattern, no migration), each with `.handler.ts`, `.schema.ts` and `.public.route.ts`. The routes are:
+- `GET /status/:orgSlug/subscribers/confirm?token=…`
+- `GET` and `POST /status/:orgSlug/subscribers/unsubscribe?subscriber=…&signature=…`
+
+The slug names the organization, so each lookup runs inside that organization's tenant transaction. The story also adds `src/modules/notification/domain/unsubscribe-link.ts` (sign and verify, an HMAC-SHA256 over the org id and subscriber id) and `NOTIFICATION_LINK_SECRET` in `src/config/env.ts`, which must keep `pnpm run test` green with `.env` moved aside. Also `src/shared/events/subscriber.events.ts`, `api-surface-parity.spec.ts` (`REST_ONLY_BY_DESIGN`), and `authenticated-surface.spec.ts` (`PUBLIC_BY_DESIGN`, one entry per method and path)
+**Verification layer:** integration
+
+**Acceptance Criteria:**
+
+**Given** a `pending` subscriber's unexpired confirmation token
+**When** its link is opened with GET
+**Then** the subscriber is `confirmed` with `confirmed_at` set, the confirmation token hash is cleared, the answer is plain text, and `subscriber.confirmed` is emitted after the commit
+
+**Given** a subscriber's signed unsubscribe link
+**When** it is opened with GET, or posted to with `List-Unsubscribe=One-Click`
+**Then** the subscriber is `unsubscribed`, the answer is plain text, and `subscriber.unsubscribed` is emitted
+**And** using the link again gives the same plain-text answer and emits nothing, since the link never expires
+
+**Given** a confirmation token that is unknown, expired (past `confirmation_expires_at`) or already used; an unsubscribe link with a wrong signature, or for a subscriber that no longer exists; or a link for another organization's subscriber used under this organization's slug
+**When** the link is used
+**Then** the answer is one uniform plain-text answer that does not say which, and nothing changes
+
+**Given** either route
+**When** the contract specs run
+**Then** both are REST-only and public by design
+**And** no log line carries a token or signature, including the request line Fastify logs with the URL, whose query string is redacted
+
+**Given** the signature check
+**When** it is replaced with one that accepts any signature
+**Then** the wrong-signature test fails, and the spec records that it did (Constraint 11)
+
+### Story 6.5: One rule for what is public
+
+As the system,
+I want the Public status page rule to live in one shared place,
+So that the page, the feed and the notification emails decide what is public the same way.
+
+**Actor:** system — every reader of public content
+**Satisfies:** ARCHITECTURE 5.6 ("One rule for what is public"); DOMAIN Public status page
+**Files:** `src/modules/status-page/domain/public-page.ts` moves to `src/shared/domain/public-page.ts`, with its spec; the status-page handlers and presenters import it from there
+**Verification layer:** unit (the moved spec), integration (every public-page suite, unchanged)
+
+**Acceptance Criteria:**
+
+**Given** the move
+**When** the suites run
+**Then** every public-page, public-stream and e2e test passes unchanged, and `publishable` and `overallStatus` have no copy left in `src/modules`
+
+**Given** a later reader in another module
+**When** it imports the rule
+**Then** it imports `src/shared/domain/public-page.ts`, and `dependency-cruiser` passes
+
+### Story 6.6: Work out who is owed each public change
+
+As the worker,
+I want to read each organization's public changes since its cursor, and record one owed email per confirmed subscriber and change,
+So that every confirmed subscriber is owed each public change exactly once, whatever the pass repeats.
+
+**Actor:** system — the worker's notification pass
+**Satisfies:** FR19 — "notification emails are generated for subscribed users"; DOMAIN NotificationDelivery (what notifies, who is told) and NotificationCursor; ARCHITECTURE 5.6 (cursor with overlap), 6.0 (per-organization loop)
+**Files:**
+- `db/migrations/*_create_notification_deliveries.sql` (both `notification_deliveries` and `notification_cursors`);
+- `src/modules/notification/commands/queue-email-notifications/`;
+- `src/modules/notification/database/` (ledger, cursor and history repositories);
+- `src/modules/notification/commands/unsubscribe/` (stops pending deliveries);
+- `src/worker.ts` (the notification loop, `NOTIFICATION_PASS_INTERVAL_MS`);
+- `src/config/env.ts` (`NOTIFICATION_PASS_INTERVAL_MS`, default 30,000; `NOTIFICATION_CURSOR_OVERLAP_SECONDS`, default 300);
+- `foreign-table-allowlist.spec.ts`;
+- `src/shared/events/notification.events.ts`.
+
+**Verification layer:** integration (scoped passes)
+
+**Acceptance Criteria:**
+
+**Given** the migration
+**When** it runs
+**Then** both tables match DOMAIN, including `notification_deliveries_once_uk` and the tenant-aware subscriber FK, each with RLS enabled and `FORCE`d and the standard policy
+
+**Given** confirmed subscribers and a public incident timeline entry, or a maintenance window created, started or completed
+**When** the pass runs for the organization
+**Then** each subscriber confirmed before the change was recorded, and still confirmed, is owed one `pending` delivery per change
+**And** `notification.email_queued` is emitted once per delivery
+
+**Given** a draft-era entry, an incident or window naming only services the page omits, a window edited or deleted, or a subscriber pending, unsubscribed or confirmed after the change
+**When** the pass runs
+**Then** nothing is owed for it
+
+**Given** an entry committed out of `sequence` order inside the overlap, and a pass run twice over the same history
+**When** the passes run
+**Then** the late entry is owed, and the repeat inserts nothing new
+
+**Given** a subscriber who unsubscribes
+**When** the unsubscribe commits
+**Then** each of their `pending` deliveries is removed, so none is sent
+
+**Given** an unsubscribe committing while the pass is owing a change to that subscriber
+**When** both run
+**Then** no `pending` delivery is left for them: the pass holds the subscriber row `for share` from its `confirmed` check to its insert, and the unsubscribe takes the row for update, which a concurrency test proves
+
+**Given** the overlap
+**When** the cursor's overlap read is removed
+**Then** the out-of-order test fails, and the spec records that it did (Constraint 11)
+
+### Story 6.7: Send owed emails, with retries
+
+As the worker,
+I want to send each owed email and record what the SMTP server answered,
+So that a subscriber receives each notification at least once, and a failing server is retried and then given up on.
+
+**Actor:** system — the worker's notification pass
+**Satisfies:** FR19 verification — "Integration tests verify messages are delivered to Mailpit"; ARCHITECTURE 5.6 (no lock across a send, at-least-once, retries, `List-Unsubscribe`)
+**Files:** `src/modules/notification/commands/send-queued-email/`, the ledger repository, `src/worker.ts` (dispatch after queueing in the notification loop; waits for sends in flight on shutdown), `src/config/env.ts` (`NOTIFICATION_RETRY_BASE_SECONDS`, `NOTIFICATION_RETRY_MAX_DELAY_SECONDS`, `NOTIFICATION_MAX_ATTEMPTS`), `foreign-table-allowlist.spec.ts`
+**Verification layer:** unit (the backoff schedule), integration (Mailpit, and a stub sender for failures)
+
+**Acceptance Criteria:**
+
+**Given** a due `pending` delivery
+**When** the pass dispatches it
+**Then** it is claimed with `for update skip locked` in a short transaction that counts the attempt (`attempts + 1`) and leases the row by moving `next_attempt_at` forward by the delay that attempt would wait if it failed
+**And** it is sent with no transaction open, and recorded `sent` with `sent_at` in a second transaction
+**And** the sender's SMTP timeouts are shorter than `NOTIFICATION_RETRY_BASE_SECONDS`, so no lease expires during a send that is still running
+**And** Mailpit holds a plain-text email naming the organization and the change, with a link to the public page
+**And** the email has `List-Unsubscribe` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers, carrying the subscriber's signed unsubscribe link built by story 6.4's `unsubscribe-link.ts`, and the same link in its body
+**And** `notification.email_sent` is emitted
+
+**Given** a transient failure
+**When** it is retried
+**Then** the waits are 60 s doubling to at most 3,600 s, and after `NOTIFICATION_MAX_ATTEMPTS` the delivery is `abandoned` and `notification.email_failed` is emitted
+
+**Given** a permanent failure
+**When** it is recorded
+**Then** the delivery is `failed` at once, `notification.email_failed` is emitted, and `last_error` never contains the address
+
+**Given** two passes at once, or a lease left by a crash
+**When** they dispatch
+**Then** no delivery is sent by both, and an expired lease is sent again
+
+**Given** a `pending` delivery whose maintenance window has been deleted, or whose subscriber is no longer `confirmed`
+**When** the pass reaches it
+**Then** it is dropped, not sent
+
+### Story 6.8: Follow a status page as an Atom feed
+
+As someone following an organization's status,
+I want an Atom feed of its incident and maintenance lifecycle,
+So that my feed reader shows each public change in order.
+
+**Actor:** human — an anonymous feed reader
+**Satisfies:** FR20 verification — "Feed tests validate XML shape and event ordering for incident updates and maintenance created/started/completed events"; ARCHITECTURE 5.4.1 (bounds), 5.6 (the feed), 7.1 (REST-only)
+**Files:** `src/modules/notification/queries/get-atom-feed/` (`.handler.ts`, `.public.route.ts`), a hand-built XML writer with escaping, `foreign-table-allowlist.spec.ts`, `api-surface-parity.spec.ts`, `authenticated-surface.spec.ts`
+**Verification layer:** integration (XML shape and ordering)
+
+**Acceptance Criteria:**
+
+**Given** an organization with public incident timeline entries and maintenance windows created, started and completed
+**When** `GET /status/:orgSlug/feed.atom` is requested
+**Then** it answers `application/atom+xml` with a valid Atom document (`feed` with `id`, `title` and `updated`, and each `entry` with a stable `tag:` id, `title`, `updated` and `content`), holding the latest 50 changes, newest first, ties settled by id
+
+**Given** a window that was created, started and completed
+**When** the feed is built
+**Then** it holds three entries for it, one for each, ordered by when each happened
+
+**Given** more than 50 notifiable changes
+**When** the feed is built
+**Then** it holds only the newest 50
+
+**Given** a draft-era entry, an incident or window naming only services the page omits, or any text with XML special characters
+**When** the feed is built
+**Then** the hidden items are absent and the text is escaped
+
+**Given** the feed
+**When** it is requested again with a matching `If-None-Match`, from another origin, or beyond the rate limit
+**Then** it inherits the page's bounds: 304, CORS without credentials, and a 429 carrying the public headers
+**And** an unknown slug gets the page's uniform miss
+
+### Story 6.9: Prune old deliveries and subscribers
+
+As the worker,
+I want final deliveries, unsubscribed subscribers and never-confirmed subscribers removed on schedule,
+So that the ledger and the anonymous form cannot grow without bound.
+
+**Actor:** system — the worker's notification pass
+**Satisfies:** DOMAIN NotificationDelivery Retention and Subscriber ("Never confirmed")
+**Files:** `src/modules/notification/commands/prune-notifications/`, `src/worker.ts`, `src/config/env.ts` (`NOTIFICATION_RETENTION_DAYS`, `SUBSCRIBER_PENDING_GRACE_DAYS`)
+**Verification layer:** integration (scoped passes)
+
+**Acceptance Criteria:**
+
+**Given** deliveries `sent`, `failed` or `abandoned` whose `created_at` is older than `NOTIFICATION_RETENTION_DAYS`
+**When** the pass prunes
+**Then** they are deleted, and `pending` deliveries and newer ones are not
+
+**Given** a subscriber `unsubscribed` whose `updated_at`, set when they unsubscribed, is older than the same period
+**When** the pass prunes
+**Then** the subscriber and their remaining deliveries are deleted
+
+**Given** a `pending` subscriber whose confirmation token expired more than `SUBSCRIBER_PENDING_GRACE_DAYS` ago
+**When** the pass prunes
+**Then** it is deleted, and a `confirmed` subscriber never is
+
+### Story 6.10: Prove subscribe to unsubscribe end to end
+
+As a visitor,
+I want the whole flow, from subscribing to unsubscribing, to work as one,
+So that the parts proven separately are proven together.
+
+**Actor:** human — a visitor; the worker's pass runs scoped, as the system
+**Satisfies:** FR21 verification — "E2E tests cover subscribe, confirmation, unsubscribe, and notification dispatch"; FR19 verification (delivery to Mailpit)
+**Files:** `tests/notification/subscriber-flow.feature`, `.steps.ts`, `tests/support/` (Mailpit through `src/shared/testing/mailpit.ts`)
+**Verification layer:** E2E (Cucumber)
+
+**Acceptance Criteria:**
+
+**Given** a visitor who subscribes to a public page
+**When** they open the confirmation link from the email Mailpit received
+**Then** they are confirmed
+
+**Given** that subscriber
+**When** an operator posts a public incident update and the notification pass runs for the organization
+**Then** Mailpit receives one notification for them, with a working unsubscribe link
+
+**Given** that subscriber
+**When** they unsubscribe through the link and another update is posted and the pass runs
+**Then** Mailpit receives nothing more for them
+
+**Given** a subscriber who never confirms
+**When** an update is posted and the pass runs
+**Then** they are sent nothing

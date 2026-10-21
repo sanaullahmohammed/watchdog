@@ -427,8 +427,9 @@ Public email subscriber for an organization's status updates.
 | `org_id` | `text` | FK -> Better Auth `organization.id` |
 | `email` | `text` | Required; normalized with trim + lowercase at write time |
 | `status` | `text` | CHECK: `pending`, `confirmed`, `unsubscribed` |
-| `confirmation_token_hash` | `text null` | For email confirmation flow |
-| `unsubscribe_token_hash` | `text` | For unsubscribe flow |
+| `confirmation_token_hash` | `text null` | For email confirmation flow. Cleared on confirmation |
+| `confirmation_expires_at` | `timestamptz null` | When the confirmation token stops working. Set with each new token |
+| `confirmation_sent_at` | `timestamptz null` | When the last confirmation email was queued. The per-address throttle reads it |
 | `confirmed_at` | `timestamptz null` | Set after confirmation |
 | `created_at` | `timestamptz` | Required |
 | `updated_at` | `timestamptz` | Required |
@@ -447,6 +448,23 @@ on subscribers (org_id, lower(email));
 ```
 
 The same email address may subscribe to different organizations. The functional index enforces tenant-scoped uniqueness; write-time normalization keeps stored data clean so raw casing does not drift into notification sends.
+
+**Decided 2026-10-21 (owner), Epic 6:**
+
+- **Scope.** A subscription covers the organization's whole public status page. There is no per-service or per-group subscription in v1.
+- **The confirmation token** is 32 random bytes. Only its SHA-256 hash is stored, because the token is high-entropy and needs no slow hash. It works for `SUBSCRIBER_CONFIRMATION_TTL_HOURS` (default 24).
+- **The unsubscribe link is signed, not stored.**
+  - It carries the subscriber's id and an HMAC-SHA256 over the organization id and that subscriber id, keyed by `NOTIFICATION_LINK_SECRET`, and it is verified with a constant-time comparison. The worker can therefore build it for every email.
+  - It never expires, and nothing usable is kept in the database.
+  - Changing the secret breaks the links in emails already sent.
+  - A link for a subscriber who no longer exists gets the uniform answer.
+  - The decision replaces the `unsubscribe_token_hash` column, which only the hash of a token the worker could never rebuild would have filled (decided 2026-10-21, owner).
+- **Subscribing again.** The answer is the same whatever the address's state, so the form cannot tell anyone whether an address is subscribed.
+  - A `pending` address gets a new confirmation token, within the throttle.
+  - A `confirmed` address is sent nothing.
+  - An `unsubscribed` address returns to `pending` and must confirm again.
+- **Throttle.** At most one confirmation email per address per organization every `SUBSCRIBER_CONFIRMATION_RESEND_SECONDS` (default 600), read from `confirmation_sent_at`. It is stored on the row, not held in memory, so it holds across processes and restarts.
+- **Never confirmed.** A `pending` subscriber is deleted `SUBSCRIBER_PENDING_GRACE_DAYS` (default 7) after its confirmation token expires, so the anonymous form cannot fill the table.
 
 ---
 
@@ -480,10 +498,32 @@ The unique key is what makes delivery at-least-once without being careless: a pa
 **What notifies.**
 - Every public timeline entry: the declaration, each public lifecycle transition, each posted update, and the resolution.
 - A maintenance window being scheduled, starting, and completing. Editing a window and deleting one notify no one in v1.
+  - The three maintenance sources are read from the window's own `created_at`, `started_at` and `completed_at`.
+  - A `pending` delivery whose window has since been deleted is dropped, not sent (decided 2026-10-21, owner).
 
 **Who is told.** A subscriber is owed a change when they were `confirmed` before it was recorded, and are still `confirmed` when the delivery is created. The Public status page rule applies at the moment a delivery is created: a draft-era entry is never sent, and neither is anything about an incident or window the page would leave off. An unsubscribe stops every `pending` delivery for that subscriber.
 
-**Retention.** Deliveries in a final status (`sent`, `failed`, `abandoned`) are pruned after `NOTIFICATION_RETENTION_DAYS`, default 90. An unsubscribed subscriber is deleted after the same period, along with their remaining deliveries.
+**Retention.** Deliveries in a final status (`sent`, `failed`, `abandoned`) are pruned after `NOTIFICATION_RETENTION_DAYS`, default 90. An unsubscribed subscriber is deleted after the same period, along with their remaining deliveries. A subscriber that never confirmed is deleted earlier, as Subscriber says.
+
+**Events.** Emitted as the catalog lists them (decided 2026-10-21, owner):
+- `subscriber.*`, by the subscriber commands.
+- `notification.email_queued`, `notification.email_sent` and `notification.email_failed`, once per delivery, by the worker's notification pass.
+
+All six are admin-only and not bridged, so none of them reaches `NOTIFY` or a client.
+
+### NotificationCursor
+
+How far the notification pass has read each organization's durable history. One row per organization. Decided 2026-10-21 (owner), Epic 6. ARCHITECTURE section 5.6 owns how the pass uses it.
+
+| Field | Type | Constraints / Notes |
+|---|---:|---|
+| `org_id` | `text` | PK; FK -> Better Auth `organization.id` |
+| `incident_update_sequence` | `bigint` | The highest `incident_updates.sequence` read; 0 before the first pass |
+| `maintenance_read_at` | `timestamptz null` | The latest maintenance timestamp (`created_at`, `started_at` or `completed_at`) read |
+| `read_at` | `timestamptz null` | When the last pass read; the overlap is measured back from it |
+| `updated_at` | `timestamptz` | Required |
+
+Tenant scoping: carries `org_id`; RLS enabled, forced, with the standard policy.
 
 ---
 
@@ -638,7 +678,8 @@ erDiagram
     text email
     text status
     text confirmation_token_hash
-    text unsubscribe_token_hash
+    timestamptz confirmation_expires_at
+    timestamptz confirmation_sent_at
     timestamptz confirmed_at
     timestamptz created_at
     timestamptz updated_at
@@ -656,6 +697,14 @@ erDiagram
     text last_error
     timestamptz created_at
     timestamptz sent_at
+  }
+
+  NOTIFICATION_CURSOR {
+    text org_id PK
+    bigint incident_update_sequence
+    timestamptz maintenance_read_at
+    timestamptz read_at
+    timestamptz updated_at
   }
 
   AUTH_ORGANIZATION ||--o{ SERVICE_GROUP : owns
@@ -682,6 +731,7 @@ erDiagram
 
   AUTH_ORGANIZATION ||--o{ SUBSCRIBER : has
   SUBSCRIBER ||--o{ NOTIFICATION_DELIVERY : owed
+  AUTH_ORGANIZATION ||--o| NOTIFICATION_CURSOR : tracked_by
 ```
 
 Better Auth team and membership relationships are intentionally omitted from the WatchDog ERD because their table shapes are owned by the Better Auth organization plugin.
@@ -710,6 +760,7 @@ Tenant-scoped WatchDog tables:
 - `monitor_ssl_warnings`
 - `subscribers`
 - `notification_deliveries`
+- `notification_cursors`
 
 Better-Auth-owned tables:
 
