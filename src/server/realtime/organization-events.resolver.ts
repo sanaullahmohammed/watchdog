@@ -1,11 +1,16 @@
 import { randomUUID } from 'node:crypto';
+import type { IncomingHttpHeaders } from 'node:http';
+import type { FastifyBaseLogger } from 'fastify';
 import { ErrorWithProps, type MercuriusContext } from 'mercurius';
+import env from '@/config/env';
 import {
   type OrganizationContext,
   resolveOrganizationContext,
+  stillHasAccess,
   UnknownOrganizationRoleError,
 } from '@/server/auth/organization-context';
 import { logFailure } from '@/server/error-logging';
+import { recheckLookupDeadlineMs } from '@/server/realtime/access-recheck';
 import {
   adminSignals,
   type OrganizationEvent,
@@ -37,6 +42,19 @@ import {
  * treating its session as invalid; or `TOO_MANY_SUBSCRIPTIONS`, which leaves
  * the socket and its live subscriptions open.
  *
+ * Access is re-checked, not only resolved at open (story 4.8). Once a socket
+ * has its first accepted subscription, it re-checks every
+ * `ADMIN_SUBSCRIPTION_RECHECK_SECONDS` for as long as it lives, idle or not:
+ * the upgrade's session must still be live and still the admitted user's,
+ * and that user still a member, on the ladder, of the organization the socket
+ * was admitted for, whatever the session's active organization now is. Lost
+ * access closes the socket with 4401, ending every subscription on it and the
+ * cached admission with it; a lookup that fails or does not settle in time
+ * closes it with 4500. The bound is one interval plus the next re-check's
+ * lookup, which is cut off at min(interval, 10 s), and events published before
+ * the close may still arrive. The re-check never refreshes the session, so a
+ * long-lived socket cannot keep its own session alive.
+ *
  * Registered explicitly by `src/server/index.ts`, since the resolver
  * autoloader reads only `src/modules`.
  */
@@ -60,7 +78,7 @@ type SubscriptionSocket = NonNullable<MercuriusContext['socket']>;
 
 /** Who is subscribing on a socket, decided once. */
 type Admission =
-  | { kind: 'admitted'; orgId: string }
+  | { kind: 'admitted'; orgId: string; userId: string }
   | { kind: 'refused'; error: ErrorWithProps; closeCode: number };
 
 /** One socket's subscriptions, as this resolver knows them. */
@@ -70,6 +88,8 @@ type SocketState = {
   live: Map<string, object>;
   /** The subscriptions accepted and not yet ended. */
   accepted: Set<object>;
+  /** Set once the socket's access re-check has started. */
+  rechecking?: true;
 };
 
 type Done = IteratorResult<OrganizationEvent, undefined>;
@@ -93,7 +113,9 @@ async function admit(
   const log = logOf(ctx);
   try {
     const context = await lookup;
-    if (context) return { kind: 'admitted', orgId: context.orgId };
+    if (context) {
+      return { kind: 'admitted', orgId: context.orgId, userId: context.userId };
+    }
     const error = unauthenticated();
     logFailure(log, error, 401, randomUUID());
     return { kind: 'refused', error, closeCode: UNAUTHORIZED_CLOSE_CODE };
@@ -152,6 +174,98 @@ function refusal(
     },
   };
   return iterator;
+}
+
+/** `promise`, or a rejection once `ms` has passed. */
+async function within<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`The access re-check did not settle in ${ms}ms`)),
+      ms,
+    );
+    timer.unref();
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Re-checks the socket's access every `ADMIN_SUBSCRIPTION_RECHECK_SECONDS`
+ * until it closes. Each re-check is scheduled when the previous one has
+ * finished, so two never overlap, and reads the interval then, never once.
+ * A socket that is closing or closed, by the client or by `app.close()`, is
+ * never logged, closed or rescheduled, whatever its lookup answers.
+ */
+function recheckAccess(
+  socket: SubscriptionSocket,
+  headers: Readonly<IncomingHttpHeaders>,
+  admitted: { userId: string; orgId: string },
+  upgradeLog: FastifyBaseLogger,
+) {
+  // Every line names whose access was re-checked.
+  const log = upgradeLog.child({
+    userId: admitted.userId,
+    orgId: admitted.orgId,
+  });
+  let timer: NodeJS.Timeout | undefined;
+  let stopped = false;
+
+  const isOpen = () => !stopped && socket.readyState === WS_OPEN;
+
+  const recheck = async () => {
+    const intervalMs = env.realtime.adminSubscriptionRecheckSeconds * 1_000;
+    try {
+      const allowed = await within(
+        stillHasAccess(headers, admitted),
+        recheckLookupDeadlineMs(intervalMs),
+      );
+      if (!isOpen()) return;
+      if (allowed) {
+        schedule();
+        return;
+      }
+      logFailure(log, new Error('Subscription access lost'), 401, randomUUID());
+      socket.close(UNAUTHORIZED_CLOSE_CODE, 'Unauthorized');
+    } catch (error) {
+      if (!isOpen()) return;
+      logFailure(
+        log,
+        error instanceof Error ? error : new Error(String(error)),
+        500,
+        randomUUID(),
+      );
+      // Fails closed: the client reconnects and is admitted afresh.
+      socket.close(INTERNAL_ERROR_CLOSE_CODE, 'Internal error');
+    }
+  };
+
+  function schedule() {
+    if (stopped) return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      // `recheck` handles its own failures; this catches only a throw from
+      // its logging or close. The socket is cut off rather than left open
+      // with no re-check scheduled.
+      recheck().catch(() => {
+        try {
+          socket.terminate();
+        } catch {
+          // Nothing more can be done.
+        }
+      });
+    }, env.realtime.adminSubscriptionRecheckSeconds * 1_000);
+    timer.unref();
+  }
+
+  socket.once('close', () => {
+    stopped = true;
+    clearTimeout(timer);
+  });
+  schedule();
 }
 
 /** An iterator that has already ended. */
@@ -275,6 +389,15 @@ export default async function organizationEventsResolver(
 
           state.accepted.add(subscription);
           ctx.clearSubscriptionDeadline?.();
+          if (socket && !state.rechecking) {
+            state.rechecking = true;
+            recheckAccess(
+              socket,
+              ctx.upgradeHeaders ?? {},
+              { userId: admission.userId, orgId: admission.orgId },
+              logOf(ctx),
+            );
+          }
           return untilEnded(
             adminSignals(ctx.app.realtimeHub, admission.orgId),
             untrack,

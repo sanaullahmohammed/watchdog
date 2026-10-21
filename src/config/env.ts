@@ -3,6 +3,7 @@ import { type Static, Type } from 'typebox';
 import { parseAllowedCidrs } from './allowed-cidrs';
 import { authEnvProperties } from './auth-env';
 import { checkResultsEnvProperties } from './check-results-env';
+import { realtimeEnvProperties } from './realtime-env';
 import { assertWorkerIntervals } from './worker-intervals';
 
 enum NodeEnv {
@@ -30,6 +31,7 @@ const schema = Type.Object({
   // See ARCHITECTURE.md 6.1.
   ...authEnvProperties,
   ...checkResultsEnvProperties,
+  ...realtimeEnvProperties,
   LOG_LEVEL: Type.Enum(LogLevel),
   NODE_ENV: Type.Enum(NodeEnv),
   HOST: Type.String({ default: 'localhost' }),
@@ -139,6 +141,9 @@ export default {
       maxLifetimeSeconds: env.PUBLIC_STREAM_MAX_LIFETIME_SECONDS,
       heartbeatSeconds: env.PUBLIC_STREAM_HEARTBEAT_SECONDS,
     },
+  },
+  realtime: {
+    adminSubscriptionRecheckSeconds: env.ADMIN_SUBSCRIPTION_RECHECK_SECONDS,
   },
   monitor: {
     allowedCidrs: monitorAllowedCidrs,

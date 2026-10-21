@@ -287,4 +287,15 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-7-subscribe-to-organization-events-over-graphql.md`
   summary: Story 4.8's access re-check must also reset a socket's cached admission (`state.admission` in `organization-events.resolver.ts`), not only close live subscriptions. Otherwise a later subscribe on the same socket is admitted from the first lookup after the session or membership is gone.
   evidence: Story 4.7 Review Triage Log #30. The admission is resolved once per socket and kept for its lifetime.
-  target: Epic 4, story 4.8.
+  target: Epic 4, story 4.8. RESOLVED by story 4.8 (2026-10-21): once a socket has an accepted subscription it re-checks its access every `ADMIN_SUBSCRIPTION_RECHECK_SECONDS`, idle or not, and closes on loss (4401) or a failed lookup (4500). The cached admission ends with the socket, so it never outlives access by more than one interval plus the next re-check's lookup, which is cut off at min(interval, 10 s).
+
+## From Story 4.8 (2026-10-21)
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-8-close-a-subscription-when-access-is-lost.md`
+  summary: Admin sockets accepted together re-check their access in lockstep, and any transient slow or failed lookup closes all of them with 4500 at once, so they reconnect together. The lookup deadline also shrinks with the interval (`min(interval, 10 s)`), so a 1 s interval gives the database a 1 s budget.
+  evidence: Story 4.8 Review Triage Log #9. There is no jitter and no retry before a fail-closed close. Choosing jitter, a fixed lookup budget or a retry is a policy the story's frozen rules do not settle.
+  target: Epic 8 (default).
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-8-close-a-subscription-when-access-is-lost.md`
+  summary: ARCHITECTURE 5.5 says the session, active organization and membership are re-checked. Story 4.8's AC instead keeps the organization a subscription was admitted for when the operator switches their active one, and re-checks membership of that organization.
+  evidence: Story 4.8 Review Triage Log #10, `docs/genesis/ARCHITECTURE.md:450`. The AC owns the behaviour, and editing `docs/genesis` needs the owner.
+  target: Next ARCHITECTURE reconciliation (owner).
