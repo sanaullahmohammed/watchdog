@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-21-2026 08:02
+last_updated: 10-21-2026 10:14
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -77,8 +77,8 @@ development_status:
   4-5-open-a-public-status-stream: done
   4-6-push-the-public-page-when-it-changes: done
   4-7-subscribe-to-organization-events-over-graphql: done
-  4-8-close-a-subscription-when-access-is-lost: review
-  4-9-prove-worker-events-reach-api-clients-under-compose: backlog
+  4-8-close-a-subscription-when-access-is-lost: done
+  4-9-prove-worker-events-reach-api-clients-under-compose: review
   epic-4-retrospective: optional
 
   epic-5: done
