@@ -12,6 +12,7 @@ import {
   type OpenPublicStatusEventStreamQueryResult,
   openPublicStatusEventStreamQuery,
 } from './open-public-status-stream.handler';
+import { createPagePush, type JoinedMember } from './public-page-push';
 import {
   createStreamAdmission,
   type ReleaseStreamPlace,
@@ -25,7 +26,12 @@ import {
  * It opens with the page `GET /status/:orgSlug` answers, as one unnamed event
  * whose `id` is that page's `ETag`, then holds the organization's public hub
  * subscription and writes a heartbeat comment whenever it has been quiet for
- * an interval. Pushing a new page when it changes is story 4.6.
+ * an interval. When a whitelisted event or a `resync` arrives, the page is
+ * composed again (story 4.6, `public-page-push.ts`) and written, in the same
+ * frame as the first, to each stream whose last page has a different ETag. The
+ * page is the gate: drafts, hidden services and admin-only events change
+ * nothing a client sees. A stream whose socket has not drained is sent nothing,
+ * no page and no heartbeat, and on `drain` gets the newest page if it differs.
  *
  * Bounded like the page and more: openings are rationed by IP; open streams
  * are capped per IP and per process; each ends after its lifetime; and closing
@@ -42,6 +48,10 @@ import {
 const SSE_CONTENT_TYPE = 'text/event-stream; charset=utf-8';
 const HEARTBEAT = ': heartbeat\n\n';
 
+/** The ETag verbatim, quotes included, as the event's id; unnamed for onmessage. */
+const pageFrame = (etag: string, page: unknown) =>
+  `id: ${etag}\ndata: ${JSON.stringify(page)}\n\n`;
+
 export default async function openPublicStatusStream(
   fastify: FastifyRouteInstance,
 ) {
@@ -50,6 +60,24 @@ export default async function openPublicStatusStream(
     maxPerIp: env.publicSurface.stream.maxPerIp,
     maxTotal: env.publicSurface.stream.maxTotal,
   });
+  const push = createPagePush({
+    log: fastify.log,
+    compose: async (slug) => {
+      const view =
+        await fastify.queryBus.execute<OpenPublicStatusEventStreamQueryResult>(
+          openPublicStatusEventStreamQuery({ slug }),
+        );
+      const page = toPublicStatusPage(view);
+      const etag = publicPageETag(page);
+      return {
+        etag,
+        frame: pageFrame(etag, page),
+        orgId: view.organization.id,
+      };
+    },
+  });
+  // A composition in flight at close must not outlive the pool.
+  fastify.addHook('onClose', () => push.close());
   const heartbeatMs = env.publicSurface.stream.heartbeatSeconds * 1000;
   const lifetimeMs = env.publicSurface.stream.maxLifetimeSeconds * 1000;
 
@@ -109,6 +137,7 @@ export default async function openPublicStatusStream(
       let done = false;
       let hijacked = false;
       let unsubscribe: (() => void) | undefined;
+      let member: JoinedMember | undefined;
       let heartbeat: NodeJS.Timeout | undefined;
       let lifetime: NodeJS.Timeout | undefined;
 
@@ -119,6 +148,7 @@ export default async function openPublicStatusStream(
         done = true;
         release();
         unsubscribe?.();
+        member?.leave();
         clearTimeout(heartbeat);
         clearTimeout(lifetime);
         // Before the hijack the error handler still owns the reply.
@@ -130,16 +160,21 @@ export default async function openPublicStatusStream(
       const armHeartbeat = () => {
         clearTimeout(heartbeat);
         if (done) return;
-        heartbeat = setTimeout(() => send(HEARTBEAT), heartbeatMs);
+        heartbeat = setTimeout(() => {
+          // Re-armed on `drain`: nothing is written to a socket that is full.
+          if (raw.writableNeedDrain) return;
+          send(HEARTBEAT);
+        }, heartbeatMs);
         heartbeat.unref();
       };
 
       // Every write after the first event goes through here, so the heartbeat
       // is written only after an interval with nothing else.
       const send = (chunk: string) => {
-        if (done) return;
-        raw.write(chunk);
+        if (done) return true;
+        const ok = raw.write(chunk);
         armHeartbeat();
+        return ok;
       };
 
       try {
@@ -158,24 +193,37 @@ export default async function openPublicStatusStream(
 
         // 5. The current page, unnamed so `EventSource.onmessage` gets it,
         // with its ETag verbatim, quotes included, as the event's id.
-        raw.write(`id: ${etag}\ndata: ${JSON.stringify(page)}\n\n`);
+        raw.write(pageFrame(etag, page));
 
         // 6. Read at request time. On a hub already closed, `closed` arrives
         // before this returns, so cleanup has run and the stream is done.
-        const off = fastify.realtimeHub.subscribePublic(
-          view.organization.id,
-          (signal) => {
-            if (signal.kind === 'closed') cleanup();
-          },
-        );
-        if (done) off();
-        else unsubscribe = off;
+        // Steps 5 to 6 and the join run in one tick, so no event falls between.
+        const orgId = view.organization.id;
+        const off = fastify.realtimeHub.subscribePublic(orgId, (signal) => {
+          if (signal.kind === 'closed') cleanup();
+          else push.request(orgId);
+        });
+        member = push.join(orgId, {
+          slug: req.params.orgSlug,
+          etag,
+          send,
+          end: () => cleanup(),
+          writable: () => !raw.writableNeedDrain,
+        });
+        if (done) {
+          member.leave();
+          off();
+        } else unsubscribe = off;
 
         // 7. Keep it alive, bound its life, and notice when it ends.
         if (!done) {
           armHeartbeat();
           lifetime = setTimeout(() => cleanup(), lifetimeMs);
           lifetime.unref();
+          raw.on('drain', () => {
+            member?.drained();
+            armHeartbeat();
+          });
           raw.on('close', () => cleanup());
           raw.on('error', () => cleanup({ destroy: true }));
         }

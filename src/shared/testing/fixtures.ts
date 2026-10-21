@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
+import { createDraftFromMonitorCommand } from '@/modules/incident/commands/create-draft-from-monitor/create-draft-from-monitor.handler';
+import { transitionDueMaintenanceCommand } from '@/modules/maintenance/commands/transition-due-maintenance/transition-due-maintenance.handler';
 import type { CheckOutcome } from '@/modules/monitoring/checks/check-outcome';
 import {
   type RecordCheckResultCommandResult,
@@ -405,4 +407,40 @@ export async function updateMonitor(
     payload: changes,
   });
   assert.equal(response.statusCode, 200, response.body);
+}
+
+/**
+ * Opens a monitor draft on `serviceId` through the command the worker's event
+ * handler runs (`incident.draft_created` follows). Creates its own monitor, so
+ * every call is a fresh failure episode. Returns the draft's id.
+ */
+export async function openMonitorDraft(
+  app: FastifyInstance,
+  cookie: string,
+  orgId: string,
+  serviceId: string,
+  failureEpisode = 1,
+): Promise<string> {
+  const monitorId = await createMonitor(app, cookie, serviceId);
+  const [monitor] = await withTenantTransaction(
+    orgId,
+    ({ sql: tx }) =>
+      tx<{ name: string }[]>`select name from monitors where id = ${monitorId}`,
+  );
+  const id = await app.commandBus.execute<Promise<string | null>>(
+    createDraftFromMonitorCommand({
+      orgId,
+      monitorId,
+      serviceId,
+      monitorName: monitor.name,
+      failureEpisode,
+    }),
+  );
+  assert.ok(id, 'a draft was opened');
+  return id;
+}
+
+/** Starts and completes `orgId`'s due maintenance windows, as the worker does. */
+export function transitionDueMaintenance(app: FastifyInstance, orgId: string) {
+  return app.commandBus.execute(transitionDueMaintenanceCommand({ orgId }));
 }

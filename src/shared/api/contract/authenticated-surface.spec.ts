@@ -62,7 +62,7 @@ const PUBLIC_BY_DESIGN: ReadonlyMap<string, string> = new Map([
   ),
   [
     'GET /status/:orgSlug/events',
-    'The same public page, and each later version of it, as Server-Sent Events. ' +
+    'The same public page as Server-Sent Events, pushed again when it changes. ' +
       'No session, for the same reason as the page; the organization comes from ' +
       'the slug and the page is read under it.',
   ],
