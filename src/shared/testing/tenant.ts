@@ -66,3 +66,36 @@ export async function signUpWithOrg(app: FastifyInstance, label: string) {
     name: displayNameFor(label),
   };
 }
+
+/**
+ * Makes `invitee` a member of `owner`'s organization the way a real member
+ * joins: the owner invites them, and they accept. Returns the member id, which
+ * `organization/remove-member` takes.
+ */
+export async function addMember(
+  app: FastifyInstance,
+  owner: { cookie: string; orgId: string },
+  invitee: { cookie: string; email: string },
+): Promise<string> {
+  const invite = await app.inject({
+    method: 'POST',
+    url: '/api/auth/organization/invite-member',
+    headers: { cookie: owner.cookie, origin: TEST_ORIGIN },
+    payload: {
+      email: invitee.email,
+      role: 'member',
+      organizationId: owner.orgId,
+    },
+  });
+  assert.equal(invite.statusCode, 200, invite.body);
+
+  const accepted = await app.inject({
+    method: 'POST',
+    url: '/api/auth/organization/accept-invitation',
+    headers: { cookie: invitee.cookie, origin: TEST_ORIGIN },
+    payload: { invitationId: JSON.parse(invite.body).id },
+  });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+
+  return JSON.parse(accepted.body).member.id as string;
+}

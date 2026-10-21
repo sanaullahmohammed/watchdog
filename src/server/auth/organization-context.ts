@@ -134,3 +134,35 @@ export async function resolveOrganizationContext(
 
   return { userId: actor.userId, orgId, orgRole };
 }
+
+/**
+ * Whether a subscriber admitted as `userId` to `orgId` still has access: the
+ * upgrade's session is still live and still that user's, and the user is
+ * still a member of that organization with a role on the ladder. The admitted
+ * organization is checked, not the session's active one, so switching the
+ * active organization changes nothing (story 4.8).
+ *
+ * The lookup bypasses the cookie cache and never refreshes the session, so a
+ * long-lived socket cannot keep extending its own session. An unknown role is
+ * `false`; any other failure throws.
+ */
+export async function stillHasAccess(
+  headers: IncomingHttpHeaders,
+  admitted: { userId: string; orgId: string },
+): Promise<boolean> {
+  const result = await auth.api.getSession({
+    headers: fromNodeHeaders(headers),
+    query: { disableCookieCache: true, disableRefresh: true },
+  });
+
+  if (result?.session?.userId !== admitted.userId) {
+    return false;
+  }
+
+  try {
+    return (await findOrgRole(admitted.orgId, admitted.userId)) !== null;
+  } catch (error) {
+    if (error instanceof UnknownOrganizationRoleError) return false;
+    throw error;
+  }
+}
