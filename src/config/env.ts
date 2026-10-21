@@ -3,6 +3,10 @@ import { type Static, Type } from 'typebox';
 import { parseAllowedCidrs } from './allowed-cidrs';
 import { authEnvProperties } from './auth-env';
 import { checkResultsEnvProperties } from './check-results-env';
+import {
+  notificationEnvProperties,
+  resolveEmailSettings,
+} from './notification-env';
 import { realtimeEnvProperties } from './realtime-env';
 import { assertWorkerIntervals } from './worker-intervals';
 
@@ -32,6 +36,7 @@ const schema = Type.Object({
   ...authEnvProperties,
   ...checkResultsEnvProperties,
   ...realtimeEnvProperties,
+  ...notificationEnvProperties,
   LOG_LEVEL: Type.Enum(LogLevel),
   NODE_ENV: Type.Enum(NodeEnv),
   HOST: Type.String({ default: 'localhost' }),
@@ -110,6 +115,10 @@ assertWorkerIntervals(env);
 // An invalid entry fails boot, naming it.
 const monitorAllowedCidrs = parseAllowedCidrs(env.MONITOR_ALLOWED_CIDRS);
 
+// A half-set login or a PUBLIC_BASE_URL that is not a bare origin fails boot,
+// naming the variables.
+const { email, publicBaseUrl } = resolveEmailSettings(env);
+
 export default {
   nodeEnv: env.NODE_ENV,
   isDevelopment: env.NODE_ENV === NodeEnv.development,
@@ -142,6 +151,12 @@ export default {
       heartbeatSeconds: env.PUBLIC_STREAM_HEARTBEAT_SECONDS,
     },
   },
+  // Outgoing email (story 6.2). `auth` is present only when both SMTP_USER
+  // and SMTP_PASSWORD are set.
+  email,
+  // The origin emailed links are built on: PUBLIC_BASE_URL, or
+  // BETTER_AUTH_URL's origin when that is unset.
+  publicBaseUrl,
   realtime: {
     adminSubscriptionRecheckSeconds: env.ADMIN_SUBSCRIPTION_RECHECK_SECONDS,
   },

@@ -330,3 +330,17 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: `logFailure` logs a 4xx `ExceptionBase` by its message, so a subscriber slice's refusal must never interpolate the caller's address into an exception message (e.g. "x@y is already subscribed").
   evidence: Story 6.1 Review Triage Log #7. No such message exists yet; story 6.3 adds the first refusals that see an address.
   target: Epic 6, story 6.3.
+
+## From Story 6.2 (2026-10-21)
+
+- source_spec: `spec-6-2-send-email-through-smtp.md`
+  summary: The SMTP sender abandons a send after a fixed 45 s overall limit (`SMTP_TIMEOUTS.overall` in `src/modules/notification/infrastructure/smtp-email-sender.ts`) and reports it `transient`, `EDEADLINE`. Story 6.7's claim lease, the `next_attempt_at` bump a pass makes when it claims a row, must outlast that limit, or a second pass could claim a row whose send is still running. 6.7's AC sets that bump from `NOTIFICATION_RETRY_BASE_SECONDS`, which is configurable, so 6.7 checks at boot that it exceeds the overall limit, naming the variable. nodemailer cannot abort a send, so the abandoned one may still be delivered after `EDEADLINE` and then be sent again on retry. Delivery is at-least-once, so that duplicate is accepted (ARCHITECTURE 5.6), but 6.7 should say so where it records the transient outcome. Three more points for 6.7:
+    - The constraint holds per claimed row, not per send. A pass that leases a batch at claim time and sends its rows one after another must keep each row's lease longer than its wait plus its own send, and row k waits about k × 45 s. So 6.7 leases per row (or renews the lease before each send), or bounds the batch so the last row's wait still fits.
+    - A 5xx at login or `MAIL FROM` is `transient`, because it says WatchDog's own settings are wrong. So 6.7 logs that settings-class diagnostic once, never with the address, instead of letting every due row retry silently.
+    - An abandoned send's socket stays open while a server keeps trickling replies inside the 15 s inactivity limit. 6.7's shutdown wait does not cover it: the wait ends when `send` resolves at `EDEADLINE`, and the socket can still be open after that.
+  evidence: Story 6.2 Boundaries (fixed timeouts; the late result is caught, never acted on). nodemailer 10.0.16 exposes no abort signal (`dist/cjs/smtp-connection/index.js`). Story 6.2 review.
+  target: Epic 6, story 6.7.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-2-send-email-through-smtp.md`
+  summary: Mailpit is `axllent/mailpit:latest` in both Compose and CI's database job, so a new release can change the `/api/v1` shapes that `src/shared/testing/mailpit.ts` reads (`messages: null`, `Headers` as arrays, CRLF in `Text`) and break CI without warning.
+  evidence: Story 6.2 Review Triage Log #20. Compose used `latest` before story 6.2; CI's service now follows it.
+  target: Epic 8 (default), or the first story whose Mailpit read breaks.

@@ -65,6 +65,21 @@ jobs:
           --health-timeout 5s
           --health-retries 20
 
+      # The SMTP server the sender's integration test delivers to (story 6.2).
+      # The env above sets no SMTP variable, so the defaults reach it on
+      # localhost:1025, and the suite reads it back on 8025. The probe targets
+      # 127.0.0.1, not localhost, which resolves to ::1 first in a container.
+      mailpit:
+        image: axllent/mailpit:latest
+        ports:
+          - 1025:1025
+          - 8025:8025
+        options: >-
+          --health-cmd "wget --spider -q http://127.0.0.1:8025"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@v4
 
