@@ -1,6 +1,23 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { eventBus } from '@/shared/cqrs/event-bus';
+import pino from 'pino';
+import postgres from 'postgres';
+import { eventBus, reportToLogger } from '@/shared/cqrs/event-bus';
+import { scrubbedLoggerOptions } from '@/shared/db/sql-debug';
+import { captureLogs } from '@/shared/testing/logs';
+
+const ADDRESS = 'subscriber-in-a-handler@example.test';
+
+/** A unique violation as postgres.js reports it, quoting the address. */
+function uniqueViolation() {
+  return new postgres.PostgresError({
+    message: 'duplicate key value violates unique constraint "s_email_key"',
+    severity: 'ERROR',
+    code: '23505',
+    detail: `Key (email)=(${ADDRESS}) already exists.`,
+    constraint_name: 's_email_key',
+  } as never);
+}
 
 describe('eventBus', () => {
   it('delivers one event to every registered handler', () => {
@@ -163,5 +180,59 @@ describe('eventBus', () => {
       bus.emit({ type: 'service.created', payload: {} }),
     );
     assert.deepEqual(seen, ['after']);
+  });
+
+  // Story 6.1: a failure is reported through a scrubbing logger, never
+  // printed with console.error, which shows a database error's every field.
+
+  it('reports through a logger whose serializer scrubs a database error', () => {
+    const logs = captureLogs();
+    const bus = eventBus({
+      onHandlerError: reportToLogger(
+        pino(scrubbedLoggerOptions('info'), logs.stream),
+      ),
+    });
+    bus.on('service.created', () => {
+      throw uniqueViolation();
+    });
+
+    bus.emit({ type: 'service.created', payload: {} });
+
+    assert.equal(logs.lines.length, 1);
+    assert.ok(!logs.lines[0]?.includes(ADDRESS), logs.lines[0]);
+    const [entry] = logs.entries();
+    assert.equal(entry?.msg, 'Event handler for service.created failed');
+    assert.equal(entry?.eventType, 'service.created');
+    assert.equal(entry?.err?.code, '23505');
+  });
+
+  it('never calls console.error by default, and scrubs what it writes', (t) => {
+    const consoleError = t.mock.method(console, 'error', () => {});
+    const written: string[] = [];
+    // The default reporter's logger writes to stderr; capture it, briefly and
+    // synchronously, so the run stays quiet.
+    const write = t.mock.method(
+      process.stderr,
+      'write',
+      (chunk: string | Uint8Array) => {
+        written.push(String(chunk));
+        return true;
+      },
+    );
+
+    try {
+      const bus = eventBus();
+      bus.on('service.created', () => {
+        throw uniqueViolation();
+      });
+      bus.emit({ type: 'service.created', payload: {} });
+    } finally {
+      write.mock.restore();
+    }
+
+    assert.equal(consoleError.mock.callCount(), 0);
+    assert.equal(written.length, 1, 'the failure was reported');
+    assert.ok(!written[0]?.includes(ADDRESS), written[0]);
+    assert.equal(JSON.parse(written[0] ?? '').err.code, '23505');
   });
 });

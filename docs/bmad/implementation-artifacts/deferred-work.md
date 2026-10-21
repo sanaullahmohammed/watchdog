@@ -86,11 +86,11 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `spec-9-13-sql-log-redaction.md`
   summary: Values inside a Postgres error still reach the logs. They appear in its `message` and `detail`, such as `invalid input syntax for type integer: "..."` or a unique-key violation's `Key (email)=(...)`, and in `where`, `hint` and `internal_query`. Story 9.13 redacts only the `parameters` and `args` properties. Redact or replace every field postgres.js copies onto the error before subscriber addresses are stored. Settle it with the 9.13 entry on nested errors: a recursive scrub in the serializers would likely hold both fixes.
   evidence: Story 9.13 Boundaries (Never) and Review Triage Log #7; `err.message` and `err.detail` are logged by `logFailure` and the worker.
-  target: Epic 6 prerequisite. Story 6.1 (written 2026-10-21) carries it.
+  target: Epic 6 prerequisite. Story 6.1 (written 2026-10-21) carries it. RESOLVED by story 6.1 (2026-10-21): the `err` and `error` serializer of every application logger (`serializeError` in `src/shared/db/sql-debug.ts`) redacts a database error's `message`, `detail`, `where`, `hint`, `internal_query` and `internalQuery`, and the message inside its stack, and a line's `msg` is `Database error <code>` instead of its message. `logFailure` logs a Fastify request refusal by its `FST_ERR_` code.
 - source_spec: `spec-9-13-sql-log-redaction.md`
   summary: Log redaction covers only top-level `err.parameters`, `err.args`, `error.parameters` and `error.args`. In debug mode, a database error wrapped in another error, inside an `AggregateError`, serialized through `ExceptionBase.toJSON` (which stringifies its `cause`), logged under another key, or printed with `console.error` (seed failures, the event bus's default reporter) still prints parameter values. Consider a recursive scrub in the `err`/`error` serializers before Epic 6, together with the 9.13 entry on values in Postgres error fields.
   evidence: Story 9.13 Review Triage Log #4 and #5. The Epic 9 retro (DR-5) confirmed the `cause` path: `ExceptionBase.toJSON` writes `cause: JSON.stringify(this.cause)` (`src/shared/exceptions/exception-base.ts:52`), and at debug level postgres.js makes `parameters` enumerable, so a database error passed as a cause would print its values. Unverified in practice: nothing in `src` passes a database error as a cause, and `DatabaseErrorException` exists but nothing constructs it today.
-  target: Epic 6 prerequisite. Story 6.1 (written 2026-10-21) carries it.
+  target: Epic 6 prerequisite. Story 6.1 (written 2026-10-21) carries it. RESOLVED by story 6.1 (2026-10-21): the scrub recurses into a `cause`, `AggregateError` members and properties, to depth 8, and redacts `parameters` and `args` on any error at any depth. A `logMethod` hook scrubs an error passed bare or under any other top-level key. `ExceptionBase.toJSON`, the event bus's default reporter and the seed go through it; nothing in WatchDog's code prints an error with `console.error`. Better Auth's own logger is out of scope (story 6.1 Never).
 
 ## From Story 9.14 (2026-10-08)
 
@@ -307,3 +307,26 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: ARCHITECTURE still describes the `compose` job as `docker compose --profile app up` (the "Decided 2026-10-18" paragraph after section 9's table). Section 8 says the `app` profile stays down while the integration suites run, without the `watchdog-backplane` exception AGENTS.md now states, and it does not list `docker-compose.backplane.yml`. The reworded line 866 still sits under the "Planned checks, not current CI coverage" lead-in.
   evidence: Story 4.9 Review Triage Log #11. The owner allowed only the section 9 row and the line 866 rewording in this story.
   target: Next ARCHITECTURE reconciliation (owner). RESOLVED by Epic 4 retro item 1 (2026-10-21): section 8 records `docker-compose.backplane.yml` and the `watchdog-backplane` exception, and section 9's decision paragraph describes the separate project.
+
+## From Story 6.1 (2026-10-21)
+
+- source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
+  summary: Fastify's request log records each request's URL (`incoming request`, under `req.url`). A confirm or unsubscribe token carried in a GET link's path or query string is therefore written to the log of every request that follows the link. Story 6.1 scrubs errors only; it leaves request URLs alone.
+  evidence: Story 6.1 Boundaries (Never): request URLs in Fastify's request log are not covered. Epic 6 context: the links act on GET.
+  target: Epic 6, story 6.4.
+- source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
+  summary: The seed's failure logging is held only by inspection. No suite runs `db/seeds/seed.ts`, so putting `console.error(error)` back, or building its logger without `scrubbedLoggerOptions`, passes every check.
+  evidence: Story 6.1 Review Triage Log #1. The scrub itself is unit-tested; the seed's two call sites are not executed by any test. Closing it needs a subprocess test or pulling the reporter out of the script.
+  target: Epic 8 (default).
+- source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
+  summary: AGENTS.md's pitfall "Log a database error only as a top-level `err` or `error`..." still says redaction covers only `parameters` and `args` and that `message`, `detail`, nested errors and `console.error` print. After story 6.1 the serializer and `logMethod` hook scrub all of those, and a logger built outside Fastify uses `scrubbedLoggerOptions`.
+  evidence: Story 6.1 Review Triage Log #3. AGENTS.md is changed only with the owner's approval.
+  target: Owner decision, raised with story 6.1's PR. RESOLVED by story 6.1 (2026-10-21, owner approved): the pitfall now describes the scrub, `scrubbedLoggerOptions`, the rule against quoting input or a database error's text in a message, and the two paths that bypass it.
+- source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
+  summary: postgres.js prints every server notice with `console.log(parseError(x))` when no `onnotice` is set, and neither client sets one (`src/shared/db/postgres.ts`, `src/server/realtime/listener.ts`). A notice's `message`, `detail`, `where` and `hint` would print unscrubbed.
+  evidence: Story 6.1 Review Triage Log #5; `node_modules/postgres/src/connection.js:915-918`. No migration raises a notice today (`grep -i "raise notice" db/migrations` is empty), so nothing prints now.
+  target: Epic 6, the first story that adds a function or trigger raising a notice; Epic 8 (default) otherwise.
+- source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
+  summary: `logFailure` logs a 4xx `ExceptionBase` by its message, so a subscriber slice's refusal must never interpolate the caller's address into an exception message (e.g. "x@y is already subscribed").
+  evidence: Story 6.1 Review Triage Log #7. No such message exists yet; story 6.3 adds the first refusals that see an address.
+  target: Epic 6, story 6.3.

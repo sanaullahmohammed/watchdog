@@ -12,6 +12,7 @@
  * the handlers. Identity belongs to Better Auth and is created through its
  * server API. The only SQL here is the read that makes a second run a no-op.
  */
+import pino from 'pino';
 import env from '@/config/env';
 import { createIncidentCommand } from '@/modules/incident/commands/create-incident/create-incident.handler';
 import { postIncidentUpdateCommand } from '@/modules/incident/commands/post-incident-update/post-incident-update.handler';
@@ -27,6 +28,14 @@ import { auth, endAuthPool } from '@/server/auth/auth';
 import { buildApp } from '@/server/build-app';
 import type { Action } from '@/shared/cqrs/bus.types';
 import sql, { closeDbConnection } from '@/shared/db/postgres';
+import { scrubbedLoggerOptions } from '@/shared/db/sql-debug';
+
+/**
+ * Where a failure is reported, on stderr. Printed to the console, a database
+ * error would show its fields, values and all; this logger's serializer
+ * scrubs them.
+ */
+const failureLog = pino(scrubbedLoggerOptions('info'), process.stderr);
 
 const ORGANIZATION = { name: 'Acme Cloud', slug: 'acme-demo' };
 
@@ -114,7 +123,7 @@ function nextWindowStart(): Date {
 
 async function seed(): Promise<void> {
   if (env.isProduction) {
-    console.error(
+    failureLog.error(
       'Refusing to seed: NODE_ENV is production. Seed data is for demonstration only.',
     );
     process.exitCode = 1;
@@ -268,7 +277,7 @@ async function seed(): Promise<void> {
 
 seed()
   .catch((error: unknown) => {
-    console.error(error);
+    failureLog.error({ err: error }, 'Seeding failed');
     process.exitCode = 1;
   })
   .finally(async () => {
@@ -281,7 +290,10 @@ seed()
     ]);
     for (const result of results) {
       if (result.status === 'rejected') {
-        console.error(result.reason);
+        failureLog.error(
+          { err: result.reason },
+          'Closing a connection pool failed',
+        );
         process.exitCode = 1;
       }
     }

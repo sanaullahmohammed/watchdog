@@ -1,3 +1,4 @@
+import pino, { type Logger } from 'pino';
 import { pipe } from 'ramda';
 import type {
   Action,
@@ -5,6 +6,7 @@ import type {
   EventHandler,
   Middleware,
 } from '@/shared/cqrs/bus.types';
+import { scrubbedLoggerOptions } from '@/shared/db/sql-debug';
 
 /**
  * Receives a handler's failure. The bus calls it and carries on, so it must
@@ -15,8 +17,31 @@ export type HandlerErrorReporter = (
   event: Action<unknown>,
 ) => void;
 
-const reportToConsole: HandlerErrorReporter = (error, event) => {
-  console.error(`Event handler for ${event.type} failed`, error);
+/**
+ * Reports a handler's failure through a logger, as `{ err }`, so the logger's
+ * error serializer scrubs it. `console.error` would print a database error's
+ * values as they are.
+ */
+export function reportToLogger(
+  logger: Pick<Logger, 'error'>,
+): HandlerErrorReporter {
+  return (error, event) => {
+    logger.error(
+      { err: error, eventType: event.type },
+      `Event handler for ${event.type} failed`,
+    );
+  };
+}
+
+let defaultLogger: Logger | undefined;
+
+/**
+ * The reporter of a bus built without one; the app's bus logs through Fastify.
+ * Its logger is built on first use and writes to stderr.
+ */
+const reportByDefault: HandlerErrorReporter = (error, event) => {
+  defaultLogger ??= pino(scrubbedLoggerOptions('error'), process.stderr);
+  reportToLogger(defaultLogger)(error, event);
 };
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
@@ -24,7 +49,7 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
 }
 
 export function eventBus({
-  onHandlerError = reportToConsole,
+  onHandlerError = reportByDefault,
 }: {
   onHandlerError?: HandlerErrorReporter;
 } = {}): EventBus {
