@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import {
   type IncomingHttpHeaders,
   type IncomingMessage,
@@ -13,11 +13,25 @@ import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import { env } from '@/config';
 import config from '@/config/env';
+import { publicPageETag } from '@/modules/status-page/dtos/public-status-page.etag';
+import type { PublicStatusPageResponseDto } from '@/modules/status-page/dtos/public-status-page.response.dto';
 import { openPublicStatusEventStreamQuery } from '@/modules/status-page/queries/open-public-status-stream/open-public-status-stream.handler';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
-import { createService } from '@/shared/testing/fixtures';
-import { signUpWithOrg } from '@/shared/testing/tenant';
+import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { monitorThresholdBreachedEvent } from '@/shared/events/monitor.events';
+import {
+  archiveService,
+  createService,
+  declareIncident,
+  openMonitorDraft,
+  scheduleMaintenance,
+  transitionDueMaintenance,
+  transitionIncident,
+  updateService,
+} from '@/shared/testing/fixtures';
+import { notifyRaw, subscribeForOrg } from '@/shared/testing/notifications';
+import { signUpWithOrg, TEST_ORIGIN } from '@/shared/testing/tenant';
 
 /**
  * Story 4.5: `GET /status/:orgSlug/events` opens a public stream of the page.
@@ -741,6 +755,688 @@ describe('Story 4.5: open a public status stream', () => {
         15,
         spawned.output(),
       );
+    });
+  });
+
+  describe('Story 4.6: push the public page when it changes', () => {
+    const tag6 = `psh-${randomBytes(4).toString('hex')}`;
+    const slugA = `${tag6}-a`;
+    const slugB = `${tag6}-b`;
+    const slugC = `${tag6}-c`;
+    let app6: FastifyInstance;
+    let port6 = 0;
+    const orgs = {
+      a: { id: '', userId: '', cookie: '' },
+      b: { id: '', userId: '', cookie: '' },
+      c: { id: '', userId: '', cookie: '' },
+    };
+    const mine = new Set([slugA, slugB, slugC]);
+
+    /** Compositions of this describe's own orgs, and a way to hold them. */
+    const compositions = {
+      count: 0,
+      /** Since the last opening, by slug. */
+      bySlug: new Map<string, number>(),
+      inFlight: 0,
+      failNext: false,
+      gate: undefined as Promise<void> | undefined,
+    };
+    const hubReleases = {
+      taken: 0,
+      released: 0,
+      waiters: [] as Array<() => void>,
+    };
+
+    const pageOf = (stream: Stream, index = -1) => {
+      const entry = stream.received.at(index);
+      assert.ok(entry, 'no frame');
+      const f = fields(entry.frame);
+      return {
+        id: f.get('id') ?? '',
+        page: JSON.parse(f.get('data') ?? '{}') as PublicStatusPageResponseDto,
+      };
+    };
+
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+    function hold() {
+      let release!: () => void;
+      compositions.gate = new Promise<void>((resolve) => {
+        release = () => {
+          compositions.gate = undefined;
+          resolve();
+        };
+      });
+      return release;
+    }
+
+    /** Resolves once every composition in flight has finished and been offered. */
+    async function quiet() {
+      for (let stable = 0; stable < 3; ) {
+        await tick();
+        stable = compositions.inFlight === 0 ? stable + 1 : 0;
+      }
+    }
+
+    /** Waits for the hub to have delivered everything, and compositions to end. */
+    async function settleOrg(orgId: string) {
+      const sub = subscribeForOrg(app6.realtimeHub, orgId);
+      try {
+        await sub.settle(app6);
+      } finally {
+        sub.close();
+      }
+      await quiet();
+    }
+
+    async function releasedAll() {
+      if (hubReleases.released >= hubReleases.taken) return;
+      await withTimeout(
+        new Promise<void>((resolve) => {
+          const check = () => {
+            if (hubReleases.released >= hubReleases.taken) resolve();
+            else hubReleases.waiters.push(check);
+          };
+          check();
+        }),
+        'the streams to be given back',
+      );
+    }
+
+    async function openPage(slug: string) {
+      const stream = await open(`/status/${slug}/events`, { to: port6 });
+      assert.equal(stream.status, 200);
+      await stream.nextFrame();
+      compositions.count = 0;
+      compositions.bySlug.clear();
+      return stream;
+    }
+
+    const getPage = async (slug: string) => {
+      const res = await app6.inject({ method: 'GET', url: `/status/${slug}` });
+      assert.equal(res.statusCode, 200, res.body);
+      return { etag: res.headers.etag as string, page: res.json() };
+    };
+
+    /**
+     * Reads frames until the last one is the page `GET` answers now, then
+     * checks it equals that page. Status recomputation can add a second push.
+     */
+    async function converge(stream: Stream, slug: string) {
+      await app6.eventBus.drain();
+      for (;;) {
+        const expected = await getPage(slug);
+        if (stream.received.length > 0 && pageOf(stream).id === expected.etag) {
+          assert.deepEqual(
+            withoutGeneratedAt(pageOf(stream).page),
+            withoutGeneratedAt(expected.page),
+          );
+          return expected.page as PublicStatusPageResponseDto;
+        }
+        await stream.nextFrame();
+      }
+    }
+
+    function assertFramesTagged(stream: Stream) {
+      for (const [index, { frame }] of stream.received.entries()) {
+        const f = fields(frame);
+        assert.equal(f.has('event'), false);
+        assert.equal(
+          f.get('id'),
+          publicPageETag(JSON.parse(f.get('data') ?? '{}')),
+          `frame ${index}`,
+        );
+      }
+    }
+
+    async function noFrameSince(stream: Stream, before: number, orgId: string) {
+      await settleOrg(orgId);
+      assert.equal(stream.received.length, before, 'no frame');
+    }
+
+    async function send(
+      who: { cookie: string },
+      method: 'PATCH' | 'POST' | 'PUT' | 'DELETE',
+      url: string,
+      payload?: object,
+    ) {
+      const res = await app6.inject({
+        method,
+        url: `/api/v1${url}`,
+        headers: { cookie: who.cookie, origin: TEST_ORIGIN },
+        payload,
+      });
+      assert.ok(res.statusCode < 300, `${method} ${url}: ${res.body}`);
+      return res;
+    }
+
+    let episode = 0;
+    const draftOn = (serviceId: string) => {
+      episode += 1;
+      return openMonitorDraft(
+        app6,
+        orgs.a.cookie,
+        orgs.a.id,
+        serviceId,
+        episode,
+      );
+    };
+
+    let visible = '';
+    let hidden = '';
+
+    before(async () => {
+      app6 = await buildApp({ logger: false }, { listen: true });
+      await app6.ready();
+      for (const [key, slug] of [
+        ['a', slugA],
+        ['b', slugB],
+        ['c', slugC],
+      ] as const) {
+        const signedUp = await signUpWithOrg(app6, slug);
+        orgs[key] = {
+          id: signedUp.orgId,
+          userId: signedUp.userId,
+          cookie: signedUp.cookie,
+        };
+      }
+      visible = await createService(app6, orgs.a.cookie, { name: 'Visible' });
+      hidden = await createService(app6, orgs.a.cookie, {
+        name: 'Hidden',
+        isPublic: false,
+      });
+      await createService(app6, orgs.b.cookie, { name: 'Bee' });
+      await createService(app6, orgs.c.cookie, { name: 'Sea' });
+      await app6.eventBus.drain();
+
+      const execute = app6.queryBus.execute;
+      app6.queryBus.execute = (async (
+        action: Parameters<typeof execute>[0],
+      ) => {
+        const payload = action.payload as { slug?: string } | undefined;
+        if (
+          action.type !== openPublicStatusEventStreamQuery.type ||
+          !payload?.slug ||
+          !mine.has(payload.slug)
+        ) {
+          return execute.call(app6.queryBus, action);
+        }
+        compositions.count += 1;
+        compositions.bySlug.set(
+          payload.slug,
+          (compositions.bySlug.get(payload.slug) ?? 0) + 1,
+        );
+        compositions.inFlight += 1;
+        try {
+          if (compositions.gate) await compositions.gate;
+          if (compositions.failNext) {
+            compositions.failNext = false;
+            throw new Error('composition failed by the test');
+          }
+          return await execute.call(app6.queryBus, action);
+        } finally {
+          compositions.inFlight -= 1;
+        }
+      }) as typeof execute;
+
+      const hub = app6.realtimeHub;
+      const subscribePublic = hub.subscribePublic;
+      hub.subscribePublic = (id, fn) => {
+        hubReleases.taken += 1;
+        const off = subscribePublic(id, fn);
+        let once = false;
+        return () => {
+          off();
+          if (once) return;
+          once = true;
+          hubReleases.released += 1;
+          for (const waiter of hubReleases.waiters.splice(0)) waiter();
+        };
+      };
+
+      await app6.listen({ port: 0, host: '127.0.0.1' });
+      port6 = (app6.server.address() as AddressInfo).port;
+    });
+
+    after(async () => {
+      await app6.close().catch(() => undefined);
+      for (const o of Object.values(orgs)) {
+        if (o.id) await sql`delete from "organization" where "id" = ${o.id}`;
+        if (o.userId) await sql`delete from "user" where "id" = ${o.userId}`;
+      }
+    });
+
+    it('pushes the page after each public change, equal to what GET answers', async () => {
+      const stream = await openPage(slugA);
+      try {
+        const first = pageOf(stream);
+        assert.equal(first.id, (await getPage(slugA)).etag);
+
+        const incidentId = await declareIncident(app6, orgs.a.cookie, {
+          title: 'Visible is slow',
+          affectedServices: [{ serviceId: visible, impact: 'minor' }],
+        });
+        let page = await converge(stream, slugA);
+        assert.deepEqual(
+          page.activeIncidents.map((i: { title: string }) => i.title),
+          ['Visible is slow'],
+        );
+
+        await send(orgs.a, 'POST', `/incidents/${incidentId}/updates`, {
+          message: 'Looking into it',
+        });
+        page = await converge(stream, slugA);
+        assert.ok(
+          JSON.stringify(page.activeIncidents).includes('Looking into it'),
+        );
+
+        await transitionIncident(app6, orgs.a.cookie, incidentId, 'resolved');
+        page = await converge(stream, slugA);
+        assert.deepEqual(page.activeIncidents, []);
+
+        await scheduleMaintenance(app6, orgs.a.cookie, {
+          title: 'Planned work',
+          affectedServiceIds: [visible],
+        });
+        page = await converge(stream, slugA);
+        assert.deepEqual(
+          page.maintenance.map((w: { status: string }) => w.status),
+          ['scheduled'],
+        );
+
+        const windowId = await withTenantTransaction(
+          orgs.a.id,
+          async ({ sql: tx }) => {
+            const rows = await tx<{ id: string }[]>`
+              insert into maintenance (
+                org_id, title, status, scheduled_start_at, scheduled_end_at
+              ) values (
+                ${orgs.a.id}, 'Due work', 'scheduled',
+                ${new Date(Date.now() - 60_000)}, ${new Date(Date.now() + 3_600_000)}
+              ) returning id
+            `;
+            await tx`
+              insert into maintenance_services (org_id, maintenance_id, service_id)
+              values (${orgs.a.id}, ${rows[0].id}, ${visible})
+            `;
+            return rows[0].id;
+          },
+        );
+        await transitionDueMaintenance(app6, orgs.a.id);
+        page = await converge(stream, slugA);
+        assert.ok(
+          page.maintenance.some(
+            (w: { id: string; status: string }) =>
+              w.id === windowId && w.status === 'in_progress',
+          ),
+        );
+
+        await send(orgs.a, 'PUT', `/services/${visible}/status-override`, {
+          status: 'major_outage',
+        });
+        page = await converge(stream, slugA);
+        const statuses = page.groups.flatMap((g) => g.services);
+        assert.equal(
+          statuses.find((s) => s.name === 'Visible')?.status,
+          'major_outage',
+        );
+        await send(orgs.a, 'DELETE', `/services/${visible}/status-override`);
+        await converge(stream, slugA);
+
+        assertFramesTagged(stream);
+      } finally {
+        stream.close();
+        await releasedAll();
+      }
+    });
+
+    it('sends no frame for a draft or a private incident', async () => {
+      const stream = await openPage(slugA);
+      try {
+        const before = stream.received.length;
+
+        const draftId = await draftOn(visible);
+        await noFrameSince(stream, before, orgs.a.id);
+        await send(orgs.a, 'PATCH', `/incidents/${draftId}`, {
+          title: 'Edited draft',
+        });
+        await noFrameSince(stream, before, orgs.a.id);
+        await send(orgs.a, 'POST', `/incidents/${draftId}/updates`, {
+          message: 'Draft note',
+        });
+        await noFrameSince(stream, before, orgs.a.id);
+        await transitionIncident(app6, orgs.a.cookie, draftId, 'resolved');
+        await noFrameSince(stream, before, orgs.a.id);
+
+        await declareIncident(app6, orgs.a.cookie, {
+          title: 'Private only',
+          impact: 'critical',
+          affectedServices: [{ serviceId: hidden, impact: 'critical' }],
+        });
+        await noFrameSince(stream, before, orgs.a.id);
+
+        // The next public change is the next frame.
+        await updateService(app6, orgs.a.cookie, visible, {
+          name: 'Visible 2',
+        });
+        // Counted from before the hidden changes, so a frame any of them sent
+        // late is caught here: it would arrive ahead of this one.
+        const page = await converge(stream, slugA);
+        assert.equal(stream.received.length, before + 1);
+        assert.ok(JSON.stringify(page).includes('Visible 2'));
+        assert.ok(!JSON.stringify(page).includes('Private only'));
+        assertFramesTagged(stream);
+      } finally {
+        stream.close();
+        await releasedAll();
+      }
+    });
+
+    it('sends no frame for a manual override on a private service', async () => {
+      const stream = await openPage(slugA);
+      try {
+        const before = stream.received.length;
+        const secret = await createService(app6, orgs.a.cookie, {
+          name: 'Secret',
+          isPublic: false,
+        });
+        await settleOrg(orgs.a.id);
+        compositions.count = 0;
+
+        // The gate (Constraint 11): the override event is admin-only, but the
+        // recomputation it causes emits a public `service.status_changed`
+        // whose page is unchanged, so only the ETag comparison keeps it quiet.
+        await send(orgs.a, 'PUT', `/services/${secret}/status-override`, {
+          status: 'major_outage',
+        });
+        await settleOrg(orgs.a.id);
+        assert.ok(
+          compositions.count >= 1,
+          'the recomputation asked for a page',
+        );
+        assert.equal(stream.received.length, before, 'and no frame was sent');
+
+        await updateService(app6, orgs.a.cookie, visible, {
+          name: 'Visible 3',
+        });
+        const page = await converge(stream, slugA);
+        assert.equal(stream.received.length, before + 1);
+        assert.ok(JSON.stringify(page).includes('Visible 3'));
+        assert.ok(!JSON.stringify(page).includes(secret));
+      } finally {
+        stream.close();
+        await releasedAll();
+      }
+    });
+
+    it('drops an incident or window, and its service id, when its service goes private, is archived or the window is deleted', async () => {
+      const stream = await openPage(slugA);
+      try {
+        const doomed = await createService(app6, orgs.a.cookie, {
+          name: 'Doomed',
+        });
+        const gone = await createService(app6, orgs.a.cookie, { name: 'Gone' });
+        await declareIncident(app6, orgs.a.cookie, {
+          title: 'Doomed incident',
+          affectedServices: [{ serviceId: doomed, impact: 'minor' }],
+        });
+        await scheduleMaintenance(app6, orgs.a.cookie, {
+          title: 'Gone window',
+          affectedServiceIds: [gone],
+        });
+        const deleted = await scheduleMaintenance(app6, orgs.a.cookie, {
+          title: 'Deleted window',
+          affectedServiceIds: [visible],
+        });
+        let page = await converge(stream, slugA);
+        assert.ok(JSON.stringify(page).includes('Doomed incident'));
+        assert.ok(JSON.stringify(page).includes('Gone window'));
+        assert.ok(JSON.stringify(page).includes('Deleted window'));
+
+        await updateService(app6, orgs.a.cookie, doomed, { isPublic: false });
+        page = await converge(stream, slugA);
+        assert.ok(!JSON.stringify(page).includes('Doomed incident'));
+        assert.ok(!JSON.stringify(page).includes(doomed));
+
+        await archiveService(app6, orgs.a.cookie, gone);
+        page = await converge(stream, slugA);
+        assert.ok(!JSON.stringify(page).includes('Gone window'));
+        assert.ok(!JSON.stringify(page).includes(gone));
+
+        await send(orgs.a, 'DELETE', `/maintenance/${deleted}`);
+        page = await converge(stream, slugA);
+        assert.ok(!JSON.stringify(page).includes('Deleted window'));
+        assertFramesTagged(stream);
+      } finally {
+        stream.close();
+        await releasedAll();
+      }
+    });
+
+    it('lists a confirmed draft with its timeline opening at the confirmation entry', async () => {
+      const stream = await openPage(slugA);
+      try {
+        const draftId = await draftOn(visible);
+        await send(orgs.a, 'POST', `/incidents/${draftId}/updates`, {
+          message: 'Private draft note',
+        });
+        await transitionIncident(app6, orgs.a.cookie, draftId, 'investigating');
+        const page = await converge(stream, slugA);
+        const listed = page.activeIncidents.find(
+          (i: { id: string }) => i.id === draftId,
+        );
+        assert.ok(listed, 'the confirmed draft is listed');
+        assert.equal(listed.updates[0].status, 'investigating');
+        assert.ok(
+          listed.updates.every((u: { status: string }) => u.status !== 'draft'),
+        );
+        assert.ok(!JSON.stringify(page).includes('Private draft note'));
+      } finally {
+        stream.close();
+        await releasedAll();
+      }
+    });
+
+    it('composes nothing for admin-only events', async () => {
+      const stream = await openPage(slugA);
+      try {
+        const before = stream.received.length;
+        // The positive control: the admin channel hears both events.
+        const admin = subscribeForOrg(app6.realtimeHub, orgs.a.id);
+        await draftOn(visible);
+        app6.eventBus.emit(
+          monitorThresholdBreachedEvent({
+            orgId: orgs.a.id,
+            monitorId: randomUUID(),
+            serviceId: visible,
+            monitorName: 'noise',
+            failureEpisode: 99,
+          }),
+        );
+        await admin.settle(app6);
+        await quiet();
+        const heard = admin.admin.flatMap((signal) =>
+          signal.kind === 'event' ? [signal.event.eventName] : [],
+        );
+        admin.close();
+        assert.ok(heard.includes('incident.draft_created'), heard.join());
+        assert.ok(heard.includes('monitor.threshold_breached'), heard.join());
+        assert.equal(compositions.count, 0);
+        assert.equal(stream.received.length, before);
+      } finally {
+        stream.close();
+        await releasedAll();
+      }
+    });
+
+    it('coalesces a burst into two compositions and sends the final page once', async () => {
+      const one = await openPage(slugA);
+      const two = await openPage(slugA);
+      try {
+        const release = hold();
+        for (const name of ['Burst 1', 'Burst 2', 'Burst 3']) {
+          await updateService(app6, orgs.a.cookie, visible, { name });
+        }
+        await app6.eventBus.drain();
+        const sub = subscribeForOrg(app6.realtimeHub, orgs.a.id);
+        await sub.settle(app6);
+        sub.close();
+        assert.equal(compositions.count, 1, 'one in flight, held');
+        release();
+        await quiet();
+
+        assert.equal(compositions.count, 2, 'one in flight plus one queued');
+        for (const stream of [one, two]) {
+          assert.equal(
+            stream.received.length,
+            2,
+            'the opening and the final page',
+          );
+          assert.ok(JSON.stringify(pageOf(stream).page).includes('Burst 3'));
+        }
+        assertFramesTagged(one);
+      } finally {
+        one.close();
+        two.close();
+        await releasedAll();
+      }
+    });
+
+    it('composes nothing for an org whose streams have all closed', async () => {
+      const stream = await openPage(slugB);
+      stream.close();
+      await releasedAll();
+      const [bee] = await withTenantTransaction(
+        orgs.b.id,
+        ({ sql: tx }) => tx<{ id: string }[]>`select id from services limit 1`,
+      );
+      await updateService(app6, orgs.b.cookie, bee.id, { name: 'Bee 2' });
+      await settleOrg(orgs.b.id);
+      assert.equal(compositions.count, 0);
+    });
+
+    it('composes only the org whose public change arrived, with streams open on two', async () => {
+      const a = await openPage(slugA);
+      const b = await openPage(slugB);
+      try {
+        const beforeB = b.received.length;
+        await updateService(app6, orgs.a.cookie, visible, {
+          name: 'Visible A',
+        });
+        await converge(a, slugA);
+        await settleOrg(orgs.a.id);
+        await settleOrg(orgs.b.id);
+
+        assert.ok((compositions.bySlug.get(slugA) ?? 0) >= 1);
+        assert.equal(compositions.bySlug.get(slugB), undefined);
+        assert.equal(b.received.length, beforeB);
+      } finally {
+        a.close();
+        b.close();
+        await releasedAll();
+      }
+    });
+
+    it('recomposes each org on resync and sends only the page that changed', async () => {
+      const a = await openPage(slugA);
+      const b = await openPage(slugB);
+      try {
+        const beforeA = a.received.length;
+        const beforeB = b.received.length;
+        await withTenantTransaction(
+          orgs.b.id,
+          ({ sql: tx }) =>
+            tx`update services set name = 'Changed silently' where org_id = ${orgs.b.id}`,
+        );
+        app6.realtimeHub.resync();
+        await quiet();
+        await converge(b, slugB);
+
+        assert.equal(compositions.count, 2, 'one composition per org');
+        assert.equal(a.received.length, beforeA);
+        assert.equal(b.received.length, beforeB + 1);
+        assert.ok(JSON.stringify(pageOf(b).page).includes('Changed silently'));
+      } finally {
+        a.close();
+        b.close();
+        await releasedAll();
+      }
+    });
+
+    it('logs a failed composition, keeps the stream, and pushes on the next event', async () => {
+      const stream = await openPage(slugA);
+      try {
+        const before = stream.received.length;
+        compositions.failNext = true;
+        await updateService(app6, orgs.a.cookie, visible, { name: 'Failing' });
+        await settleOrg(orgs.a.id);
+        assert.equal(
+          compositions.failNext,
+          false,
+          'the composition ran and failed',
+        );
+        assert.equal(stream.received.length, before);
+
+        await updateService(app6, orgs.a.cookie, visible, {
+          name: 'Recovered',
+        });
+        const page = await converge(stream, slugA);
+        assert.ok(JSON.stringify(page).includes('Recovered'));
+      } finally {
+        stream.close();
+        await releasedAll();
+      }
+    });
+
+    it('ends the streams of an org whose page is gone', async () => {
+      const stream = await openPage(slugC);
+      try {
+        await sql`update "organization" set "slug" = ${`${slugC}-renamed`} where "id" = ${orgs.c.id}`;
+        await notifyRaw(
+          JSON.stringify({
+            eventName: 'service.updated',
+            orgId: orgs.c.id,
+            aggregateType: 'service',
+            aggregateId: randomUUID(),
+            occurredAt: new Date().toISOString(),
+            version: 1,
+          }),
+        );
+        assert.equal(
+          await withTimeout(stream.ended, 'the stream to end'),
+          true,
+        );
+      } finally {
+        stream.close();
+        await releasedAll();
+      }
+    });
+
+    // Last in this block: closes app6.
+    it('app.close() waits for a composition in flight', async () => {
+      const stream = await openPage(slugA);
+      const release = hold();
+      await updateService(app6, orgs.a.cookie, visible, { name: 'Closing' });
+      await withTimeout(
+        new Promise<void>((resolve) => {
+          const check = () =>
+            compositions.inFlight > 0 ? resolve() : setImmediate(check);
+          check();
+        }),
+        'a composition in flight',
+      );
+
+      let settled = false;
+      const closing = app6.close().then(() => {
+        settled = true;
+      });
+      for (let n = 0; n < 5; n += 1) await tick();
+      assert.equal(settled, false, 'close is waiting on the composition');
+
+      release();
+      await withTimeout(closing, 'app.close()', 5_000);
+      assert.equal(compositions.inFlight, 0);
+      stream.close();
     });
   });
 

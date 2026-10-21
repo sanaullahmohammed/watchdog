@@ -237,7 +237,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-5-open-a-public-status-stream.md`
   summary: The public stream's writes ignore backpressure. Before 4.6 pushes full pages, a stream needs a policy for a reader that does not drain, such as ending it once `writableLength` passes a bound.
   evidence: Story 4.5 Review Triage Log #5. In 4.5 a stream writes one page and then a 13-byte heartbeat every 30 s. With 4.6's pushes, up to 1,000 streams could each buffer whole pages without bound.
-  target: Epic 4, story 4.6.
+  target: Epic 4, story 4.6. RESOLVED by story 4.6 (2026-10-20): while a socket has not drained a stream is sent no page and no heartbeat, and on `drain` gets only the newest page if its ETag differs; a stream holds at most one page.
 - source_spec: `docs/bmad/implementation-artifacts/spec-4-5-open-a-public-status-stream.md`
   summary: The stream caps key on the full socket address, so one actor with many addresses, or an IPv6 /64, can hold every `PUBLIC_STREAM_MAX_TOTAL` place and leave every organization's viewers with a 429.
   evidence: Story 4.5 Review Triage Log #12. Keying on the full address is ARCHITECTURE 5.4.1's decision, shared with the rate limit (F-18). Prefix grouping or a per-organization share would be a new policy, and the owner has not recorded it as an accepted risk.
@@ -246,3 +246,26 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: ARCHITECTURE 5.4.1 should record `PUBLIC_STREAM_HEARTBEAT_SECONDS` (default 30), the stream's heartbeat interval, which is not a bound but is part of the stream's contract.
   evidence: Story 4.5 Review Triage Log #2. Story 4.5 added the setting, and the owner allowed only the 7.1 genesis edit. 5.4.1 names three stream bounds and no heartbeat.
   target: Next ARCHITECTURE reconciliation (owner).
+
+## From Story 4.6 (2026-10-21)
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-6-push-the-public-page-when-it-changes.md`
+  summary: The route's backpressure wiring has no test. Nothing covers the `drain` listener calling `member.drained()`, the heartbeat skipped while the socket needs draining, or the heartbeat re-armed on `drain`.
+  evidence: Story 4.6 Review Triage Log #6. The unit spec drives only `createPagePush`. Deleting any of those lines keeps every test green. A real socket cannot be stalled deterministically, so a test needs a seam over `reply.raw` or a fake response.
+  target: Epic 8 (default).
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-6-push-the-public-page-when-it-changes.md`
+  summary: Removing `member?.leave()` from the stream's cleanup fails no test, and a dead member would be held for the life of the process.
+  evidence: Story 4.6 Review Triage Log #8. A dead member is unobservable from a test without a member count on the push, which is new surface.
+  target: Epic 8 (default).
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-6-push-the-public-page-when-it-changes.md`
+  summary: A slug rename or an organization deletion emits no event, so an open stream keeps showing the page until its lifetime ends, while `GET` already answers 404.
+  evidence: Story 4.6 Review Triage Log #12. Neither Better Auth hook emits a domain event. The bound is `PUBLIC_STREAM_MAX_LIFETIME_SECONDS` (3,600 by default).
+  target: Epic 8 (default).
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-6-push-the-public-page-when-it-changes.md`
+  summary: ARCHITECTURE 5.4.1 should record the stream's backpressure rule: the latest page wins, and a stream holds at most one page in its buffer.
+  evidence: Story 4.6 Review Triage Log #13. The owner decided the rule on 2026-10-20. It is a runtime bound of the anonymous surface, which ARCHITECTURE owns, and editing `docs/genesis` needs the owner.
+  target: Next ARCHITECTURE reconciliation (owner).
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-6-push-the-public-page-when-it-changes.md`
+  summary: A `resync` composes every organization with an open stream at once, and every composition draws on the shared pool.
+  evidence: Story 4.6 Review Triage Log #21. This happens only when LISTEN reconnects, bounded by the number of organizations with streams (at most `PUBLIC_STREAM_MAX_TOTAL`). A concurrency cap would be a new policy.
+  target: Epic 8 (default).
