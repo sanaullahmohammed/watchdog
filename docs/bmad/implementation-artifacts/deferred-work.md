@@ -269,3 +269,22 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: A `resync` composes every organization with an open stream at once, and every composition draws on the shared pool.
   evidence: Story 4.6 Review Triage Log #21. This happens only when LISTEN reconnects, bounded by the number of organizations with streams (at most `PUBLIC_STREAM_MAX_TOTAL`). A concurrency cap would be a new policy.
   target: Epic 8 (default).
+
+## From Story 4.7 (2026-10-21)
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-7-subscribe-to-organization-events-over-graphql.md`
+  summary: There is no cap on concurrent authenticated WebSocket subscriptions, per user or per IP. Any valid session, and sign-up is open, can hold as many sockets as it likes, each with up to 10 hub subscriptions and a queue of up to `MAX_QUEUED_SIGNALS` signals for each.
+  evidence: Story 4.7 spec, Never: "No per-user or per-IP cap on concurrent authenticated sockets." Only an upgrade without a valid session is rationed (ARCHITECTURE 5.4.1, 5.5), a socket with no accepted subscription is closed 10 s after its upgrade, and one socket holds at most `MAX_SUBSCRIPTIONS_PER_SOCKET` (10) live subscriptions; the number of authenticated sockets has no bound. Revisit with the Story 9.2 authenticated-limit entry.
+  target: Epic 8.
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-7-subscribe-to-organization-events-over-graphql.md`
+  summary: Admin subscription sockets have no keep-alive or ping, so a client that vanishes without a FIN keeps its socket, hub subscription and signal queue until the OS's TCP timeout.
+  evidence: Story 4.7 Review Triage Log #13. mercurius `keepAlive` is unset and nothing pings. Choosing an interval is a policy the spec did not settle.
+  target: Epic 8 (default).
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-7-subscribe-to-organization-events-over-graphql.md`
+  summary: ARCHITECTURE 5.5 says an upgrade without a valid session "is refused". In fact the upgrade is answered 101 and `connection_ack`, and the refusal (`UNAUTHENTICATED`, close 4401) comes at `subscribe`, with a 10 s deadline closing any socket that never has a subscription accepted.
+  evidence: Story 4.7 Review Triage Log #14. The owner allowed one 5.5 sentence in this story, so the wording is left for the owner.
+  target: Next ARCHITECTURE reconciliation (owner).
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-7-subscribe-to-organization-events-over-graphql.md`
+  summary: Story 4.8's access re-check must also reset a socket's cached admission (`state.admission` in `organization-events.resolver.ts`), not only close live subscriptions. Otherwise a later subscribe on the same socket is admitted from the first lookup after the session or membership is gone.
+  evidence: Story 4.7 Review Triage Log #30. The admission is resolved once per socket and kept for its lifetime.
+  target: Epic 4, story 4.8.
