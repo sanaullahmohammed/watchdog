@@ -184,6 +184,9 @@ importers:
       mercurius:
         specifier: 16.7.0
         version: 16.7.0(graphql@16.12.0)
+      nodemailer:
+        specifier: 10.0.16
+        version: 10.0.16
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -2267,6 +2270,10 @@ packages:
   node-releases@2.0.54:
     resolution: {integrity: sha512-YHs7BmmcsdAI5Ozuf8JZo6PT0mv2GIWC9vMfvUC3dp65M8hn7Ux8CPL+2oBI7juNuj9d0ndhTcznq2ODBps9cQ==}
     engines: {node: '>=18'}
+
+  nodemailer@10.0.16:
+    resolution: {integrity: sha512-VL9xKErxN+el77o8eBOuYKUPMyEx7F9hfnDCuiUKJRp9v3wnWMOudYgP/SWbwSHy8rUL4cylobuXtki1LpQS7A==}
+    engines: {node: '>=20.0.0'}
 
   normalize-package-data@8.0.0:
     resolution: {integrity: sha512-RWk+PI433eESQ7ounYxIp67CYuVsS1uYSonX3kA6ps/3LWfjVQa/ptEg6Y3T6uAMq1mWpX9PQ+qx+QaHpsc7gQ==}
@@ -5056,6 +5063,8 @@ snapshots:
   node-forge@1.4.0: {}
 
   node-releases@2.0.54: {}
+
+  nodemailer@10.0.16: {}
 
   normalize-package-data@8.0.0:
     dependencies:

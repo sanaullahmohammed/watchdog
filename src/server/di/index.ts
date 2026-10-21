@@ -2,7 +2,9 @@ import path from 'node:path';
 import { type Cradle, fastifyAwilixPlugin } from '@fastify/awilix';
 import { asFunction, createContainer, Lifetime } from 'awilix';
 import type { FastifyInstance } from 'fastify';
+import { env } from '@/config';
 import { makeDependencies } from '@/modules';
+import { createSmtpEmailSender } from '@/modules/notification/infrastructure/smtp-email-sender';
 import { formatName } from '@/server/di/util';
 
 export async function di(fastify: FastifyInstance) {
@@ -17,6 +19,11 @@ export async function di(fastify: FastifyInstance) {
         commandBus: fastify.commandBus,
         eventBus: fastify.eventBus,
       }),
+      // Named explicitly: `smtp-email-sender.ts` matches none of the globs
+      // below. One sender per app; it holds no connection between sends.
+      emailSender: asFunction(() =>
+        createSmtpEmailSender(env.email),
+      ).singleton(),
     })
     .loadModules(
       [

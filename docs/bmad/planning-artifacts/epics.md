@@ -2692,7 +2692,7 @@ So that the subscribe flow and the notification pass both send mail the same way
 
 **Given** the SMTP server's answer
 **When** the sender reports it
-**Then** it says accepted, transient (a network error or a 4xx) or permanent (a 5xx), and its diagnostic never contains the recipient's address
+**Then** it says accepted, transient (a network error, a 4xx, or a 5xx before the recipient is named) or permanent (a 5xx to `RCPT TO` or `DATA`), and its diagnostic never contains the recipient's address
 
 **Given** the new settings
 **When** `.env` omits them

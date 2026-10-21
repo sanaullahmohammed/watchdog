@@ -67,6 +67,8 @@ services:
       BETTER_AUTH_URL: http://localhost:3000
       SMTP_HOST: mailpit
       SMTP_PORT: '1025'
+      SMTP_FROM: WatchDog <watchdog@localhost>
+      PUBLIC_BASE_URL: http://localhost:3000
     ports:
       - '3000:3000'
     depends_on:
@@ -94,6 +96,8 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev_only_change_me_dev_only_change_me}
       SMTP_HOST: mailpit
       SMTP_PORT: '1025'
+      SMTP_FROM: WatchDog <watchdog@localhost>
+      PUBLIC_BASE_URL: http://localhost:3000
     depends_on:
       migrate:
         condition: service_completed_successfully
