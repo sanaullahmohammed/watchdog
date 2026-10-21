@@ -1,0 +1,72 @@
+# The stack `test:compose` runs against (story 4.9, ARCHITECTURE section 9).
+# It proves a change the worker makes reaches a client of the separate api
+# process over the LISTEN/NOTIFY backplane.
+#
+# Always run it as its own project, with all three variables set. Without the
+# profiles, `down`, `stop`, `start` and `logs` skip the profile-gated services:
+#
+#   export COMPOSE_PROJECT_NAME=watchdog-backplane
+#   export COMPOSE_FILE=docker-compose.yml:docker-compose.backplane.yml
+#   export COMPOSE_PROFILES=app,backplane
+#   docker compose up --build --wait --wait-timeout 180
+#   pnpm run test:compose
+#   docker compose down -v
+#
+# Its own project name gives it its own database volume, and nothing but the
+# api is published (on 3100, loopback only), so it never collides with the dev
+# stack or the integration suites' database.
+
+services:
+  postgres:
+    ports: !reset []
+
+  mailpit:
+    ports: !reset []
+
+  api:
+    ports: !override ['127.0.0.1:3100:3000']
+    networks: [default, backplane]
+    environment:
+      # Creation-time target check. Only the target is allowed: not the
+      # backplane gateway, and no other container.
+      MONITOR_ALLOWED_CIDRS: 10.213.7.10/32
+
+  worker:
+    networks: [default, backplane]
+    environment:
+      # Connect-time target check; the same single address as the api.
+      MONITOR_ALLOWED_CIDRS: 10.213.7.10/32
+      WORKER_MONITOR_INTERVAL_MS: '1000'
+      # The overdue window must exceed every loop's interval, or the worker
+      # refuses to boot (src/config/worker-intervals.ts). The maintenance
+      # loop's default, 30 s, would exceed it, so it is brought under too.
+      WORKER_MAINTENANCE_INTERVAL_MS: '5000'
+      WORKER_PASS_OVERDUE_MS: '10000'
+
+  # The controlled target: answers 503 to every path, so a monitor on it fails
+  # every check. It sits on the backplane network only, at a fixed address.
+  backplane-target:
+    image: nginx:1.27.5-alpine
+    profiles: ['backplane']
+    configs:
+      - source: backplane-target-conf
+        target: /etc/nginx/conf.d/default.conf
+    networks:
+      backplane:
+        ipv4_address: 10.213.7.10
+
+configs:
+  backplane-target-conf:
+    content: |
+      server {
+        listen 80 default_server;
+        location / {
+          return 503;
+        }
+      }
+
+networks:
+  backplane:
+    ipam:
+      config:
+        - subnet: 10.213.7.0/24

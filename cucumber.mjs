@@ -7,7 +7,10 @@ const config = {
   // removed it said the line would have imported every integration suite into
   // Cucumber's process, which was wrong: the extglob form would have, this one
   // could not (Epic 3 retrospective, C-3).
-  require: ['cucumber.setup.js', 'tests/**/*.ts'],
+  // Support files and step definitions only, named by shape. `tests/**/*.ts`
+  // also loaded `tests/compose/`, whose suite is node:test against a booted
+  // Compose stack (story 4.9) and has no place in Cucumber's process.
+  require: ['cucumber.setup.js', 'tests/support/*.ts', 'tests/*/*.steps.ts'],
   paths: ['tests/**/*.feature'],
   format: [
     'json:reports/cucumber-report.json',

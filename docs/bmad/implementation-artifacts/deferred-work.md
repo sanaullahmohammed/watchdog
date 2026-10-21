@@ -299,3 +299,10 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: ARCHITECTURE 5.5 says the session, active organization and membership are re-checked. Story 4.8's AC instead keeps the organization a subscription was admitted for when the operator switches their active one, and re-checks membership of that organization.
   evidence: Story 4.8 Review Triage Log #10, `docs/genesis/ARCHITECTURE.md:450`. The AC owns the behaviour, and editing `docs/genesis` needs the owner.
   target: Next ARCHITECTURE reconciliation (owner).
+
+## From Story 4.9 (2026-10-21)
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-4-9-prove-worker-events-reach-api-clients-under-compose.md`
+  summary: ARCHITECTURE still describes the `compose` job as `docker compose --profile app up` (the "Decided 2026-10-18" paragraph after section 9's table). Section 8 says the `app` profile stays down while the integration suites run, without the `watchdog-backplane` exception AGENTS.md now states, and it does not list `docker-compose.backplane.yml`. The reworded line 866 still sits under the "Planned checks, not current CI coverage" lead-in.
+  evidence: Story 4.9 Review Triage Log #11. The owner allowed only the section 9 row and the line 866 rewording in this story.
+  target: Next ARCHITECTURE reconciliation (owner).

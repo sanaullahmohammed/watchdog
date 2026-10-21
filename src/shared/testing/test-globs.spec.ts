@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { globSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
@@ -15,8 +15,9 @@ import { describe, it } from 'node:test';
  */
 
 // This project compiles to CommonJS, so __dirname rather than import.meta.
+const ROOT = join(__dirname, '../../..');
 const scripts: Record<string, string> = JSON.parse(
-  readFileSync(join(__dirname, '../../../package.json'), 'utf8'),
+  readFileSync(join(ROOT, 'package.json'), 'utf8'),
 ).scripts;
 
 describe('test script globs', () => {
@@ -43,5 +44,24 @@ describe('test script globs', () => {
       [],
       'quote these, or sh expands them one directory deep before Node sees them',
     );
+  });
+
+  // A glob that matches nothing still exits 0, so a script whose files moved
+  // or were misnamed would report success with no test run at all.
+  it('matches at least one file with every quoted glob', () => {
+    const quoted = Object.entries(scripts)
+      .filter(([, script]) => script.includes('--test'))
+      .flatMap(([name, script]) =>
+        script
+          .split(/\s+/)
+          .filter((token) => /^(['"]).*\*.*\1$/.test(token))
+          .map((token) => ({ name, glob: token.slice(1, -1) })),
+      );
+    assert.ok(quoted.length >= 2, 'no quoted --test globs found');
+
+    const empty = quoted
+      .filter(({ glob }) => globSync(glob, { cwd: ROOT }).length === 0)
+      .map(({ name, glob }) => `${name}: ${glob}`);
+    assert.deepEqual(empty, [], 'these globs match no file');
   });
 });

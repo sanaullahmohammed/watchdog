@@ -860,10 +860,11 @@ The committed [workflow](../../.github/workflows/ci.yml) is the executable sourc
 | `check` | Frozen-lockfile install, Biome, `tsc --noEmit`, dependency-cruiser and unit tests. No database or local `.env`. |
 | `database` | Postgres service, restricted app role creation, `pnpm run db:migrate` using `DBMATE_DATABASE_URL`, Better Auth schema drift check as owner, integration and Cucumber E2E tests as `watchdog_app`. |
 | `docker` | Build the shared image without pushing or booting it. |
+| `compose` | Build the shared image, boot it as its own Compose project (`docker-compose.backplane.yml`, profiles `app` and `backplane`) with `up --wait`, and run `test:compose`: a worker-originated monitor breach reaches an api client's public stream and admin subscription. Prints the stack's logs on failure and always removes it with its volume. |
 
 The toolchain is `tsx` in development and `tsc` plus `resolve-tspaths` in production, not native type-stripping (section 4). Corepack uses the package-manager pin, Node uses `.nvmrc`, and pnpm >= 12 reads `allowBuilds` from `pnpm-workspace.yaml`.
 
-**Planned checks, not current CI coverage:** k6 smoke/load tests arrive with ROADMAP phase 5. A smoke test that boots the built container is separately tracked for Epic 8.
+**Planned checks, not current CI coverage:** k6 smoke/load tests arrive with ROADMAP phase 5. The `compose` job already boots the built container; Epic 8's container smoke test builds on that boot rather than adding a second.
 
 Decided 2026-10-18 (owner): Epic 4 adds a `compose` job that builds the image, starts the whole stack with `docker compose --profile app up`, and runs the cross-process test ROADMAP's LISTEN/NOTIFY row asks for: a worker-originated change reaching an api client. It runs on every pull request, against its own stack rather than the `database` job's, so its worker cannot disturb the integration suites. It boots the built image, which is part of what Epic 8's container smoke test tracks; Epic 8 builds on it rather than adding a second boot.
 
