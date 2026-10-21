@@ -329,7 +329,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
   summary: `logFailure` logs a 4xx `ExceptionBase` by its message, so a subscriber slice's refusal must never interpolate the caller's address into an exception message (e.g. "x@y is already subscribed").
   evidence: Story 6.1 Review Triage Log #7. No such message exists yet; story 6.3 adds the first refusals that see an address.
-  target: Epic 6, story 6.3.
+  target: Epic 6, story 6.3. RESOLVED by story 6.3 (2026-10-21): the subscribe refusals are ajv's field messages and the uniform miss; `create-subscriber.integration.test.ts` asserts no 400 body and no log line carries the address.
 
 ## From Story 6.2 (2026-10-21)
 
@@ -344,3 +344,18 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: Mailpit is `axllent/mailpit:latest` in both Compose and CI's database job, so a new release can change the `/api/v1` shapes that `src/shared/testing/mailpit.ts` reads (`messages: null`, `Headers` as arrays, CRLF in `Text`) and break CI without warning.
   evidence: Story 6.2 Review Triage Log #20. Compose used `latest` before story 6.2; CI's service now follows it.
   target: Epic 8 (default), or the first story whose Mailpit read breaks.
+
+## From Story 6.3 (2026-10-21)
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-3-subscribe-to-an-organization-s-status-page.md`
+  summary: ARCHITECTURE 5.6 says the subscribe route has its own IP limit "besides section 5.4.1's bounds", which reads as two limiters. As built, the route has one, the stricter, and a boot check (`assertSubscribeLimits`) refuses a subscribe limit looser than the page's. 5.4.1 also has no paragraph, like the stream's, saying how `/status/:orgSlug/subscribers` inherits the bounds: a bucket of its own, `no-store` instead of cache validators, and its own `OPTIONS` route in front of the catch-all.
+  evidence: Story 6.3 Review Triage Log #2. The behaviour meets both bounds; only the wording differs. A genesis edit needs the owner's OK.
+  target: Owner decision, raised with story 6.3's PR.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-3-subscribe-to-an-organization-s-status-page.md`
+  summary: The subscribe limit keys on the socket address with `trustProxy` off. Behind a reverse proxy, every visitor of every organization shares one bucket of 5 subscribes an hour, so one client can lock the form for everyone. And a caller with an IPv6 /64 gets a new bucket per address. ARCHITECTURE 5.4.1 records the proxy point (F-18) for the page's 120 a minute; at 5 an hour it decides whether the form works at all.
+  evidence: Story 6.3 Review Triage Log #6. `trustProxy` and the key are pre-existing choices of the public surface, not this story's.
+  target: Epic 8 (default), with the deployment and proxy settings.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-3-subscribe-to-an-organization-s-status-page.md`
+  summary: Confirmation emails have no global or per-organization budget, only the per-IP limit and the per-address throttle (decision D7). Callers spread over many addresses, or an IPv6 range, can make the api mail any number of distinct third-party addresses once each, which can hurt the sender's reputation. In-flight sends are not capped either.
+  evidence: Story 6.3 Review Triage Log #7. D7 set the bounds; a budget is a new product rule.
+  target: Epic 6 retrospective, for the owner to decide.

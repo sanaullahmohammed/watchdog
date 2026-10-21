@@ -37,6 +37,7 @@ const OWNED: Readonly<Record<string, readonly string[]>> = {
     'uptime_rollup_progress',
   ],
   service: ['services', 'service_groups'],
+  notification: ['subscribers'],
   'status-page': [],
   'better-auth': authTables,
 };
@@ -45,6 +46,8 @@ const OWNED: Readonly<Record<string, readonly string[]>> = {
 const FOREIGN: Readonly<Record<string, readonly string[]>> = {
   incident: [],
   maintenance: [],
+  // The subscribe route resolves the organization by slug.
+  notification: ['organization'],
   // The due query and the at-threshold query (Story 5.16) skip archived
   // services (Story 5.8).
   monitoring: ['services'],

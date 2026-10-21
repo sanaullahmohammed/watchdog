@@ -170,6 +170,12 @@ const REST_ONLY_BY_DESIGN: ReadonlyMap<string, string> = new Map([
     'The public status stream is Server-Sent Events, which has no SDL form, and ' +
       'its GraphQL equivalent would be a subscription, which is admin-only (story 4.5).',
   ],
+  [
+    'notification/commands/create-subscriber',
+    'Subscribe, confirm and unsubscribe are REST only in v1: the links in the ' +
+      'emails land on REST endpoints and no admin lists subscribers (Epic 6, ' +
+      'ARCHITECTURE 5.6; story 6.3).',
+  ],
 ]);
 
 const capabilities = discoverCapabilities();
