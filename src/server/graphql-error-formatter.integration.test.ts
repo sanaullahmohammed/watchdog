@@ -185,7 +185,11 @@ describe('GraphQL errors, masked the way REST masks them (retrospective R-6)', (
       .find((entry) => entry.correlationId === correlationId);
     assert.ok(logged, 'the original is logged under the correlation id');
     assert.equal(logged.level, 50);
-    assert.match(logged.err.message, /invalid input syntax for type uuid/);
+    // Story 6.1: a database error's text can quote a value, so the line names
+    // it by its code and the serializer redacts its message.
+    assert.equal(logged.msg, 'Database error 22P02');
+    assert.equal(logged.err.code, '22P02');
+    assert.equal(logged.err.message, '[Redacted]');
     assert.ok(logged.err.stack, 'with its stack, since the server broke');
   });
 });

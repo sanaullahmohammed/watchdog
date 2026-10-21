@@ -1,4 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
+import { logMessageOf } from '@/shared/db/sql-debug';
 
 /**
  * How loudly a failed request is logged, decided by who caused it. REST's
@@ -11,6 +12,12 @@ import type { FastifyBaseLogger } from 'fastify';
  * was once logged at `error` with a stack, so an anonymous caller could write
  * level-50 lines on demand (Epic 3 retrospective, AV-9, R-7).
  *
+ * The line's message is never a database error's own text, which can quote a
+ * value such as a subscriber's address: a 5xx caused by one says `Database
+ * error <code>`. Fastify's own refusal of a request (`FST_ERR_...`) logs its
+ * code, because its message can quote the request: a malformed JSON body's
+ * parse error quotes part of the body. The response is not affected.
+ *
  * Not a Fastify plugin, so it lives outside `src/server/plugins`, which
  * autoload evaluates at boot.
  */
@@ -21,10 +28,15 @@ export function logFailure(
   correlationId: string,
 ): void {
   if (statusCode >= 500) {
-    log.error({ err: error, correlationId }, error.message);
+    log.error({ err: error, correlationId }, logMessageOf(error));
     return;
   }
 
   const level = statusCode === 401 || statusCode === 403 ? 'warn' : 'info';
-  log[level]({ statusCode, correlationId }, error.message);
+  const { code } = error as { code?: unknown };
+  const message =
+    typeof code === 'string' && code.startsWith('FST_ERR_')
+      ? code
+      : logMessageOf(error);
+  log[level]({ statusCode, correlationId }, message);
 }

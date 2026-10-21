@@ -5,6 +5,7 @@ import type { FastifyInstance, InjectOptions } from 'fastify';
 import { env } from '@/config';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
+import { captureLogs, type LogEntry } from '@/shared/testing/logs';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 
 /**
@@ -18,16 +19,10 @@ const tag = `errlog-${randomBytes(4).toString('hex')}`;
 let app: FastifyInstance;
 let userId = '';
 let orgId = '';
-const logLines: string[] = [];
+const logs = captureLogs();
 
-type LogEntry = {
-  level: number;
-  msg: string;
-  reqId?: string;
-  correlationId?: string;
-  statusCode?: number;
-  err?: { stack?: string };
-};
+/** An address no other line in any suite holds, as a subscriber's would be. */
+const address = `subscriber-${tag}@example.test`;
 
 /** Fastify's own two lines for every request, which say nothing of failure. */
 const ROUTINE = new Set(['incoming request', 'request completed']);
@@ -44,12 +39,41 @@ async function logsOf(request: InjectOptions) {
     ...request,
     headers: { ...request.headers, 'request-id': id },
   });
-  const entries = logLines
+  const lines = logs.lines.filter((line) => {
+    const entry = JSON.parse(line) as LogEntry;
+    return entry.reqId === id || entry.correlationId === id;
+  });
+  const entries = lines
     .map((line) => JSON.parse(line) as LogEntry)
-    .filter((entry) => entry.reqId === id || entry.correlationId === id)
     .filter((entry) => !ROUTINE.has(entry.msg));
-  return { response, entries };
+  return { response, entries, lines };
 }
+
+/**
+ * Runs `query` in place of the public page's service read, so the request
+ * fails with whatever real database error it raises.
+ */
+async function failingPublicPage(
+  query: () => Promise<unknown>,
+): Promise<Awaited<ReturnType<typeof logsOf>>> {
+  const repository = app.diContainer.resolve(
+    'publicStatusRepository' as never,
+  ) as { listPublicServices: () => Promise<unknown> };
+  const listPublicServices = repository.listPublicServices;
+  repository.listPublicServices = query;
+  try {
+    return await logsOf({ method: 'GET', url: `/status/${tag}` });
+  } finally {
+    repository.listPublicServices = listPublicServices;
+  }
+}
+
+/** A real database error whose message quotes `address`. */
+const castFailure = () =>
+  sql`select ${address}::int`.then(
+    () => assert.fail('the cast succeeded'),
+    (error: unknown) => error as Error,
+  );
 
 const graphql = (query: string): InjectOptions => ({
   method: 'POST',
@@ -71,7 +95,7 @@ describe('Failures logged by who caused them (retrospective AV-9, R-7)', () => {
     app = await buildApp({
       logger: {
         level: 'info',
-        stream: { write: (line: string) => logLines.push(line) },
+        stream: logs.stream,
       },
     });
     await app.ready();
@@ -94,12 +118,14 @@ describe('Failures logged by who caused them (retrospective AV-9, R-7)', () => {
     });
     assert.equal(response.statusCode, 400);
     assert.equal(response.json().correlationId, id);
-    const entries = logLines
-      .map((line) => JSON.parse(line) as LogEntry)
+    const entries = logs
+      .entries()
       .filter((e) => e.reqId === id || e.correlationId === id)
       .filter((e) => !ROUTINE.has(e.msg));
     assert.equal(entries.length, 1, JSON.stringify(entries));
     assert.equal(entries[0]?.level, 30);
+    // Story 6.1: Fastify's own refusal logs its code, not its message.
+    assert.equal(entries[0]?.msg, 'FST_ERR_BAD_URL');
     assert.equal(entries[0]?.err?.stack, undefined);
     assert.equal(entries[0]?.correlationId, id);
   });
@@ -142,12 +168,13 @@ describe('Failures logged by who caused them (retrospective AV-9, R-7)', () => {
 
   it('answers a malformed body as the 400 it is, and logs it at info', async () => {
     // Fastify refuses this before any handler runs. It was a 500, logged at
-    // error, on every POST route, for anyone.
-    const { response, entries } = await logsOf({
+    // error, on every POST route, for anyone. Its parse error can quote the
+    // body, so story 6.1 logs the refusal's code instead of its message.
+    const { response, entries, lines } = await logsOf({
       method: 'POST',
       url: '/api/v1/services',
       headers: { 'content-type': 'application/json' },
-      payload: '{"name":',
+      payload: `{"email": ${address}`,
     });
 
     assert.equal(response.statusCode, 400, response.body);
@@ -160,8 +187,9 @@ describe('Failures logged by who caused them (retrospective AV-9, R-7)', () => {
     });
     assert.match(correlationId, /^[0-9a-f-]{36}$/);
     assert.deepEqual(summary(entries), [
-      { level: 30, msg: rest.message, stack: false },
+      { level: 30, msg: 'FST_ERR_CTP_INVALID_JSON_BODY', stack: false },
     ]);
+    for (const line of lines) assert.ok(!line.includes(address), line);
   });
 
   it("logs GraphQL's own verdict on a query at info, once", async () => {
@@ -196,6 +224,44 @@ describe('Failures logged by who caused them (retrospective AV-9, R-7)', () => {
     }
   });
 
+  it("keeps a unique violation's address out of its 500 line (story 6.1)", async () => {
+    const { response, entries, lines } = await failingPublicPage(() =>
+      sql.begin(async (transaction) => {
+        // postgres.js's TransactionSql type drops the call signature.
+        const tx = transaction as unknown as typeof sql;
+        await tx`
+          create temp table errlog_subscribers (
+            email text constraint errlog_subscribers_email_key unique
+          ) on commit drop
+        `;
+        await tx`insert into errlog_subscribers values (${address}), (${address})`;
+      }),
+    );
+
+    assert.equal(response.statusCode, 500);
+    for (const line of lines) assert.ok(!line.includes(address), line);
+    assert.deepEqual(summary(entries), [
+      { level: 50, msg: 'Database error 23505', stack: true },
+    ]);
+    const err = entries[0]?.err ?? {};
+    assert.equal(err.code, '23505');
+    assert.equal(err.constraint_name, 'errlog_subscribers_email_key');
+    assert.equal(err.detail, '[Redacted]');
+  });
+
+  it("keeps an address quoted in a database error's message out of its 500 line", async () => {
+    const { response, entries, lines } = await failingPublicPage(async () => {
+      throw await castFailure();
+    });
+
+    assert.equal(response.statusCode, 500);
+    for (const line of lines) assert.ok(!line.includes(address), line);
+    assert.deepEqual(summary(entries), [
+      { level: 50, msg: 'Database error 22P02', stack: true },
+    ]);
+    assert.equal(entries[0]?.err?.message, '[Redacted]');
+  });
+
   it('keeps parameters and args off a logged error, whatever logger the app has', async () => {
     const secret = `secret-subscriber-${tag}@example.test`;
     const make = () =>
@@ -203,18 +269,46 @@ describe('Failures logged by who caused them (retrospective AV-9, R-7)', () => {
         parameters: [secret],
         args: [secret],
       });
-    const lines: string[] = [];
-    const stream = { write: (line: string) => lines.push(line) };
+    // Story 6.1: real database errors, wrapped and aggregated, quoting
+    // `address` in their messages.
+    const database = await castFailure();
+    const otherLogs = captureLogs();
     // The default branch cannot take a stream; it is covered in sql-debug.spec.ts.
-    const other = await buildApp({ logger: { level: 'info', stream } });
+    const other = await buildApp({
+      logger: { level: 'info', stream: otherLogs.stream },
+    });
     try {
       for (const target of [app, other]) {
-        const before = logLines.length;
+        const captured = target === app ? logs : otherLogs;
+        const before = captured.lines.length;
         target.log.error({ err: make() }, 'as err');
         target.log.error({ error: make() }, 'as error');
-        const written = target === app ? logLines.slice(before) : lines;
-        assert.ok(written.length >= 2);
-        for (const line of written) assert.ok(!line.includes(secret), line);
+        target.log.error(
+          { err: new Error('wrapped', { cause: database }) },
+          'wrapped',
+        );
+        target.log.error(
+          { err: new AggregateError([database], 'aggregate') },
+          'aggregate',
+        );
+        target.log.error({ reason: database }, 'other key');
+        target.log.error(database);
+        const written = captured.lines.slice(before);
+        assert.equal(written.length, 6);
+        for (const line of written) {
+          assert.ok(!line.includes(secret), line);
+          assert.ok(!line.includes(address), line);
+        }
+        const [, , wrapped, aggregate, otherKey, bare] = written.map(
+          (line) => JSON.parse(line) as LogEntry,
+        );
+        assert.equal((wrapped?.err?.cause as { code?: string }).code, '22P02');
+        assert.equal(
+          (aggregate?.err?.aggregateErrors as { code?: string }[])[0]?.code,
+          '22P02',
+        );
+        assert.equal((otherKey?.reason as { code?: string }).code, '22P02');
+        assert.equal(bare?.msg, 'Database error 22P02');
       }
     } finally {
       await other.close();

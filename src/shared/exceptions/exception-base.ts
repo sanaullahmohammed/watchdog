@@ -1,4 +1,5 @@
 import { getRequestId } from '@/shared/app/app-request-context';
+import { serializeError } from '@/shared/db/sql-debug';
 
 export interface SerializedException {
   message: string;
@@ -49,7 +50,9 @@ export abstract class ExceptionBase extends Error {
       statusCode: this.statusCode,
       stack: this.stack,
       correlationId: this.correlationId,
-      cause: JSON.stringify(this.cause),
+      // Scrubbed as a logger would: a database error as the cause would
+      // otherwise print the values its fields quote.
+      cause: JSON.stringify(serializeError(this.cause)),
       metadata: this.metadata,
     };
   }
