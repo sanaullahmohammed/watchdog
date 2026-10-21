@@ -86,11 +86,11 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `spec-9-13-sql-log-redaction.md`
   summary: Values inside a Postgres error still reach the logs. They appear in its `message` and `detail`, such as `invalid input syntax for type integer: "..."` or a unique-key violation's `Key (email)=(...)`, and in `where`, `hint` and `internal_query`. Story 9.13 redacts only the `parameters` and `args` properties. Redact or replace every field postgres.js copies onto the error before subscriber addresses are stored. Settle it with the 9.13 entry on nested errors: a recursive scrub in the serializers would likely hold both fixes.
   evidence: Story 9.13 Boundaries (Never) and Review Triage Log #7; `err.message` and `err.detail` are logged by `logFailure` and the worker.
-  target: Epic 6 prerequisite.
+  target: Epic 6 prerequisite. Story 6.1 (written 2026-10-21) carries it.
 - source_spec: `spec-9-13-sql-log-redaction.md`
   summary: Log redaction covers only top-level `err.parameters`, `err.args`, `error.parameters` and `error.args`. In debug mode, a database error wrapped in another error, inside an `AggregateError`, serialized through `ExceptionBase.toJSON` (which stringifies its `cause`), logged under another key, or printed with `console.error` (seed failures, the event bus's default reporter) still prints parameter values. Consider a recursive scrub in the `err`/`error` serializers before Epic 6, together with the 9.13 entry on values in Postgres error fields.
   evidence: Story 9.13 Review Triage Log #4 and #5. The Epic 9 retro (DR-5) confirmed the `cause` path: `ExceptionBase.toJSON` writes `cause: JSON.stringify(this.cause)` (`src/shared/exceptions/exception-base.ts:52`), and at debug level postgres.js makes `parameters` enumerable, so a database error passed as a cause would print its values. Unverified in practice: nothing in `src` passes a database error as a cause, and `DatabaseErrorException` exists but nothing constructs it today.
-  target: Epic 6 prerequisite.
+  target: Epic 6 prerequisite. Story 6.1 (written 2026-10-21) carries it.
 
 ## From Story 9.14 (2026-10-08)
 
@@ -150,7 +150,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `spec-5-13-order-the-admin-timeline-by-sequence-not-the-clock.md`
   summary: `sequence` is insert order, not commit order. Two posted updates hold only `for share` and can commit in either order, so a reader can see N+1 before N exists. A notification cursor moved from the stamp to `sequence` would still need its overlap.
   evidence: Review pass 1, E3/B3. The same holds for `created_at` today; ARCHITECTURE's cursor "reads with an overlap".
-  target: Epic 6, the notification pass's cursor (ARCHITECTURE 5.6). Retargeted 2026-10-18 while writing Epic 4's stories: Epic 4 keeps no cursor, since a public stream starts from the current page and an admin subscription carries signals only (ARCHITECTURE 5.4).
+  target: Epic 6, the notification pass's cursor (ARCHITECTURE 5.6). Retargeted 2026-10-18 while writing Epic 4's stories: Epic 4 keeps no cursor, since a public stream starts from the current page and an admin subscription carries signals only (ARCHITECTURE 5.4). Story 6.6 (written 2026-10-21) carries it: its cursor re-reads `NOTIFICATION_CURSOR_OVERLAP_SECONDS` behind itself.
 - source_spec: `spec-5-13-order-the-admin-timeline-by-sequence-not-the-clock.md`
   summary: The `incident_updates_sequence` backfill and its `setval` run only against an empty table in CI, and no test starts from pre-migration data. They were checked by hand on 119 local rows.
   evidence: Review pass 1, B9/V1. The repo has no pattern for testing a migration against existing rows. Settle it with one if a later migration also backfills.
