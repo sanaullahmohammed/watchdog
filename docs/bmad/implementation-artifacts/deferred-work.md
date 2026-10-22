@@ -371,3 +371,22 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: Compose gives api and worker `${NOTIFICATION_LINK_SECRET:-dev_only…}` and `${BETTER_AUTH_SECRET:-dev_only…}`, values printed in the repository. A self-hosted deployment that forgets either variable boots with a known key, so anyone could sign unsubscribe links (or sessions). Nothing refuses a known dev value when `NODE_ENV=production`.
   evidence: Story 6.4 Review Triage Log #3. The pattern predates this story (`BETTER_AUTH_SECRET`).
   target: Epic 8 (default), with deployment hardening.
+
+## From Story 6.5 (2026-10-22)
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-5-one-rule-for-what-is-public.md`
+  summary: ARCHITECTURE still names the old location in two places. Section 5.4.x, the "Decided 2026-10-18 (owner)" public-stream paragraph (about line 392), names `src/modules/status-page/domain/public-page.ts`. Section 5.6 "One rule for what is public" (about line 543) says the rule "moves from `status-page/domain/public-page.ts` into `src/shared`". Both should name `src/shared/domain/public-page.ts` as built. The first sits inside an owner-decided paragraph.
+  evidence: Story 6.5 Review Triage Log #4; `grep -n public-page docs/genesis/ARCHITECTURE.md` finds both. A genesis edit needs the owner's OK.
+  target: Genesis edit (owner).
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-5-one-rule-for-what-is-public.md`
+  summary: The "visible service" predicate (`is_public and archived_at is null`) is SQL in the status-page repository (`src/modules/status-page/database/public-status.repository.ts:226,304`), not in `src/shared/domain/public-page.ts`. Stories 6.6 and 6.8 would have to restate it. The shared `AffectedService.visible` is documented in words ("`is_public` and not archived"), so the shared rule trusts each caller to compute `visible` the same way in SQL. That is why a shared SQL fragment or view matters. ARCHITECTURE 5.6 says nobody keeps a copy, so they should share it and not copy it.
+  evidence: Story 6.5 spec review, owner decision A (the move stays pure); Review Triage Log #7.
+  target: Story 6.6 (first reader), then 6.8.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-5-one-rule-for-what-is-public.md`
+  summary: Nothing stops a copy of `publishable` or `overallStatus` from coming back. The "no copy in `src/modules`" check was a one-time grep, and dependency-cruiser blocks only imports. A spec in the style of `test-globs.spec.ts` that fails on a definition of either under `src/modules` would hold ARCHITECTURE 5.6's "none keeps a copy".
+  evidence: Story 6.5 Review Triage Log #6.
+  target: Story 6.6 (first reader of the rule outside status-page).
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-5-one-rule-for-what-is-public.md`
+  summary: The moved file's doc comments still speak only of the public page. The header at `src/shared/domain/public-page.ts:8-12` names "Epic 4's public event gate", and `visible` says "the only services the page lists". Now the feed and emails share it, so 6.6 should widen the wording when it first imports the rule.
+  evidence: Story 6.5 Review Triage Log #8; the spec kept comment edits out of scope so the move stays pure.
+  target: Story 6.6.

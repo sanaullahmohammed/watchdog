@@ -2,12 +2,12 @@ import type {
   PublicServiceRow,
   PublicUptimeRow,
 } from '@/modules/status-page/database/public-status.repository';
-import { overallStatus } from '@/modules/status-page/domain/public-page';
 import {
   type PublicStatusPageResponseDto,
   UPTIME_WINDOW_DAYS,
 } from '@/modules/status-page/dtos/public-status-page.response.dto';
 import type { PublicStatusPageView } from '@/modules/status-page/queries/get-public-status-page/get-public-status-page.handler';
+import { overallStatus } from '@/shared/domain/public-page';
 
 /**
  * One presenter for both surfaces, as every other module read has. The parity

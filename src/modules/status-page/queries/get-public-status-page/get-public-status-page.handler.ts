@@ -8,14 +8,11 @@ import type {
   PublicUptimeRow,
 } from '@/modules/status-page/database/public-status.repository';
 import {
-  type Published,
-  publishable,
-} from '@/modules/status-page/domain/public-page';
-import {
   type ResolveOrganizationBySlugQueryResult,
   resolveOrganizationBySlugQuery,
 } from '@/modules/status-page/queries/resolve-organization-by-slug/resolve-organization-by-slug.handler';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { type Published, publishable } from '@/shared/domain/public-page';
 
 /**
  * What one page is made of, with DOMAIN's listing rule already applied: only
