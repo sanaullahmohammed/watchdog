@@ -1,5 +1,5 @@
-import type { AffectedService } from '@/modules/status-page/domain/public-page';
 import type { TenantTransaction } from '@/shared/db/tenant-transaction';
+import type { AffectedService } from '@/shared/domain/public-page';
 import {
   ACTIVE_INCIDENT_STATUSES,
   type IncidentImpact,

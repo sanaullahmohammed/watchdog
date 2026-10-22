@@ -4,7 +4,7 @@ import {
   type AffectedService,
   overallStatus,
   publishable,
-} from '@/modules/status-page/domain/public-page';
+} from '@/shared/domain/public-page';
 
 /**
  * Epic 3 retrospective, action item 1 (R-1, R-2, R-12). The rules are DOMAIN's,
