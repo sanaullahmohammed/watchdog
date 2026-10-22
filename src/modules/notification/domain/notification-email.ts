@@ -43,22 +43,22 @@ const capitalise = (text: string) =>
   text.charAt(0).toUpperCase() + text.slice(1);
 
 /**
- * The email for one public change (story 6.7). Plain text, never HTML. Every
- * body ends with the page link and the unsubscribe link, and the message
- * carries both `List-Unsubscribe` headers (RFC 8058 one-click). The subject
- * holds no line break.
+ * How one public change is worded, without the organization tag or any link:
+ * the title (the email subject without `[Org] `) and the change lines (the
+ * email body above its page and unsubscribe links). The email and the Atom
+ * feed (story 6.8) both build from it, so they cannot drift. The title holds
+ * no line break.
  */
-export function buildNotificationEmail(
-  input: NotificationEmailInput,
-): EmailMessage {
-  const { source } = input;
-  const tag = `[${input.orgName}]`;
-  let subject: string;
+export function describeChange(source: NotificationSource): {
+  title: string;
+  lines: string[];
+} {
+  let title: string;
   let lines: string[];
 
   switch (source.sourceType) {
     case 'incident_update':
-      subject = `${tag} ${source.incidentTitle}: ${capitalise(source.status)}`;
+      title = `${source.incidentTitle}: ${capitalise(source.status)}`;
       lines = [
         `Status: ${capitalise(source.status)}`,
         '',
@@ -68,7 +68,7 @@ export function buildNotificationEmail(
       ];
       break;
     case 'maintenance_scheduled':
-      subject = `${tag} Maintenance scheduled: ${source.title}`;
+      title = `Maintenance scheduled: ${source.title}`;
       lines = [
         `Scheduled start: ${formatUtc(source.scheduledStartAt)}`,
         `Scheduled end: ${formatUtc(source.scheduledEndAt)}`,
@@ -76,7 +76,7 @@ export function buildNotificationEmail(
       ];
       break;
     case 'maintenance_started':
-      subject = `${tag} Maintenance started: ${source.title}`;
+      title = `Maintenance started: ${source.title}`;
       lines = [
         `Started ${formatUtc(source.startedAt ?? source.scheduledStartAt)}.`,
         `Scheduled end: ${formatUtc(source.scheduledEndAt)}`,
@@ -84,7 +84,7 @@ export function buildNotificationEmail(
       break;
     case 'maintenance_completed':
       if (source.startedAt === null) {
-        subject = `${tag} Maintenance ended without starting: ${source.title}`;
+        title = `Maintenance ended without starting: ${source.title}`;
         lines = [
           'This maintenance window ended without starting.',
           '',
@@ -92,13 +92,28 @@ export function buildNotificationEmail(
           `Scheduled end: ${formatUtc(source.scheduledEndAt)}`,
         ];
       } else {
-        subject = `${tag} Maintenance completed: ${source.title}`;
+        title = `Maintenance completed: ${source.title}`;
         lines = [
           `Completed ${formatUtc(source.completedAt ?? source.scheduledEndAt)}.`,
         ];
       }
       break;
   }
+
+  return { title: oneLine(title), lines };
+}
+
+/**
+ * The email for one public change (story 6.7). Plain text, never HTML. Every
+ * body ends with the page link and the unsubscribe link, and the message
+ * carries both `List-Unsubscribe` headers (RFC 8058 one-click). The subject
+ * holds no line break.
+ */
+export function buildNotificationEmail(
+  input: NotificationEmailInput,
+): EmailMessage {
+  const { title, lines } = describeChange(input.source);
+  const subject = `[${input.orgName}] ${title}`;
 
   return {
     to: input.to,

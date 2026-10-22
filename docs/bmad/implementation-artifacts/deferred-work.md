@@ -420,3 +420,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: A `sent` row keeps its last failure's `last_error`, and abandon-at-claim keeps an existing diagnostic (writing `EUNRECORDED` only when it is null). Neither is pinned by a test.
   evidence: Story 6.7 Review Triage Log #36 (verification gap). Both `coalesce` calls in `delivery.repository.ts` could become plain assignments with every test passing; nothing reads `last_error` yet.
   target: The first story that reads `last_error` (an admin delivery view, or story 6.9's pruning if it reports).
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-8-follow-a-status-page-as-an-atom-feed.md`
+  summary: The public surface's revalidation compares `If-None-Match` exactly, so a tag list, `*`, or a proxy-weakened `W/` tag never gets a 304, and neither the page nor the feed sends `Last-Modified`.
+  evidence: `get-public-status-page.public.route.ts` and `get-atom-feed.public.route.ts` both test `req.headers['if-none-match'] === etag`; RFC 9110 13.1.2 uses weak comparison over a list. A gzip-ing reverse proxy weakens strong tags, so pollers behind one pay a full body every time (story 6.8 review, triage 24).

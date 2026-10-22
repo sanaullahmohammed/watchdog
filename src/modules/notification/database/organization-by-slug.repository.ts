@@ -6,6 +6,8 @@ export type SubscribableOrganization = {
   id: string;
   name: string;
   slug: string;
+  /** For the feed's id date (story 6.8). */
+  createdAt: Date;
 };
 
 /**
@@ -20,7 +22,7 @@ export default function organizationBySlugRepository() {
       slug: string,
     ): Promise<SubscribableOrganization | undefined> {
       const rows = await sql<SubscribableOrganization[]>`
-        select "id", "name", "slug" from "organization"
+        select "id", "name", "slug", "createdAt" from "organization"
         where "slug" = ${slug}
         limit 1
       `;
@@ -37,7 +39,7 @@ export default function organizationBySlugRepository() {
       id: string,
     ): Promise<SubscribableOrganization | undefined> {
       const rows = await tx.sql<SubscribableOrganization[]>`
-        select "id", "name", "slug" from "organization"
+        select "id", "name", "slug", "createdAt" from "organization"
         where "id" = ${id}
         limit 1
       `;
