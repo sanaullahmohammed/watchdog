@@ -28,6 +28,24 @@ type LockedRow = { id: string; status: string; throttled: boolean };
 export default function subscriberRepository() {
   return {
     /**
+     * The address of `subscriberId` while it is `confirmed`, else undefined.
+     * No row lock: unsubscribe locks the subscriber and then deletes its
+     * deliveries, so a claim holding a delivery must not wait on the
+     * subscriber (story 6.7).
+     */
+    async confirmedAddress(
+      tx: TenantTransaction,
+      subscriberId: string,
+    ): Promise<string | undefined> {
+      const rows = await tx.sql<{ email: string }[]>`
+        select email from subscribers
+        where id = ${subscriberId} and org_id = ${tx.orgId}
+          and status = 'confirmed'
+      `;
+      return rows[0]?.email;
+    },
+
+    /**
      * Confirms the pending, unexpired row holding `tokenHash`, in one
      * statement, so of two concurrent confirms exactly one gets the row.
      * Returns the id, or undefined when no row qualifies.

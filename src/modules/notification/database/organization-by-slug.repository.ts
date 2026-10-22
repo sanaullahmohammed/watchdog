@@ -1,4 +1,5 @@
 import sql from '@/shared/db/postgres';
+import type { TenantTransaction } from '@/shared/db/tenant-transaction';
 
 /** The organization behind a public slug. Better Auth owns these columns. */
 export type SubscribableOrganization = {
@@ -21,6 +22,23 @@ export default function organizationBySlugRepository() {
       const rows = await sql<SubscribableOrganization[]>`
         select "id", "name", "slug" from "organization"
         where "slug" = ${slug}
+        limit 1
+      `;
+      return rows[0];
+    },
+
+    /**
+     * The same read by id, for the sender (story 6.7). On the claim's own
+     * transaction, so a claim never waits on a second connection while it
+     * holds a row lock.
+     */
+    async findById(
+      tx: TenantTransaction,
+      id: string,
+    ): Promise<SubscribableOrganization | undefined> {
+      const rows = await tx.sql<SubscribableOrganization[]>`
+        select "id", "name", "slug" from "organization"
+        where "id" = ${id}
         limit 1
       `;
       return rows[0];

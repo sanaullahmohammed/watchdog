@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { env } from '@/config';
+import { queueEmailNotificationCommand } from '@/modules/notification/commands/queue-email-notifications/queue-email-notifications.handler';
 import { unsubscribeLink } from '@/modules/notification/domain/unsubscribe-link';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
@@ -70,8 +71,11 @@ async function newOrg(): Promise<Org> {
   return { cookie, orgId, slug };
 }
 
-const pass = (orgId: string) =>
-  runNotificationPass(app, logger, { orgIds: [orgId] });
+// Queueing only: a full pass would go on to send what it queued (story 6.7),
+// and these tests read the ledger as the queue left it.
+const pass = async (orgId: string): Promise<void> => {
+  await app.commandBus.execute(queueEmailNotificationCommand({ orgId }));
+};
 
 type Delivery = {
   id: string;
@@ -776,8 +780,12 @@ describe('Story 6.6: work out who is owed each public change', () => {
 
     errors.length = 0;
     await runNotificationPass(app, logger, { orgIds: [bad, org.orgId] });
-    assert.equal(errors.length, 1, 'the bad organization is logged');
-    assert.equal((errors[0] as { orgId: string }).orgId, bad);
+    // Once for queueing and once for dispatch, which visits it too (story
+    // 6.7): its earlier rows would still be owed.
+    assert.equal(errors.length, 2, 'the bad organization is logged');
+    for (const entry of errors) {
+      assert.equal((entry as { orgId: string }).orgId, bad);
+    }
     assert.deepEqual(
       await owed(org.orgId),
       expected([[subscriber, 'incident_update', declaration.id]]),

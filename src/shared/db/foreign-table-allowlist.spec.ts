@@ -68,6 +68,7 @@ const FOREIGN: Readonly<Record<string, readonly string[]>> = {
     // The notification pass (story 6.6) reads the durable history of public
     // changes, and the services each names, to judge them by the public rule.
     'incident_updates',
+    'incidents',
     'incident_service_impacts',
     'maintenance',
     'maintenance_services',

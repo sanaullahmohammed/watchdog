@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { getCACertificates, setDefaultCACertificates } from 'node:tls';
+import { notificationEnvProperties } from '@/config/notification-env';
 import type { SendResult } from '@/modules/notification/domain/email-sender.port';
 import {
   classifySmtpFailure,
@@ -357,5 +358,18 @@ describe('story 6.2: classifying a failure', () => {
       outcome: 'transient',
       diagnostic: 'EUNKNOWN',
     });
+  });
+});
+
+describe('story 6.7: the retry base outlasts a send', () => {
+  it('has a minimum of at least the overall limit plus the socket limit', () => {
+    const { minimum: minimumSeconds } =
+      notificationEnvProperties.NOTIFICATION_RETRY_BASE_SECONDS as unknown as {
+        minimum: number;
+      };
+    assert.ok(
+      minimumSeconds * 1000 >= SMTP_TIMEOUTS.overall + SMTP_TIMEOUTS.socket,
+      'NOTIFICATION_RETRY_BASE_SECONDS minimum is shorter than a send can run',
+    );
   });
 });

@@ -4,6 +4,7 @@ import { parseAllowedCidrs } from './allowed-cidrs';
 import { authEnvProperties } from './auth-env';
 import { checkResultsEnvProperties } from './check-results-env';
 import {
+  assertRetryDelays,
   assertSubscribeLimits,
   notificationEnvProperties,
   resolveEmailSettings,
@@ -113,6 +114,7 @@ const env = envSchema<Static<typeof schema>>({
 
 assertWorkerIntervals(env);
 assertSubscribeLimits(env);
+assertRetryDelays(env);
 
 // An invalid entry fails boot, naming it.
 const monitorAllowedCidrs = parseAllowedCidrs(env.MONITOR_ALLOWED_CIDRS);
@@ -162,6 +164,9 @@ export default {
   notificationLinkSecret: env.NOTIFICATION_LINK_SECRET,
   notification: {
     cursorOverlapSeconds: env.NOTIFICATION_CURSOR_OVERLAP_SECONDS,
+    retryBaseSeconds: env.NOTIFICATION_RETRY_BASE_SECONDS,
+    retryMaxDelaySeconds: env.NOTIFICATION_RETRY_MAX_DELAY_SECONDS,
+    maxAttempts: env.NOTIFICATION_MAX_ATTEMPTS,
   },
   subscribe: {
     rateLimit: {
