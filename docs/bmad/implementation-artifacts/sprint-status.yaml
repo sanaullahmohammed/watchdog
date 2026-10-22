@@ -107,7 +107,7 @@ development_status:
   6-4-confirm-and-unsubscribe-through-the-emailed-links: done
   6-5-one-rule-for-what-is-public: done
   6-6-work-out-who-is-owed-each-public-change: done
-  6-7-send-owed-emails-with-retries: review
+  6-7-send-owed-emails-with-retries: done
   6-8-follow-a-status-page-as-an-atom-feed: backlog
   6-9-prune-old-deliveries-and-subscribers: backlog
   6-10-prove-subscribe-to-unsubscribe-end-to-end: backlog
