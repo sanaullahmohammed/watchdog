@@ -12,6 +12,7 @@ import {
   REDACTED,
   scrubbedLoggerOptions,
   serializeError,
+  serializeRequest,
   sqlDebugOption,
 } from '@/shared/db/sql-debug';
 import { DatabaseErrorException } from '@/shared/exceptions';
@@ -33,6 +34,52 @@ function capture() {
     },
   };
 }
+
+describe('story 6.4: the req serializer', () => {
+  const request = (url: string) => ({
+    method: 'GET',
+    url,
+    headers: { 'accept-version': '1.0.0' },
+    host: 'example.test',
+    ip: '10.0.0.1',
+    socket: { remotePort: 4321 },
+  });
+
+  it('cuts the query string and keeps the default fields', () => {
+    assert.deepEqual(
+      serializeRequest(request('/status/x/subscribers/confirm?token=abc&b=1')),
+      {
+        method: 'GET',
+        url: '/status/x/subscribers/confirm',
+        version: '1.0.0',
+        host: 'example.test',
+        remoteAddress: '10.0.0.1',
+        remotePort: 4321,
+      },
+    );
+    assert.equal(serializeRequest(request('/a?')).url, '/a');
+    assert.equal(serializeRequest(request('/a')).url, '/a');
+  });
+
+  it('is on both logger option builders, and a caller req still wins', () => {
+    const scrubbed = scrubbedLoggerOptions('info');
+    assert.equal(scrubbed.serializers.req, serializeRequest);
+    const app = appLoggerOptions(undefined, 'info') as {
+      serializers: Record<string, unknown>;
+    };
+    assert.equal(app.serializers.req, serializeRequest);
+    const merged = appLoggerOptions({ level: 'info' }, 'info') as {
+      serializers: Record<string, unknown>;
+    };
+    assert.equal(merged.serializers.req, serializeRequest);
+    const custom = () => ({ method: 'mine' });
+    const own = appLoggerOptions(
+      { level: 'info', serializers: { req: custom } as never },
+      'info',
+    ) as { serializers: Record<string, unknown> };
+    assert.equal(own.serializers.req, custom);
+  });
+});
 
 describe('sqlDebugOption', () => {
   it('logs the statement and a parameter count, never a value', () => {

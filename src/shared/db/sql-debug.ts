@@ -229,6 +229,33 @@ type ErrorSerializer = (value: unknown) => {
   [key: string]: unknown;
 };
 
+type RequestLike = {
+  method?: string;
+  url?: string;
+  headers?: Record<string, unknown>;
+  host?: string;
+  ip?: string;
+  socket?: { remotePort?: number };
+};
+
+/**
+ * Fastify's default `req` fields with `url` cut at the first `?`, so a token or
+ * signature in a link's query string never reaches `incoming request` or
+ * `request completed` (story 6.4). Applied to every route.
+ */
+export function serializeRequest(req: RequestLike) {
+  const url = typeof req.url === 'string' ? req.url : undefined;
+  const cut = url === undefined ? -1 : url.indexOf('?');
+  return {
+    method: req.method,
+    url: url === undefined || cut < 0 ? url : url.slice(0, cut),
+    version: req.headers?.['accept-version'] as string | undefined,
+    host: req.host,
+    remoteAddress: req.ip,
+    remotePort: req.socket ? req.socket.remotePort : undefined,
+  };
+}
+
 /** Serializers every application logger applies, whatever else it is given. */
 export const LOG_SERIALIZERS = {
   err: serializeError as ErrorSerializer,
@@ -331,7 +358,7 @@ export function scrubbedLoggerOptions(level: string) {
   return {
     level,
     redact: LOG_REDACT_PATHS,
-    serializers: { ...LOG_SERIALIZERS },
+    serializers: { req: serializeRequest, ...LOG_SERIALIZERS },
     hooks: { logMethod: scrubLogMethod },
   } satisfies LoggerOptions;
 }
@@ -364,7 +391,11 @@ export function appLoggerOptions(
       ...rest,
       paths: [...new Set([...LOG_REDACT_PATHS, ...ownPaths])],
     },
-    serializers: { ...options.serializers, ...LOG_SERIALIZERS },
+    serializers: {
+      req: serializeRequest,
+      ...options.serializers,
+      ...LOG_SERIALIZERS,
+    },
     hooks: {
       ...options.hooks,
       logMethod: scrubbingLogMethod(options.hooks?.logMethod),

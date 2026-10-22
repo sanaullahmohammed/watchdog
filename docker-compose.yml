@@ -64,6 +64,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: postgres://watchdog_app:${WATCHDOG_APP_PASSWORD:-watchdog_app_dev_password}@postgres:5432/${POSTGRES_DB:-watchdog}?sslmode=disable
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev_only_change_me_dev_only_change_me}
+      NOTIFICATION_LINK_SECRET: ${NOTIFICATION_LINK_SECRET:-dev_only_link_secret_dev_only_link_secret}
       BETTER_AUTH_URL: http://localhost:3000
       SMTP_HOST: mailpit
       SMTP_PORT: '1025'
@@ -94,6 +95,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: postgres://watchdog_app:${WATCHDOG_APP_PASSWORD:-watchdog_app_dev_password}@postgres:5432/${POSTGRES_DB:-watchdog}?sslmode=disable
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev_only_change_me_dev_only_change_me}
+      NOTIFICATION_LINK_SECRET: ${NOTIFICATION_LINK_SECRET:-dev_only_link_secret_dev_only_link_secret}
       SMTP_HOST: mailpit
       SMTP_PORT: '1025'
       SMTP_FROM: WatchDog <watchdog@localhost>

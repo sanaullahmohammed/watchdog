@@ -10,8 +10,11 @@ import {
 
 const schema = Type.Object(notificationEnvProperties);
 
+const SECRET = 'a-link-secret-of-at-least-32-characters';
+
 const defaults = () =>
-  Value.Default(schema, {}) as {
+  Value.Default(schema, { NOTIFICATION_LINK_SECRET: SECRET }) as {
+    NOTIFICATION_LINK_SECRET: string;
     SMTP_HOST: string;
     SMTP_PORT: number;
     SMTP_FROM: string;
@@ -27,6 +30,20 @@ const resolve = (
     BETTER_AUTH_URL: betterAuthUrl,
     ...overrides,
   });
+
+describe('story 6.4: NOTIFICATION_LINK_SECRET', () => {
+  it('is required', () => {
+    assert.equal(Value.Check(schema, Value.Default(schema, {})), false);
+  });
+
+  it('must be at least 32 characters', () => {
+    assert.equal(
+      Value.Check(schema, { ...defaults(), NOTIFICATION_LINK_SECRET: 'short' }),
+      false,
+    );
+    assert.equal(Value.Check(schema, defaults()), true);
+  });
+});
 
 describe('story 6.2: the SMTP settings', () => {
   it('defaults to Mailpit on localhost:1025 with no login', () => {
@@ -171,7 +188,9 @@ describe('story 6.2: PUBLIC_BASE_URL', () => {
 
 describe('story 6.3: the subscribe settings', () => {
   it('defaults to 5 per hour, a 24 hour token and a 10 minute resend window', () => {
-    const value = Value.Default(schema, {}) as Record<string, number>;
+    const value = Value.Default(schema, {
+      NOTIFICATION_LINK_SECRET: SECRET,
+    }) as Record<string, number>;
     assert.equal(value.SUBSCRIBE_RATE_LIMIT_MAX, 5);
     assert.equal(value.SUBSCRIBE_RATE_LIMIT_WINDOW_MS, 3_600_000);
     assert.equal(value.SUBSCRIBER_CONFIRMATION_TTL_HOURS, 24);
@@ -180,7 +199,9 @@ describe('story 6.3: the subscribe settings', () => {
   });
 
   it('refuses values below each minimum', () => {
-    const base = Value.Default(schema, {}) as Record<string, unknown>;
+    const base = Value.Default(schema, {
+      NOTIFICATION_LINK_SECRET: SECRET,
+    }) as Record<string, unknown>;
     for (const [name, bad] of [
       ['SUBSCRIBE_RATE_LIMIT_MAX', 0],
       ['SUBSCRIBE_RATE_LIMIT_WINDOW_MS', 999],
@@ -199,7 +220,9 @@ describe('story 6.3: the subscribe settings', () => {
   });
 
   it('refuses a fraction and a value over each maximum', () => {
-    const base = Value.Default(schema, {}) as Record<string, unknown>;
+    const base = Value.Default(schema, {
+      NOTIFICATION_LINK_SECRET: SECRET,
+    }) as Record<string, unknown>;
     for (const [name, bad] of [
       ['SUBSCRIBE_RATE_LIMIT_MAX', 1.5],
       ['SUBSCRIBE_RATE_LIMIT_WINDOW_MS', 1000.5],
