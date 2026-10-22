@@ -31,6 +31,22 @@ export type ScannedMaintenanceChange = {
   recordedAt: string;
 };
 
+/** A position in the feed's order: when, which source, which change of it. */
+export type ChangePosition = { at: string; sourceId: string; rank: number };
+
+/** One public-candidate change, newest first, for the Atom feed (story 6.8). */
+export type LatestChange = {
+  sourceType: NotificationSourceType;
+  sourceId: string;
+  /** The incident or window the change belongs to, for its services. */
+  ownerId: string;
+  /** When it happened. */
+  at: Date;
+  /** Where it sits in the order, as text so SQL gets its microseconds back. */
+  position: ChangePosition;
+  source: NotificationSource;
+};
+
 /** A scan, and the furthest position it reached, null when it found nothing. */
 export type Scan<T> = { rows: T[]; through: string | null };
 
@@ -107,6 +123,135 @@ export default function publicHistoryRepository() {
         startedAt: row.started_at,
         completedAt: row.completed_at,
       };
+    },
+
+    /**
+     * The next `limit` changes older than `before` (all of them when null),
+     * newest first by `(at, source id, rank)`, rank being completed 3,
+     * started 2, scheduled 1, incident update 0. Incident entries are cut by
+     * `publicTimelineEntry` in SQL so a hidden one never fills a batch; a
+     * window's null timestamps are not changes. Which services each names is
+     * not decided here: `publishable` does that, on the caller's side.
+     */
+    async latestChanges(
+      tx: TenantTransaction,
+      before: ChangePosition | null,
+      limit: number,
+    ): Promise<LatestChange[]> {
+      const olderIncident = before
+        ? tx.sql`and (iu.created_at, iu.id, 0) < (
+            ${before.at}::text::timestamptz,
+            ${before.sourceId}::text::uuid,
+            ${before.rank}::text::int
+          )`
+        : tx.sql``;
+      const olderWindow = before
+        ? tx.sql`and (k.at, m.id, k.rank) < (
+            ${before.at}::text::timestamptz,
+            ${before.sourceId}::text::uuid,
+            ${before.rank}::text::int
+          )`
+        : tx.sql``;
+      const rows = await tx.sql<
+        {
+          source_type: NotificationSourceType;
+          source_id: string;
+          owner_id: string;
+          rank: number;
+          at: Date;
+          at_text: string;
+          title: string;
+          status: string | null;
+          message: string | null;
+          description: string | null;
+          scheduled_start_at: Date | null;
+          scheduled_end_at: Date | null;
+          started_at: Date | null;
+          completed_at: Date | null;
+        }[]
+      >`
+        select *, at::text as at_text from (
+          (
+            select 'incident_update'::text as source_type,
+                   iu.id as source_id, iu.incident_id as owner_id,
+                   0 as rank, iu.created_at as at,
+                   i.title, iu.status, iu.message,
+                   null::text as description,
+                   null::timestamptz as scheduled_start_at,
+                   null::timestamptz as scheduled_end_at,
+                   null::timestamptz as started_at,
+                   null::timestamptz as completed_at
+            from incident_updates iu
+            join incidents i on i.id = iu.incident_id and i.org_id = iu.org_id
+            where iu.org_id = ${tx.orgId}
+              and ${publicTimelineEntry(tx, 'iu')}
+              ${olderIncident}
+            order by iu.created_at desc, iu.id desc
+            limit ${limit}
+          )
+          union all
+          (
+            select k.source_type, m.id as source_id, m.id as owner_id,
+                   k.rank, k.at,
+                   m.title, null::text as status, null::text as message,
+                   m.description, m.scheduled_start_at, m.scheduled_end_at,
+                   m.started_at, m.completed_at
+            from maintenance m
+            cross join lateral (
+              values
+                ('maintenance_scheduled'::text, 1, m.created_at),
+                ('maintenance_started'::text, 2, m.started_at),
+                ('maintenance_completed'::text, 3, m.completed_at)
+            ) as k (source_type, rank, at)
+            where m.org_id = ${tx.orgId}
+              and k.at is not null
+              ${olderWindow}
+            order by k.at desc, m.id desc, k.rank desc
+            limit ${limit}
+          )
+        ) as changes
+        order by at desc, source_id desc, rank desc
+        limit ${limit}
+      `;
+      return rows.map((row): LatestChange => {
+        const position = {
+          at: row.at_text,
+          sourceId: row.source_id,
+          rank: row.rank,
+        };
+        if (row.source_type === 'incident_update') {
+          return {
+            sourceType: row.source_type,
+            sourceId: row.source_id,
+            ownerId: row.owner_id,
+            at: row.at,
+            position,
+            source: {
+              sourceType: 'incident_update',
+              incidentTitle: row.title,
+              status: row.status ?? '',
+              message: row.message ?? '',
+              postedAt: row.at,
+            },
+          };
+        }
+        return {
+          sourceType: row.source_type,
+          sourceId: row.source_id,
+          ownerId: row.owner_id,
+          at: row.at,
+          position,
+          source: {
+            sourceType: row.source_type,
+            title: row.title,
+            description: row.description,
+            scheduledStartAt: row.scheduled_start_at as Date,
+            scheduledEndAt: row.scheduled_end_at as Date,
+            startedAt: row.started_at,
+            completedAt: row.completed_at,
+          },
+        };
+      });
     },
 
     /**

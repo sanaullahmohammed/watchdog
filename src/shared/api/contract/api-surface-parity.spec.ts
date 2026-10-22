@@ -186,6 +186,11 @@ const REST_ONLY_BY_DESIGN: ReadonlyMap<string, string> = new Map([
     'The unsubscribe link acts on GET and RFC 8058 one-click POST and answers ' +
       'plain text, so it has no GraphQL form (Epic 6, ARCHITECTURE 5.6; story 6.4).',
   ],
+  [
+    'notification/queries/get-atom-feed',
+    'The Atom feed is an XML document a feed reader fetches by URL, so it has no ' +
+      'SDL form (FR20, Epic 6, ARCHITECTURE 5.6; story 6.8).',
+  ],
 ]);
 
 const capabilities = discoverCapabilities();

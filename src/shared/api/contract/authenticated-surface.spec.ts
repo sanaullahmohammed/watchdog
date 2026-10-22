@@ -60,6 +60,21 @@ const PUBLIC_BY_DESIGN: ReadonlyMap<string, string> = new Map([
     'The preflight a cross-origin conditional fetch of that page needs. It ' +
       'touches no data: it answers with the CORS headers and nothing else.',
   ],
+  [
+    'GET /status/:orgSlug/feed.atom',
+    'FR20: the Atom feed of the same public changes, read by anyone holding the ' +
+      'link. Organization from the slug, every read behind it tenant-scoped.',
+  ],
+  [
+    'HEAD /status/:orgSlug/feed.atom',
+    "The feed's GET without a body: its headers, or a 304 to a matching " +
+      'If-None-Match. It shares the GET rate-limit bucket.',
+  ],
+  [
+    'OPTIONS /status/:orgSlug/feed.atom',
+    'The preflight a cross-origin conditional fetch of the feed needs. It ' +
+      'touches no data: it answers with the CORS headers and nothing else.',
+  ],
   ...['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT'].flatMap(
     (method): [string, string][] =>
       ['/status', '/status/*'].map((url) => [

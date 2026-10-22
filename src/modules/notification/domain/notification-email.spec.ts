@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   buildNotificationEmail,
+  describeChange,
   type NotificationSource,
 } from './notification-email';
 
@@ -118,5 +119,40 @@ describe('story 6.7: buildNotificationEmail', () => {
     });
     assert.doesNotMatch(email.subject, /[\r\n]/);
     assert.equal(email.subject, '[Acme] Maintenance scheduled: a b c');
+  });
+});
+
+describe('story 6.8: describeChange', () => {
+  it('gives the email subject without its tag, and the body without its links', () => {
+    for (const source of [
+      {
+        sourceType: 'incident_update',
+        incidentTitle: 'API down',
+        status: 'investigating',
+        message: 'We are looking.',
+        postedAt: new Date('2026-10-22T14:05:00Z'),
+      },
+      { sourceType: 'maintenance_scheduled', ...window },
+      {
+        sourceType: 'maintenance_completed',
+        ...window,
+        completedAt: new Date('2026-10-22T15:10:00Z'),
+      },
+    ] as NotificationSource[]) {
+      const { title, lines } = describeChange(source);
+      const email = build(source);
+      assert.equal(email.subject, `[Acme] ${title}`);
+      assert.ok(email.text.startsWith(lines.join('\n')));
+      assert.doesNotMatch(lines.join('\n'), /https:/);
+    }
+  });
+
+  it('keeps the title on one line', () => {
+    const { title } = describeChange({
+      sourceType: 'maintenance_started',
+      ...window,
+      title: 'a\r\nb',
+    });
+    assert.equal(title, 'Maintenance started: a b');
   });
 });
