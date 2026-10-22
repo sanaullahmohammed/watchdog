@@ -780,9 +780,9 @@ describe('Story 6.6: work out who is owed each public change', () => {
 
     errors.length = 0;
     await runNotificationPass(app, logger, { orgIds: [bad, org.orgId] });
-    // Once for queueing and once for dispatch, which visits it too (story
-    // 6.7): its earlier rows would still be owed.
-    assert.equal(errors.length, 2, 'the bad organization is logged');
+    // Once each for queueing, the prune (story 6.9) and dispatch, which
+    // visits it too (story 6.7): its earlier rows would still be owed.
+    assert.equal(errors.length, 3, 'the bad organization is logged');
     for (const entry of errors) {
       assert.equal((entry as { orgId: string }).orgId, bad);
     }

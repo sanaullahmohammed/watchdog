@@ -26,6 +26,10 @@ import {
   listMonitorsAtThresholdQuery,
 } from '@/modules/monitoring/queries/list-monitors-at-threshold/list-monitors-at-threshold.handler';
 import {
+  type PruneNotificationsCommandResult,
+  pruneNotificationsCommand,
+} from '@/modules/notification/commands/prune-notifications/prune-notifications.handler';
+import {
   type QueueEmailNotificationCommandResult,
   queueEmailNotificationCommand,
 } from '@/modules/notification/commands/queue-email-notifications/queue-email-notifications.handler';
@@ -420,6 +424,7 @@ export async function runNotificationPass(
   }
 
   const failed = new Set<string>();
+  const pruned = { deliveries: 0, unsubscribed: 0, neverConfirmed: 0 };
   for (const orgId of orgIds) {
     try {
       const { queued } =
@@ -434,6 +439,24 @@ export async function runNotificationPass(
       logger.error(
         { orgId, err: error },
         'notification pass failed for organization',
+      );
+    }
+    // Retention (story 6.9), before dispatch so its time counts inside the
+    // dispatch budget. Its own try: a failure here is not a queueing failure.
+    if (options.signal?.aborted) continue;
+    try {
+      const result =
+        await app.commandBus.execute<PruneNotificationsCommandResult>(
+          pruneNotificationsCommand({ orgId }),
+        );
+      pruned.deliveries += result.deliveries;
+      pruned.unsubscribed += result.unsubscribed;
+      pruned.neverConfirmed += result.neverConfirmed;
+    } catch (error) {
+      failed.add(orgId);
+      logger.error(
+        { orgId, err: error },
+        'notification prune failed for organization',
       );
     }
   }
@@ -513,6 +536,9 @@ export async function runNotificationPass(
   }
   if (counts.sent + counts.failed + counts.abandoned + counts.dropped > 0) {
     logger.info(counts, 'notification emails dispatched');
+  }
+  if (pruned.deliveries + pruned.unsubscribed + pruned.neverConfirmed > 0) {
+    logger.info(pruned, 'notification records pruned');
   }
 
   if (orgIds.length > 0 && failed.size === orgIds.length) {

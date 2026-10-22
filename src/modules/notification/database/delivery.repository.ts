@@ -46,6 +46,37 @@ export type DeliveryRecord = {
 export default function deliveryRepository() {
   return {
     /**
+     * Deletes the final deliveries (`sent`, `failed`, `abandoned`) created
+     * before the retention window and before the cursor's re-read window, and
+     * returns how many. The queue re-reads from `read_at - overlap`, so a
+     * delivery inside that window could be queued a second time if its row
+     * were gone; a delivery is never older than its change, so one outside it
+     * cannot. `least` ignores a missing cursor. A `pending` delivery is never
+     * pruned. One statement: the cursor is a scalar subquery, so its
+     * `read_at` keeps full precision (it never passes through a JS Date).
+     */
+    async pruneFinal(
+      tx: TenantTransaction,
+      retentionDays: number,
+      overlapSeconds: number,
+    ): Promise<number> {
+      const rows = await tx.sql`
+        delete from notification_deliveries
+        where org_id = ${tx.orgId}
+          and status in ('sent', 'failed', 'abandoned')
+          and created_at < least(
+            now() - make_interval(days => ${retentionDays}),
+            (
+              select read_at from notification_cursors
+              where org_id = ${tx.orgId}
+            ) - make_interval(secs => ${overlapSeconds})
+          )
+        returning 1
+      `;
+      return rows.length;
+    },
+
+    /**
      * One `pending` delivery for each pair of a source and a subscriber in
      * `subscriberIds` who was confirmed before the source was recorded. The
      * caller has locked those subscribers. A pair already in the ledger is

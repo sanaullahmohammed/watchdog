@@ -424,3 +424,14 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-8-follow-a-status-page-as-an-atom-feed.md`
   summary: The public surface's revalidation compares `If-None-Match` exactly, so a tag list, `*`, or a proxy-weakened `W/` tag never gets a 304, and neither the page nor the feed sends `Last-Modified`.
   evidence: `get-public-status-page.public.route.ts` and `get-atom-feed.public.route.ts` both test `req.headers['if-none-match'] === etag`; RFC 9110 13.1.2 uses weak comparison over a list. A gzip-ing reverse proxy weakens strong tags, so pollers behind one pay a full body every time (story 6.8 review, triage 24).
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-9-prune-old-deliveries-and-subscribers.md`
+  summary: Nothing pins that `NOTIFICATION_RETENTION_DAYS` reaches `env.notification.retentionDays` and `SUBSCRIBER_PENDING_GRACE_DAYS` reaches `env.subscribe.pendingGraceDays`; swapping them in `env.ts` passes every test, because the prune suite ages rows from the mapped values.
+  evidence: Story 6.9 Review Triage Log #27 (verification gap). No other `env.ts` mapping is pinned either (`maxAttempts`, for one); a general mapping check would cover them all.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-9-prune-old-deliveries-and-subscribers.md`
+  summary: `requestConfirmation`'s retry when the row is deleted between its `on conflict do nothing` insert and its `for no key update` select is untested, and the prune now makes it reachable every 30 s.
+  evidence: Story 6.9 Review Triage Log #28 (verification gap). Changing its `continue` to a return or a throw fails no test; hitting the window needs a hook between two statements.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-9-prune-old-deliveries-and-subscribers.md`
+  summary: ARCHITECTURE 5.6 does not record that the notification pass prunes (after queueing, before dispatch, inside the dispatch budget), and line 178's list of the worker's retention jobs leaves it out.
+  evidence: Story 6.9 Review Triage Log #29 (blind hunter). DOMAIN's Subscriber and NotificationDelivery sections already name both settings; ARCHITECTURE owns runtime wiring, and genesis wording is the owner's to change.
+

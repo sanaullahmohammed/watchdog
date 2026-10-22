@@ -85,6 +85,22 @@ export const notificationEnvProperties = {
     minimum: 1,
     maximum: 100,
   }),
+  // Retention (story 6.9), in days. Final deliveries and unsubscribed
+  // subscribers older than this are deleted. 36,500 days is a century.
+  NOTIFICATION_RETENTION_DAYS: Type.Integer({
+    default: 90,
+    minimum: 1,
+    maximum: 36_500,
+  }),
+  // How long after its token expired a never-confirmed subscriber is kept.
+  // The minimum of 1 day keeps a pending row, and its confirmation_sent_at,
+  // past SUBSCRIBER_CONFIRMATION_RESEND_SECONDS' maximum (86,400 s), so
+  // pruning never lifts the per-address throttle early.
+  SUBSCRIBER_PENDING_GRACE_DAYS: Type.Integer({
+    default: 7,
+    minimum: 1,
+    maximum: 36_500,
+  }),
 };
 
 /**

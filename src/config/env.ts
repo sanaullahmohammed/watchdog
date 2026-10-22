@@ -167,6 +167,7 @@ export default {
     retryBaseSeconds: env.NOTIFICATION_RETRY_BASE_SECONDS,
     retryMaxDelaySeconds: env.NOTIFICATION_RETRY_MAX_DELAY_SECONDS,
     maxAttempts: env.NOTIFICATION_MAX_ATTEMPTS,
+    retentionDays: env.NOTIFICATION_RETENTION_DAYS,
   },
   subscribe: {
     rateLimit: {
@@ -175,6 +176,7 @@ export default {
     },
     confirmationTtlHours: env.SUBSCRIBER_CONFIRMATION_TTL_HOURS,
     confirmationResendSeconds: env.SUBSCRIBER_CONFIRMATION_RESEND_SECONDS,
+    pendingGraceDays: env.SUBSCRIBER_PENDING_GRACE_DAYS,
   },
   realtime: {
     adminSubscriptionRecheckSeconds: env.ADMIN_SUBSCRIPTION_RECHECK_SECONDS,
