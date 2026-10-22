@@ -105,7 +105,7 @@ development_status:
   6-2-send-email-through-smtp: done
   6-3-subscribe-to-an-organization-s-status-page: done
   6-4-confirm-and-unsubscribe-through-the-emailed-links: done
-  6-5-one-rule-for-what-is-public: review
+  6-5-one-rule-for-what-is-public: done
   6-6-work-out-who-is-owed-each-public-change: backlog
   6-7-send-owed-emails-with-retries: backlog
   6-8-follow-a-status-page-as-an-atom-feed: backlog
