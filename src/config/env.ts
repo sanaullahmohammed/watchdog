@@ -159,6 +159,7 @@ export default {
   // The origin emailed links are built on: PUBLIC_BASE_URL, or
   // BETTER_AUTH_URL's origin when that is unset.
   publicBaseUrl,
+  notificationLinkSecret: env.NOTIFICATION_LINK_SECRET,
   subscribe: {
     rateLimit: {
       max: env.SUBSCRIBE_RATE_LIMIT_MAX,

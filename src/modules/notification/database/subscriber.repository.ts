@@ -28,6 +28,57 @@ type LockedRow = { id: string; status: string; throttled: boolean };
 export default function subscriberRepository() {
   return {
     /**
+     * Confirms the pending, unexpired row holding `tokenHash`, in one
+     * statement, so of two concurrent confirms exactly one gets the row.
+     * Returns the id, or undefined when no row qualifies.
+     */
+    async confirm(
+      tx: TenantTransaction,
+      tokenHash: string,
+    ): Promise<string | undefined> {
+      const rows = await tx.sql<{ id: string }[]>`
+        update subscribers
+        set status = 'confirmed',
+            confirmed_at = now(),
+            confirmation_token_hash = null,
+            updated_at = now()
+        where org_id = ${tx.orgId}
+          and confirmation_token_hash = ${tokenHash}
+          and status = 'pending'
+          and confirmation_expires_at > now()
+        returning id
+      `;
+      return rows[0]?.id;
+    },
+
+    /**
+     * Unsubscribes `subscriberId` under a row lock and clears its confirm
+     * token. `unsubscribed` is true only when this call changed the row, so
+     * of two concurrent calls one reports it. `missing` when no such row.
+     */
+    async unsubscribe(
+      tx: TenantTransaction,
+      subscriberId: string,
+    ): Promise<'missing' | 'unchanged' | 'unsubscribed'> {
+      const locked = await tx.sql<{ id: string; status: string }[]>`
+        select id, status from subscribers
+        where id = ${subscriberId} and org_id = ${tx.orgId}
+        for no key update
+      `;
+      const row = locked[0];
+      if (!row) return 'missing';
+      if (row.status === 'unsubscribed') return 'unchanged';
+      await tx.sql`
+        update subscribers
+        set status = 'unsubscribed',
+            confirmation_token_hash = null,
+            updated_at = now()
+        where id = ${row.id} and org_id = ${tx.orgId}
+      `;
+      return 'unsubscribed';
+    },
+
+    /**
      * Applies DOMAIN's state rules to `email` (already normalised) under a row
      * lock. Nothing here quotes the address in an error.
      */

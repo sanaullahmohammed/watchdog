@@ -91,6 +91,31 @@ const PUBLIC_BY_DESIGN: ReadonlyMap<string, string> = new Map([
       'touches no data: it answers with the CORS headers and nothing else.',
   ],
   [
+    'GET /status/:orgSlug/subscribers/confirm',
+    'FR21: the link in the confirmation email. The token in the query is the ' +
+      'authority, the organization comes from the slug, and the row is written ' +
+      'under it. Rationed by IP, no-store.',
+  ],
+  [
+    'HEAD /status/:orgSlug/subscribers/confirm',
+    'A HEAD looks nothing up and changes nothing, so a link scanner consumes no ' +
+      'token. It shares the GET rate-limit bucket.',
+  ],
+  [
+    'GET /status/:orgSlug/subscribers/unsubscribe',
+    'FR21: the unsubscribe link in an email. The signed query string is the ' +
+      'authority; there is no session. Rationed by IP, no-store.',
+  ],
+  [
+    'HEAD /status/:orgSlug/subscribers/unsubscribe',
+    'A HEAD looks nothing up and changes nothing. It shares the GET rate-limit bucket.',
+  ],
+  [
+    'POST /status/:orgSlug/subscribers/unsubscribe',
+    "RFC 8058 one-click unsubscribe, posted by the recipient's mail server to the " +
+      'same signed URL. The body is ignored; the signature is the authority.',
+  ],
+  [
     'Query.publicStatusPage',
     'The same public page over GraphQL, public for the same reason.',
   ],

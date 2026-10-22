@@ -11,3 +11,9 @@ export type SubscriberEventPayload = {
 
 export const subscriberCreatedEvent =
   subscriberEventCreator<SubscriberEventPayload>('created');
+
+export const subscriberConfirmedEvent =
+  subscriberEventCreator<SubscriberEventPayload>('confirmed');
+
+export const subscriberUnsubscribedEvent =
+  subscriberEventCreator<SubscriberEventPayload>('unsubscribed');

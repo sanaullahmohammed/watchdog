@@ -176,6 +176,16 @@ const REST_ONLY_BY_DESIGN: ReadonlyMap<string, string> = new Map([
       'emails land on REST endpoints and no admin lists subscribers (Epic 6, ' +
       'ARCHITECTURE 5.6; story 6.3).',
   ],
+  [
+    'notification/commands/confirm-subscriber',
+    'The confirmation link in the email acts on GET and answers plain text, so ' +
+      'it has no GraphQL form (Epic 6, ARCHITECTURE 5.6; story 6.4).',
+  ],
+  [
+    'notification/commands/unsubscribe',
+    'The unsubscribe link acts on GET and RFC 8058 one-click POST and answers ' +
+      'plain text, so it has no GraphQL form (Epic 6, ARCHITECTURE 5.6; story 6.4).',
+  ],
 ]);
 
 const capabilities = discoverCapabilities();

@@ -351,6 +351,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: ARCHITECTURE 5.6 says the subscribe route has its own IP limit "besides section 5.4.1's bounds", which reads as two limiters. As built, the route has one, the stricter, and a boot check (`assertSubscribeLimits`) refuses a subscribe limit looser than the page's. 5.4.1 also has no paragraph, like the stream's, saying how `/status/:orgSlug/subscribers` inherits the bounds: a bucket of its own, `no-store` instead of cache validators, and its own `OPTIONS` route in front of the catch-all.
   evidence: Story 6.3 Review Triage Log #2. The behaviour meets both bounds; only the wording differs. A genesis edit needs the owner's OK.
   target: Owner decision, raised with story 6.3's PR.
+  addendum (story 6.4): the confirm and unsubscribe links also differ from 5.4.1's bounds. They are `cache-control: no-store` with no validators, and have no `OPTIONS` route, because a link that changes state is never cached and is a navigation, not a cross-origin read. Record both in 5.4.1's paragraph for the subscriber routes.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-3-subscribe-to-an-organization-s-status-page.md`
   summary: The subscribe limit keys on the socket address with `trustProxy` off. Behind a reverse proxy, every visitor of every organization shares one bucket of 5 subscribes an hour, so one client can lock the form for everyone. And a caller with an IPv6 /64 gets a new bucket per address. ARCHITECTURE 5.4.1 records the proxy point (F-18) for the page's 120 a minute; at 5 an hour it decides whether the form works at all.
   evidence: Story 6.3 Review Triage Log #6. `trustProxy` and the key are pre-existing choices of the public surface, not this story's.
@@ -359,3 +360,14 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: Confirmation emails have no global or per-organization budget, only the per-IP limit and the per-address throttle (decision D7). Callers spread over many addresses, or an IPv6 range, can make the api mail any number of distinct third-party addresses once each, which can hurt the sender's reputation. In-flight sends are not capped either.
   evidence: Story 6.3 Review Triage Log #7. D7 set the bounds; a budget is a new product rule.
   target: Epic 6 retrospective, for the owner to decide.
+
+## From Story 6.4 (2026-10-22)
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-4-confirm-and-unsubscribe-through-the-emailed-links.md`
+  summary: `NOTIFICATION_LINK_SECRET` cannot be rotated. Verify accepts one secret only, so an operator whose secret leaks must choose between forged unsubscribes and breaking every link already emailed. A second, previous secret that verify also accepts would allow a rotation window.
+  evidence: Story 6.4 Review Triage Log #2. DOMAIN and D17 say changing the secret breaks old links, as decided; rotation is a new rule.
+  target: Epic 8 (default), with deployment hardening.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-4-confirm-and-unsubscribe-through-the-emailed-links.md`
+  summary: Compose gives api and worker `${NOTIFICATION_LINK_SECRET:-dev_only…}` and `${BETTER_AUTH_SECRET:-dev_only…}`, values printed in the repository. A self-hosted deployment that forgets either variable boots with a known key, so anyone could sign unsubscribe links (or sessions). Nothing refuses a known dev value when `NODE_ENV=production`.
+  evidence: Story 6.4 Review Triage Log #3. The pattern predates this story (`BETTER_AUTH_SECRET`).
+  target: Epic 8 (default), with deployment hardening.

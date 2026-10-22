@@ -47,6 +47,7 @@ jobs:
       # and the boot-guard suite proves api and worker refuse to start as it.
       DBMATE_DATABASE_URL: postgres://watchdog_owner:watchdog_owner_test_password@localhost:5432/watchdog_test?sslmode=disable
       BETTER_AUTH_SECRET: test_secret_at_least_32_characters_long
+      NOTIFICATION_LINK_SECRET: test_link_secret_at_least_32_characters_long
       LOG_LEVEL: info
       NODE_ENV: test
 

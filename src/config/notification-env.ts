@@ -2,17 +2,21 @@ import addressparser from 'nodemailer/lib/addressparser';
 import { Type } from 'typebox';
 
 /**
- * Outgoing email (story 6.2, FR19, ARCHITECTURE 5.6). Every variable has a
+ * Outgoing email and the emailed links (stories 6.2 to 6.4, FR19, FR21,
+ * ARCHITECTURE 5.6). Every variable but `NOTIFICATION_LINK_SECRET` has a
  * default or is optional, so no environment has to declare one: the defaults
  * reach Mailpit on `localhost:1025`, which is where `docker compose up -d`
  * publishes it. Declared apart from `env.ts`, which composes it, so a unit
- * spec can read the defaults without a `.env`.
+ * spec can read the defaults, supplying the secret, without a `.env`.
  *
  * `SMTP_USER`, `SMTP_PASSWORD` and `PUBLIC_BASE_URL` treat an empty string as
  * unset, because `.env.example` lists them as `NAME=` lines. The cross-field
  * rules env-schema cannot express live in `resolveEmailSettings`.
  */
 export const notificationEnvProperties = {
+  // Signs the unsubscribe links (story 6.4). Required, with no default, like
+  // BETTER_AUTH_SECRET: changing it breaks every link already sent.
+  NOTIFICATION_LINK_SECRET: Type.String({ minLength: 32 }),
   SMTP_HOST: Type.String({ default: 'localhost', minLength: 1 }),
   SMTP_PORT: Type.Integer({ default: 1025, minimum: 1, maximum: 65_535 }),
   SMTP_FROM: Type.String({
