@@ -109,7 +109,7 @@ development_status:
   6-6-work-out-who-is-owed-each-public-change: done
   6-7-send-owed-emails-with-retries: done
   6-8-follow-a-status-page-as-an-atom-feed: done
-  6-9-prune-old-deliveries-and-subscribers: review
+  6-9-prune-old-deliveries-and-subscribers: done
   6-10-prove-subscribe-to-unsubscribe-end-to-end: backlog
   epic-6-retrospective: optional
 
