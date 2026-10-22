@@ -30,6 +30,10 @@ import {
   queueEmailNotificationCommand,
 } from '@/modules/notification/commands/queue-email-notifications/queue-email-notifications.handler';
 import {
+  type SendQueuedEmailCommandResult,
+  sendQueuedEmailCommand,
+} from '@/modules/notification/commands/send-queued-email/send-queued-email.handler';
+import {
   type RecomputeServiceStatusCommandResult,
   recomputeServiceStatusCommand,
 } from '@/modules/service/commands/recompute-service-status/recompute-service-status.event-handler';
@@ -38,6 +42,7 @@ import sql, { closeDbConnection } from '@/shared/db/postgres';
 import { assertTenantBoundRole } from '@/shared/db/runtime-role';
 import { listOrganizationIds } from '@/shared/db/tenants';
 import { singleFlight } from '@/shared/utils/single-flight';
+import { dispatchBudgetMs } from '@/worker-dispatch-budget';
 import { createWorkerHealth, type WorkerHealth } from '@/worker-health';
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -368,23 +373,44 @@ export async function runMonitorPass(
   }
 }
 
+// Advances once per pass so the rounds start one organization further along
+// each time, and every organization gets its turn even when the budget allows
+// one claim a pass. Process-wide, like the check registry.
+let dispatchTurn = 0;
+
 /**
- * One notification pass: each organization's QueueEmailNotificationCommand,
- * which works out who is owed each public change recorded since its cursor
- * and writes the ledger. ARCHITECTURE 5.6, run as 6.0's per-organization loop.
+ * One notification pass. First each organization's
+ * QueueEmailNotificationCommand, which works out who is owed each public
+ * change recorded since its cursor and writes the ledger (story 6.6). Then
+ * dispatch (story 6.7): SendQueuedEmailCommand round-robin, one row per
+ * organization per round, so one organization's backlog cannot hold the rest
+ * back. An organization leaves the rounds when it has nothing due or its
+ * command threw. ARCHITECTURE 5.6, run as 6.0's per-organization loop.
  *
- * Organizations run one after another, each in its own transaction, and one
- * organization's failure is logged and the rest still run. The pass rejects,
- * with no cause, only when discovery failed or every visited organization
- * failed, the rule runWorkerPass applies. startLoop keeps it from overlapping
- * itself.
+ * Dispatch stops claiming when its budget is spent, checked before every
+ * claim and measured with `performance.now()` because the WSL clock steps
+ * back, and when `signal` aborts; a send in flight finishes and is recorded.
+ * The time limit wins over one send per organization, but a pass makes at
+ * least one claim, and each pass starts one organization further along.
+ *
+ * One organization's failure is logged and the rest still run. The pass
+ * rejects, with no cause, only when discovery failed or every visited
+ * organization failed, the rule runWorkerPass applies. startLoop keeps it from
+ * overlapping itself.
  */
 export async function runNotificationPass(
   app: FastifyInstance,
   logger: FastifyBaseLogger,
-  // Tests pass their own organizations. The worker never passes this.
-  options: { orgIds?: readonly string[] } = {},
+  // Tests pass their own organizations and budget. The worker passes only the
+  // signal.
+  options: {
+    orgIds?: readonly string[];
+    dispatchBudgetMs?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<void> {
+  // The dispatch budget counts from here, so queueing time is inside it.
+  const started = performance.now();
   let orgIds: readonly string[];
   try {
     orgIds = options.orgIds ?? (await listOrganizationIds());
@@ -393,7 +419,7 @@ export async function runNotificationPass(
     throw new Error('tenant discovery failed');
   }
 
-  let failed = 0;
+  const failed = new Set<string>();
   for (const orgId of orgIds) {
     try {
       const { queued } =
@@ -404,7 +430,7 @@ export async function runNotificationPass(
         logger.info({ orgId, queued }, 'notification emails queued');
       }
     } catch (error) {
-      failed += 1;
+      failed.add(orgId);
       logger.error(
         { orgId, err: error },
         'notification pass failed for organization',
@@ -412,7 +438,84 @@ export async function runNotificationPass(
     }
   }
 
-  if (orgIds.length > 0 && failed === orgIds.length) {
+  // Dispatch visits every organization, including one whose queueing failed:
+  // its earlier rows are still owed.
+  const budgetMs =
+    options.dispatchBudgetMs ??
+    dispatchBudgetMs(
+      env.worker.notificationIntervalMs,
+      env.worker.passOverdueMs,
+    );
+  const diagnostics = {
+    retrying: new Map<string, number>(),
+    abandoned: new Map<string, number>(),
+    failed: new Map<string, number>(),
+  };
+  const counts = { sent: 0, failed: 0, abandoned: 0, dropped: 0 };
+  const offset = orgIds.length > 0 ? dispatchTurn % orgIds.length : 0;
+  dispatchTurn += 1;
+  let active = [...orgIds.slice(offset), ...orgIds.slice(0, offset)];
+  // Claims that found work. A pass makes at least one, however small the
+  // budget: the time limit is checked before every later claim.
+  let worked = 0;
+  rounds: while (active.length > 0) {
+    const next: string[] = [];
+    for (const orgId of active) {
+      if (options.signal?.aborted) break rounds;
+      if (worked > 0 && performance.now() - started >= budgetMs) break rounds;
+      try {
+        const result =
+          await app.commandBus.execute<SendQueuedEmailCommandResult>(
+            sendQueuedEmailCommand({ orgId }),
+          );
+        if (result.outcome === 'none') continue;
+        worked += 1;
+        if (
+          result.diagnostic !== undefined &&
+          (result.outcome === 'retrying' ||
+            result.outcome === 'abandoned' ||
+            result.outcome === 'failed')
+        ) {
+          const group = diagnostics[result.outcome];
+          group.set(result.diagnostic, (group.get(result.diagnostic) ?? 0) + 1);
+        }
+        if (
+          result.outcome === 'sent' ||
+          result.outcome === 'failed' ||
+          result.outcome === 'abandoned' ||
+          result.outcome === 'dropped'
+        ) {
+          counts[result.outcome] += 1;
+        }
+        // 'stale' keeps the organization in the rounds: it may have more due.
+        next.push(orgId);
+      } catch (error) {
+        failed.add(orgId);
+        logger.error(
+          { orgId, err: error },
+          'notification dispatch failed for organization',
+        );
+      }
+    }
+    active = next;
+  }
+
+  // One line for the pass, never one per row, and never an address: a wrong
+  // SMTP setting shows here once. Counts per diagnostic, by what became of the
+  // rows: retried later, given up on, or refused for good.
+  const summary = Object.fromEntries(
+    Object.entries(diagnostics)
+      .filter(([, group]) => group.size > 0)
+      .map(([name, group]) => [name, Object.fromEntries(group)]),
+  );
+  if (Object.keys(summary).length > 0) {
+    logger.warn(summary, 'notification emails not accepted');
+  }
+  if (counts.sent + counts.failed + counts.abandoned + counts.dropped > 0) {
+    logger.info(counts, 'notification emails dispatched');
+  }
+
+  if (orgIds.length > 0 && failed.size === orgIds.length) {
     throw new Error(`every organization failed (${orgIds.length})`);
   }
 }
@@ -550,13 +653,31 @@ export async function startWorker(
     health,
     logger,
   });
+  // Aborted first in shutdown: the dispatch phase claims nothing more, and the
+  // send in flight finishes and is recorded before the pass resolves.
+  const stopClaiming = new AbortController();
   const notification = startLoop({
     name: NOTIFICATION_LOOP,
-    pass: () => runNotificationPass(app, logger, { orgIds: options.orgIds }),
+    pass: () =>
+      runNotificationPass(app, logger, {
+        orgIds: options.orgIds,
+        signal: stopClaiming.signal,
+      }),
     intervalMs: env.worker.notificationIntervalMs,
     health,
     logger,
   });
+
+  if (
+    dispatchBudgetMs(
+      env.worker.notificationIntervalMs,
+      env.worker.passOverdueMs,
+    ) === 0
+  ) {
+    logger.warn(
+      'WORKER_PASS_OVERDUE_MS leaves no time beside NOTIFICATION_PASS_INTERVAL_MS for a send: the notification pass will try one delivery per pass',
+    );
+  }
 
   logger.info('Worker is ready');
 
@@ -567,6 +688,7 @@ export async function startWorker(
     }
     shuttingDown = true;
     logger.info({ signal }, 'Worker is shutting down');
+    stopClaiming.abort();
     maintenance.stop();
     monitor.stop();
     notification.stop();

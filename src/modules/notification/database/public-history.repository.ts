@@ -1,4 +1,5 @@
 import type { NotificationCursor } from '@/modules/notification/database/notification-cursor.repository';
+import type { NotificationSource } from '@/modules/notification/domain/notification-email';
 import {
   publicTimelineEntry,
   visibleService,
@@ -47,6 +48,67 @@ export type Scan<T> = { rows: T[]; through: string | null };
  */
 export default function publicHistoryRepository() {
   return {
+    /**
+     * What a delivery's source says now, for the email (story 6.7), or
+     * undefined when the row is gone. No lock.
+     */
+    async sourceContent(
+      tx: TenantTransaction,
+      sourceType: NotificationSourceType,
+      sourceId: string,
+    ): Promise<NotificationSource | undefined> {
+      if (sourceType === 'incident_update') {
+        const rows = await tx.sql<
+          {
+            title: string;
+            status: string;
+            message: string;
+            posted_at: Date;
+          }[]
+        >`
+          select i.title, iu.status, iu.message, iu.created_at as posted_at
+          from incident_updates iu
+          join incidents i on i.id = iu.incident_id
+          where iu.id = ${sourceId} and iu.org_id = ${tx.orgId}
+        `;
+        const row = rows[0];
+        if (!row) return undefined;
+        return {
+          sourceType,
+          incidentTitle: row.title,
+          status: row.status,
+          message: row.message,
+          postedAt: row.posted_at,
+        };
+      }
+      const rows = await tx.sql<
+        {
+          title: string;
+          description: string | null;
+          scheduled_start_at: Date;
+          scheduled_end_at: Date;
+          started_at: Date | null;
+          completed_at: Date | null;
+        }[]
+      >`
+        select title, description, scheduled_start_at, scheduled_end_at,
+               started_at, completed_at
+        from maintenance
+        where id = ${sourceId} and org_id = ${tx.orgId}
+      `;
+      const row = rows[0];
+      if (!row) return undefined;
+      return {
+        sourceType,
+        title: row.title,
+        description: row.description,
+        scheduledStartAt: row.scheduled_start_at,
+        scheduledEndAt: row.scheduled_end_at,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+      };
+    },
+
     /**
      * Every timeline entry past the cursor or inside the overlap, public or
      * not, in sequence order. `through` is the highest sequence scanned.

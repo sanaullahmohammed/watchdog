@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { Type } from 'typebox';
 import { Value } from 'typebox/value';
 import {
+  assertRetryDelays,
   assertSubscribeLimits,
   notificationEnvProperties,
   resolveEmailSettings,
@@ -320,5 +321,60 @@ describe('story 6.6: the notification pass settings', () => {
         `${name} ${bad}`,
       );
     }
+  });
+});
+
+describe('story 6.7: the retry settings', () => {
+  const base = () =>
+    Value.Default(schema, {
+      NOTIFICATION_LINK_SECRET: SECRET,
+    }) as Record<string, number>;
+
+  it('defaults to 60 s doubling to 3600 s, 8 attempts', () => {
+    const value = base();
+    assert.equal(value.NOTIFICATION_RETRY_BASE_SECONDS, 60);
+    assert.equal(value.NOTIFICATION_RETRY_MAX_DELAY_SECONDS, 3_600);
+    assert.equal(value.NOTIFICATION_MAX_ATTEMPTS, 8);
+    assert.equal(Value.Check(schema, value), true);
+  });
+
+  it('accepts each bound and refuses outside them', () => {
+    for (const [name, value, ok] of [
+      ['NOTIFICATION_RETRY_BASE_SECONDS', 60, true],
+      ['NOTIFICATION_RETRY_BASE_SECONDS', 86_400, true],
+      ['NOTIFICATION_RETRY_BASE_SECONDS', 59, false],
+      ['NOTIFICATION_RETRY_BASE_SECONDS', 86_401, false],
+      ['NOTIFICATION_RETRY_MAX_DELAY_SECONDS', 60, true],
+      ['NOTIFICATION_RETRY_MAX_DELAY_SECONDS', 59, false],
+      ['NOTIFICATION_RETRY_MAX_DELAY_SECONDS', 604_800, true],
+      ['NOTIFICATION_RETRY_MAX_DELAY_SECONDS', 604_801, false],
+      ['NOTIFICATION_MAX_ATTEMPTS', 1, true],
+      ['NOTIFICATION_MAX_ATTEMPTS', 100, true],
+      ['NOTIFICATION_MAX_ATTEMPTS', 0, false],
+      ['NOTIFICATION_MAX_ATTEMPTS', 101, false],
+    ] as const) {
+      assert.equal(
+        Value.Check(schema, { ...base(), [name]: value }),
+        ok,
+        `${name} ${value}`,
+      );
+    }
+  });
+
+  it('refuses a maximum delay below the base, naming both', () => {
+    assert.throws(
+      () =>
+        assertRetryDelays({
+          NOTIFICATION_RETRY_BASE_SECONDS: 120,
+          NOTIFICATION_RETRY_MAX_DELAY_SECONDS: 119,
+        }),
+      /NOTIFICATION_RETRY_MAX_DELAY_SECONDS.*NOTIFICATION_RETRY_BASE_SECONDS/,
+    );
+    assert.doesNotThrow(() =>
+      assertRetryDelays({
+        NOTIFICATION_RETRY_BASE_SECONDS: 120,
+        NOTIFICATION_RETRY_MAX_DELAY_SECONDS: 120,
+      }),
+    );
   });
 });

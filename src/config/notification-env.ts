@@ -64,7 +64,46 @@ export const notificationEnvProperties = {
     minimum: 1,
     maximum: 86_400,
   }),
+  // How long a delivery waits after a failed attempt (story 6.7): the base
+  // doubles per attempt up to the maximum delay. The base's minimum is
+  // SMTP_TIMEOUTS.overall (45 s) plus the 15 s socket limit, so no lease ends
+  // while its send can still run; `smtp-email-sender.spec.ts` fails if the
+  // two drift.
+  NOTIFICATION_RETRY_BASE_SECONDS: Type.Integer({
+    default: 60,
+    minimum: 60,
+    maximum: 86_400,
+  }),
+  NOTIFICATION_RETRY_MAX_DELAY_SECONDS: Type.Integer({
+    default: 3_600,
+    minimum: 60,
+    maximum: 604_800,
+  }),
+  // Attempts before a delivery is `abandoned`.
+  NOTIFICATION_MAX_ATTEMPTS: Type.Integer({
+    default: 8,
+    minimum: 1,
+    maximum: 100,
+  }),
 };
+
+/**
+ * The longest wait may not undercut the first one. Names both variables.
+ * Pure, so a unit spec can call it without a `.env`.
+ */
+export function assertRetryDelays(values: {
+  NOTIFICATION_RETRY_BASE_SECONDS: number;
+  NOTIFICATION_RETRY_MAX_DELAY_SECONDS: number;
+}): void {
+  if (
+    values.NOTIFICATION_RETRY_MAX_DELAY_SECONDS <
+    values.NOTIFICATION_RETRY_BASE_SECONDS
+  ) {
+    throw new Error(
+      `NOTIFICATION_RETRY_MAX_DELAY_SECONDS (${values.NOTIFICATION_RETRY_MAX_DELAY_SECONDS}) must not be below NOTIFICATION_RETRY_BASE_SECONDS (${values.NOTIFICATION_RETRY_BASE_SECONDS})`,
+    );
+  }
+}
 
 /**
  * The subscribe route takes one limiter, so ARCHITECTURE 5.4.1's "inherits the

@@ -26,3 +26,14 @@ export type NotificationDeliveryEventPayload = {
 /** A `pending` delivery was written to the ledger (story 6.6). */
 export const notificationEmailQueuedEvent =
   notificationEventCreator<NotificationDeliveryEventPayload>('email_queued');
+
+/** The SMTP server accepted a delivery's email (story 6.7). */
+export const notificationEmailSentEvent =
+  notificationEventCreator<NotificationDeliveryEventPayload>('email_sent');
+
+/**
+ * A delivery ended without being sent: refused for good, or abandoned after
+ * its last attempt (story 6.7).
+ */
+export const notificationEmailFailedEvent =
+  notificationEventCreator<NotificationDeliveryEventPayload>('email_failed');

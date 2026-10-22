@@ -17,9 +17,31 @@ export type QueuedDelivery = {
   sourceId: string;
 };
 
+/** The oldest due delivery, locked for this transaction. */
+export type ClaimedDelivery = {
+  id: string;
+  subscriberId: string;
+  sourceType: NotificationSourceType;
+  sourceId: string;
+  /** Attempts already made, before this claim. */
+  attempts: number;
+};
+
+/** What a send's answer does to its row. */
+export type DeliveryRecord = {
+  id: string;
+  /** The attempt number the claim wrote; the record is guarded by it. */
+  attempts: number;
+  status: 'sent' | 'failed' | 'abandoned' | 'pending';
+  /** Set only when given; a row keeps its last failure otherwise (a `sent` row too). */
+  lastError?: string;
+  /** Set only for a row that stays `pending`: the wait from now. */
+  retryInSeconds: number | null;
+};
+
 /**
  * The delivery ledger, DOMAIN NotificationDelivery. Takes a
- * `TenantTransaction` per call. Sending, claiming and retrying are story 6.7.
+ * `TenantTransaction` per call. Claiming, leasing and recording a send are story 6.7.
  */
 export default function deliveryRepository() {
   return {
@@ -70,6 +92,111 @@ export default function deliveryRepository() {
         sourceType: row.source_type,
         sourceId: row.source_id,
       }));
+    },
+
+    /**
+     * The oldest due `pending` row, or undefined. `skip locked` hands a row
+     * another pass holds to no one, so of two concurrent claims each gets a
+     * different row. The lock lasts to the end of the transaction only.
+     */
+    async claimDue(
+      tx: TenantTransaction,
+    ): Promise<ClaimedDelivery | undefined> {
+      const rows = await tx.sql<
+        {
+          id: string;
+          subscriber_id: string;
+          source_type: NotificationSourceType;
+          source_id: string;
+          attempts: number;
+        }[]
+      >`
+        select id, subscriber_id, source_type, source_id, attempts
+        from notification_deliveries
+        where org_id = ${tx.orgId}
+          and status = 'pending'
+          and next_attempt_at <= now()
+        order by next_attempt_at asc, id asc
+        limit 1
+        for no key update skip locked
+      `;
+      const row = rows[0];
+      if (!row) return undefined;
+      return {
+        id: row.id,
+        subscriberId: row.subscriber_id,
+        sourceType: row.source_type,
+        sourceId: row.source_id,
+        attempts: row.attempts,
+      };
+    },
+
+    /** Deletes a row that will never be sent. */
+    async drop(tx: TenantTransaction, id: string): Promise<void> {
+      await tx.sql`
+        delete from notification_deliveries
+        where id = ${id} and org_id = ${tx.orgId}
+      `;
+    },
+
+    /**
+     * Gives up on a claimed row. `EUNRECORDED` marks one that reached the
+     * limit through unrecorded claims, so it differs from a run of transient
+     * failures; an existing diagnostic is kept.
+     */
+    async abandon(tx: TenantTransaction, id: string): Promise<void> {
+      await tx.sql`
+        update notification_deliveries
+        set status = 'abandoned',
+            last_error = coalesce(last_error, 'EUNRECORDED')
+        where id = ${id} and org_id = ${tx.orgId} and status = 'pending'
+      `;
+    },
+
+    /**
+     * Leases a claimed row for attempt `attempts`: no other pass claims it
+     * until `leaseSeconds` pass.
+     */
+    async lease(
+      tx: TenantTransaction,
+      id: string,
+      attempts: number,
+      leaseSeconds: number,
+    ): Promise<void> {
+      await tx.sql`
+        update notification_deliveries
+        set attempts = ${attempts},
+            next_attempt_at = now() + make_interval(secs => ${leaseSeconds})
+        where id = ${id} and org_id = ${tx.orgId}
+      `;
+    },
+
+    /**
+     * Records a send's answer, only if the row is still `pending` at the
+     * attempt the claim wrote, so a send whose lease expired and was claimed
+     * again cannot overwrite the newer attempt. Returns whether it applied.
+     */
+    async record(
+      tx: TenantTransaction,
+      record: DeliveryRecord,
+    ): Promise<boolean> {
+      const rows = await tx.sql<{ id: string }[]>`
+        update notification_deliveries
+        set status = ${record.status},
+            sent_at = case when ${record.status}::text = 'sent'
+              then now() else sent_at end,
+            last_error = coalesce(${record.lastError ?? null}::text, last_error),
+            next_attempt_at = case when ${record.retryInSeconds}::int is null
+              then next_attempt_at
+              else now() + make_interval(secs => ${record.retryInSeconds}::int)
+              end
+        where id = ${record.id}
+          and org_id = ${tx.orgId}
+          and status = 'pending'
+          and attempts = ${record.attempts}
+        returning id
+      `;
+      return rows.length === 1;
     },
   };
 }

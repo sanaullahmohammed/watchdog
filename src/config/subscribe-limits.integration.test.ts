@@ -49,4 +49,16 @@ describe('the subscribe rate limit boot check', () => {
       /SUBSCRIBE_RATE_LIMIT_MAX.*PUBLIC_RATE_LIMIT_MAX/,
     );
   });
+
+  it('stops api at boot when the retry maximum delay is below the base (story 6.7)', async () => {
+    const result = await run({
+      NOTIFICATION_RETRY_BASE_SECONDS: '120',
+      NOTIFICATION_RETRY_MAX_DELAY_SECONDS: '119',
+    });
+    assert.notEqual(result.code, 0, result.output);
+    assert.match(
+      result.output,
+      /NOTIFICATION_RETRY_MAX_DELAY_SECONDS.*NOTIFICATION_RETRY_BASE_SECONDS/,
+    );
+  });
 });

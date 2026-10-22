@@ -339,7 +339,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
     - A 5xx at login or `MAIL FROM` is `transient`, because it says WatchDog's own settings are wrong. So 6.7 logs that settings-class diagnostic once, never with the address, instead of letting every due row retry silently.
     - An abandoned send's socket stays open while a server keeps trickling replies inside the 15 s inactivity limit. 6.7's shutdown wait does not cover it: the wait ends when `send` resolves at `EDEADLINE`, and the socket can still be open after that.
   evidence: Story 6.2 Boundaries (fixed timeouts; the late result is caught, never acted on). nodemailer 10.0.16 exposes no abort signal (`dist/cjs/smtp-connection/index.js`). Story 6.2 review.
-  target: Epic 6, story 6.7.
+  target: Epic 6, story 6.7. RESOLVED by story 6.7 (2026-10-22, `spec-6-7-send-owed-emails-with-retries.md`): leases are per row and measured from the claim; `NOTIFICATION_RETRY_BASE_SECONDS` has a minimum of the overall plus socket limit, pinned by `smtp-email-sender.spec.ts`; each pass logs transient diagnostics once as counts at `warn`; the at-least-once duplicate is commented where the transient outcome is recorded; the socket outliving `EDEADLINE` stays accepted (spec Design Notes).
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-2-send-email-through-smtp.md`
   summary: Mailpit is `axllent/mailpit:latest` in both Compose and CI's database job, so a new release can change the `/api/v1` shapes that `src/shared/testing/mailpit.ts` reads (`messages: null`, `Headers` as arrays, CRLF in `Text`) and break CI without warning.
   evidence: Story 6.2 Review Triage Log #20. Compose used `latest` before story 6.2; CI's service now follows it.
@@ -396,4 +396,27 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-6-work-out-who-is-owed-each-public-change.md`
   summary: A window an operator completes while still `scheduled` (DOMAIN's "completes/cancels as completed") keeps `started_at` null, and 6.6 owes it a `maintenance_completed` delivery as DOMAIN "What notifies" requires. If 6.7 words every `maintenance_completed` email as "maintenance has completed", subscribers are told work finished that never started. 6.7 should word a completion with no `started_at` as a window that ended without starting.
   evidence: Story 6.6 Review Triage Log (edge case hunter, cancelled window). `maintenance.repository.ts` `completeDue` and `complete` leave `started_at` alone; the 6.6 test "owes two changes for a window that went straight to completed" pins the delivery.
-  target: Story 6.7.
+  target: Story 6.7. RESOLVED by story 6.7 (2026-10-22): a completion with `started_at` null is worded "Maintenance ended without starting" (`notification-email.ts`).
+
+## From Story 6.7 (2026-10-22)
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
+  summary: `startWorker` aborts `stopClaiming` first in `shutdown`, and nothing tests that wiring. A spawned worker cannot stub `send`, so a test needs a stalling SMTP endpoint in the lifecycle harness to prove a shutdown during a send claims nothing more and waits for the record.
+  evidence: Story 6.7 Review Triage Log #16 (verification gap). The abort inside `runNotificationPass` is tested; the `shutdown` call is not.
+  target: Story 6.10, or the next change to the worker lifecycle harness.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
+  summary: Dispatch sends one email at a time across every organization, each over a new SMTP connection, so a pass sends about one interval's worth and a large subscriber list takes hours. This is not stated as a limit anywhere.
+  evidence: Story 6.7 Review Triage Log #17 (blind hunter). Frozen Boundaries: one row per claim, no batch leases.
+  target: Before a deployment with a large subscriber list; a connection pool or bounded concurrency would need its own story.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
+  summary: Nothing pins that the dispatch budget counts from the start of the pass, queueing included. Moving `started` below the queueing loop in `runNotificationPass` fails no test, and a slow queue would then let a pass plus one send overrun `WORKER_PASS_OVERDUE_MS`.
+  evidence: Story 6.7 Review Triage Log #34 (blind hunter; verification gap). The mid-round budget test spends its budget on the first send whichever way the clock starts.
+  target: The next change to `runNotificationPass`, with a hook or lock that makes queueing slow.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
+  summary: The worker's start-up `warn` when the dispatch budget is 0 is untested, so it could be inverted or dropped unnoticed.
+  evidence: Story 6.7 Review Triage Log #35 (verification gap). `startWorker` runs only in spawned processes, and no lifecycle test reads its log for this line.
+  target: With the `shutdown` wiring test above, in the worker lifecycle harness.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
+  summary: A `sent` row keeps its last failure's `last_error`, and abandon-at-claim keeps an existing diagnostic (writing `EUNRECORDED` only when it is null). Neither is pinned by a test.
+  evidence: Story 6.7 Review Triage Log #36 (verification gap). Both `coalesce` calls in `delivery.repository.ts` could become plain assignments with every test passing; nothing reads `last_error` yet.
+  target: The first story that reads `last_error` (an admin delivery view, or story 6.9's pruning if it reports).
