@@ -51,6 +51,8 @@ export default function makeUnsubscribe({
         throw new NotFoundException(PUBLIC_PAGE_NOT_FOUND);
       }
 
+      // Also deletes the subscriber's pending deliveries, under the row lock,
+      // on both the `unsubscribed` and the `unchanged` outcome (story 6.6).
       const outcome = await withTenantTransaction(org.id, (tx) =>
         subscriberRepository.unsubscribe(tx, subscriberId),
       );

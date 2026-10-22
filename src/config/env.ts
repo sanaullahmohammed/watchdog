@@ -160,6 +160,9 @@ export default {
   // BETTER_AUTH_URL's origin when that is unset.
   publicBaseUrl,
   notificationLinkSecret: env.NOTIFICATION_LINK_SECRET,
+  notification: {
+    cursorOverlapSeconds: env.NOTIFICATION_CURSOR_OVERLAP_SECONDS,
+  },
   subscribe: {
     rateLimit: {
       max: env.SUBSCRIBE_RATE_LIMIT_MAX,
@@ -182,6 +185,7 @@ export default {
     heartbeatMaxAgeMs: env.WORKER_HEARTBEAT_MAX_AGE_MS,
     maintenanceIntervalMs: env.WORKER_MAINTENANCE_INTERVAL_MS,
     monitorIntervalMs: env.WORKER_MONITOR_INTERVAL_MS,
+    notificationIntervalMs: env.NOTIFICATION_PASS_INTERVAL_MS,
     passOverdueMs: env.WORKER_PASS_OVERDUE_MS,
   },
 };

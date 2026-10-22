@@ -48,6 +48,22 @@ export const notificationEnvProperties = {
     minimum: 0,
     maximum: 86_400,
   }),
+  // How often the worker's notification pass works out who is owed each
+  // public change (story 6.6). It must stay below WORKER_PASS_OVERDUE_MS,
+  // which `assertWorkerIntervals` checks. The maximum is the largest delay
+  // Node's setInterval honours; above it the timer fires every 1 ms.
+  NOTIFICATION_PASS_INTERVAL_MS: Type.Integer({
+    default: 30_000,
+    minimum: 1_000,
+    maximum: 2_147_483_647,
+  }),
+  // How far behind its cursor each pass re-reads, because a change can
+  // commit after a later one was read. ARCHITECTURE 5.6.
+  NOTIFICATION_CURSOR_OVERLAP_SECONDS: Type.Integer({
+    default: 300,
+    minimum: 1,
+    maximum: 86_400,
+  }),
 };
 
 /**

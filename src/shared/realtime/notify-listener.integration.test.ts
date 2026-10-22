@@ -316,6 +316,7 @@ describe('Story 4.4: listen in the api and fan out per organization', () => {
       WORKER_HEARTBEAT_PATH: join(directory, 'heartbeat'),
       WORKER_MAINTENANCE_INTERVAL_MS: '1000',
       WORKER_MONITOR_INTERVAL_MS: '1000',
+      NOTIFICATION_PASS_INTERVAL_MS: '1000',
       WORKER_PASS_OVERDUE_MS: '20000',
     };
     // An organization of its own, which nothing here subscribes to: what the

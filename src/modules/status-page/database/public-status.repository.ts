@@ -1,3 +1,7 @@
+import {
+  publicTimelineEntry,
+  visibleService,
+} from '@/shared/db/public-page-sql';
 import type { TenantTransaction } from '@/shared/db/tenant-transaction';
 import type { AffectedService } from '@/shared/domain/public-page';
 import {
@@ -124,7 +128,7 @@ export default function publicStatusRepository() {
         from services s
         left join service_groups g
           on g.id = s.service_group_id and g.org_id = s.org_id
-        where s.archived_at is null and s.is_public = true
+        where ${visibleService(tx, 's')}
         order by
           g.display_order asc nulls last, g.name asc nulls last,
           g.id asc nulls last,
@@ -168,7 +172,7 @@ export default function publicStatusRepository() {
           select distinct rr.service_id
           from uptime_rollups rr
           join services s on s.id = rr.service_id and s.org_id = rr.org_id
-          where s.is_public = true and s.archived_at is null
+          where ${visibleService(tx, 's')}
             and rr.day between (now() at time zone 'UTC')::date - 89
                           and (now() at time zone 'UTC')::date
         ) i
@@ -216,14 +220,15 @@ export default function publicStatusRepository() {
 
       const ids = incidents.map((incident) => incident.id);
 
-      // Visible is the services query's own predicate. A link to a service
-      // that is private or archived is still returned, so the rule can tell an
-      // incident naming only hidden services from one naming none.
+      // Visible is the services query's own predicate, the shared fragment. A
+      // link to a service that is private or archived is still returned, so
+      // the rule can tell an incident naming only hidden services from one
+      // naming none.
       const impacts = await tx.sql<
         { incident_id: string; service_id: string; visible: boolean }[]
       >`
         select isi.incident_id, isi.service_id,
-               (s.is_public and s.archived_at is null) as visible
+               ${visibleService(tx, 's')} as visible
         from incident_service_impacts isi
         join services s on s.id = isi.service_id and s.org_id = isi.org_id
         where isi.incident_id in ${tx.sql(ids)}
@@ -239,17 +244,18 @@ export default function publicStatusRepository() {
           created_at: Date;
         }[]
       >`
-        select incident_id, id, status, message, created_at
-        from incident_updates
-        where incident_id in ${tx.sql(ids)}
+        select iu.incident_id, iu.id, iu.status, iu.message, iu.created_at
+        from incident_updates iu
+        where iu.incident_id in ${tx.sql(ids)}
           -- Entries from the incident's draft era were never public: a draft
           -- was not shown to customers, and nor were the notes posted to it.
-          -- DOMAIN, "Public status page"; Epic 3 retrospective, R-4.
-          and status <> 'draft'
+          -- DOMAIN, "Public status page"; Epic 3 retrospective, R-4. The
+          -- shared fragment is the one the notification pass applies.
+          and ${publicTimelineEntry(tx, 'iu')}
         -- The timeline order is the sequence assigned at insert, not the
         -- clock, which can step back (Epic 2 D-1, story 5.13). Same order as
         -- the admin timeline. sequence is unique per row.
-        order by sequence asc
+        order by iu.sequence asc
       `;
 
       return incidents.map((incident) => ({
@@ -301,7 +307,7 @@ export default function publicStatusRepository() {
         { maintenance_id: string; service_id: string; visible: boolean }[]
       >`
         select ms.maintenance_id, ms.service_id,
-               (s.is_public and s.archived_at is null) as visible
+               ${visibleService(tx, 's')} as visible
         from maintenance_services ms
         join services s on s.id = ms.service_id and s.org_id = ms.org_id
         where ms.maintenance_id in ${tx.sql(windows.map((window) => window.id))}

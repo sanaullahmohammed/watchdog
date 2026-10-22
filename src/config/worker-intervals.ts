@@ -9,10 +9,12 @@ export function assertWorkerIntervals(values: {
   WORKER_PASS_OVERDUE_MS: number;
   WORKER_MAINTENANCE_INTERVAL_MS: number;
   WORKER_MONITOR_INTERVAL_MS: number;
+  NOTIFICATION_PASS_INTERVAL_MS: number;
 }): void {
   for (const interval of [
     'WORKER_MAINTENANCE_INTERVAL_MS',
     'WORKER_MONITOR_INTERVAL_MS',
+    'NOTIFICATION_PASS_INTERVAL_MS',
   ] as const) {
     if (values.WORKER_PASS_OVERDUE_MS <= values[interval]) {
       throw new Error(

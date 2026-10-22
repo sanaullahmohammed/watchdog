@@ -7,6 +7,7 @@ import type { CommandCreator } from '@/shared/cqrs/bus.types';
 import * as incidentEvents from '@/shared/events/incident.events';
 import * as maintenanceEvents from '@/shared/events/maintenance.events';
 import * as monitorEvents from '@/shared/events/monitor.events';
+import * as notificationEvents from '@/shared/events/notification.events';
 import * as serviceEvents from '@/shared/events/service.events';
 import * as subscriberEvents from '@/shared/events/subscriber.events';
 import {
@@ -84,6 +85,7 @@ const EXPORTED_CREATORS: ReadonlyMap<string, CommandCreator<unknown>> = new Map(
     incidentEvents,
     maintenanceEvents,
     monitorEvents,
+    notificationEvents,
     serviceEvents,
     subscriberEvents,
   ].flatMap((module) =>
@@ -100,6 +102,7 @@ const IMPORTED_EVENT_FILES = [
   'incident.events.ts',
   'maintenance.events.ts',
   'monitor.events.ts',
+  'notification.events.ts',
   'service.events.ts',
   'subscriber.events.ts',
 ];

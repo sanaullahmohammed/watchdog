@@ -444,3 +444,29 @@ export async function openMonitorDraft(
 export function transitionDueMaintenance(app: FastifyInstance, orgId: string) {
   return app.commandBus.execute(transitionDueMaintenanceCommand({ orgId }));
 }
+
+/**
+ * A confirmed subscriber inserted directly, confirmed at `now() +
+ * confirmedAtOffset` (an interval such as `'-1 day'` or `'1 day'`). A day
+ * either side puts the subscriber clearly before or after every change a test
+ * records, whatever the clock does meanwhile, which a real confirm at `now()`
+ * would not. Returns its id.
+ */
+export async function insertConfirmedSubscriber(
+  orgId: string,
+  confirmedAtOffset: string,
+): Promise<string> {
+  const email = `${unique('sub')}@example.test`;
+  const [row] = await withTenantTransaction(
+    orgId,
+    ({ sql: tx }) => tx<{ id: string }[]>`
+      insert into subscribers (org_id, email, status, confirmed_at)
+      values (
+        ${orgId}, ${email}, 'confirmed',
+        now() + ${confirmedAtOffset}::interval
+      )
+      returning id
+    `,
+  );
+  return row.id;
+}

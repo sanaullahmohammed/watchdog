@@ -58,6 +58,7 @@ function runHealthcheck(path: string, overrides: Record<string, string> = {}) {
     WORKER_PASS_OVERDUE_MS: String(OVERDUE_MS),
     WORKER_MAINTENANCE_INTERVAL_MS: String(CHILD_INTERVAL_MS),
     WORKER_MONITOR_INTERVAL_MS: String(CHILD_INTERVAL_MS),
+    NOTIFICATION_PASS_INTERVAL_MS: String(CHILD_INTERVAL_MS),
     ...overrides,
   });
 }

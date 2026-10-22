@@ -96,6 +96,7 @@ function childEnv(heartbeatPath: string, overdueMs: number) {
     WORKER_HEARTBEAT_PATH: heartbeatPath,
     WORKER_MAINTENANCE_INTERVAL_MS: String(INTERVAL_MS),
     WORKER_MONITOR_INTERVAL_MS: String(INTERVAL_MS),
+    NOTIFICATION_PASS_INTERVAL_MS: String(INTERVAL_MS),
     WORKER_PASS_OVERDUE_MS: String(overdueMs),
   };
 }
@@ -202,11 +203,12 @@ describe('Story 5.9: checks run on the worker loop', () => {
     const env = childEnv(path, 20_000);
     const worker = startChild([org.orgId], env);
 
-    await waitFor('both loops to complete', () => {
+    await waitFor('every loop to complete', () => {
       const loops = readHeartbeat(path)?.loops;
       return (
         loops?.maintenance?.lastCompletedAt != null &&
-        loops?.monitor?.lastCompletedAt != null
+        loops?.monitor?.lastCompletedAt != null &&
+        loops?.notification?.lastCompletedAt != null
       );
     });
     await waitFor(
@@ -221,6 +223,8 @@ describe('Story 5.9: checks run on the worker loop', () => {
     const firstMaintenance =
       readHeartbeat(path)?.loops.maintenance?.lastCompletedAt;
     const firstCompleted = readHeartbeat(path)?.loops.monitor?.lastCompletedAt;
+    const firstNotification =
+      readHeartbeat(path)?.loops.notification?.lastCompletedAt;
     await waitFor(
       'another monitor pass to complete',
       () =>
@@ -232,7 +236,23 @@ describe('Story 5.9: checks run on the worker loop', () => {
         readHeartbeat(path)?.loops.maintenance?.lastCompletedAt !==
         firstMaintenance,
     );
+    await waitFor(
+      'another notification pass to complete',
+      () =>
+        readHeartbeat(path)?.loops.notification?.lastCompletedAt !==
+        firstNotification,
+    );
     assert.equal((await results(outsider.orgId, outsiderMonitorId)).length, 0);
+    // A notification pass leaves a cursor on every organization it visits.
+    const cursors = async (orgId: string) =>
+      (
+        await withTenantTransaction(
+          orgId,
+          ({ sql: tx }) => tx`select org_id from notification_cursors`,
+        )
+      ).length;
+    assert.equal(await cursors(org.orgId), 1);
+    assert.equal(await cursors(outsider.orgId), 0);
     const drifted = await withTenantTransaction(
       outsider.orgId,
       ({ sql: tx }) =>
@@ -468,11 +488,13 @@ describe('Story 5.9: checks run on the worker loop', () => {
       ...childEnv(path, 120_000),
       WORKER_MAINTENANCE_INTERVAL_MS: '60000',
       WORKER_MONITOR_INTERVAL_MS: '60000',
+      NOTIFICATION_PASS_INTERVAL_MS: '60000',
     });
-    const before = await waitFor('both loops to complete', () => {
+    const before = await waitFor('every loop to complete', () => {
       const record = readHeartbeat(path);
       return record?.loops.monitor?.lastCompletedAt != null &&
-        record.loops.maintenance?.lastCompletedAt != null
+        record.loops.maintenance?.lastCompletedAt != null &&
+        record.loops.notification?.lastCompletedAt != null
         ? record
         : null;
     });
@@ -483,7 +505,11 @@ describe('Story 5.9: checks run on the worker loop', () => {
         if (record === null || record.writtenAt === before.writtenAt) {
           return null;
         }
-        for (const name of ['maintenance', 'monitor'] as const) {
+        for (const name of [
+          'maintenance',
+          'monitor',
+          'notification',
+        ] as const) {
           assert.equal(
             record.loops[name]?.lastStartedAt,
             before.loops[name]?.lastStartedAt,
