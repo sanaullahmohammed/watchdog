@@ -378,3 +378,38 @@ describe('story 6.7: the retry settings', () => {
     );
   });
 });
+
+describe('story 6.9: the retention settings', () => {
+  const base = () =>
+    Value.Default(schema, {
+      NOTIFICATION_LINK_SECRET: SECRET,
+    }) as Record<string, number>;
+
+  it('defaults to 90 days of retention and 7 days of grace', () => {
+    const value = base();
+    assert.equal(value.NOTIFICATION_RETENTION_DAYS, 90);
+    assert.equal(value.SUBSCRIBER_PENDING_GRACE_DAYS, 7);
+    assert.equal(Value.Check(schema, value), true);
+  });
+
+  it('accepts each bound, refuses outside them, and refuses a fraction', () => {
+    for (const name of [
+      'NOTIFICATION_RETENTION_DAYS',
+      'SUBSCRIBER_PENDING_GRACE_DAYS',
+    ] as const) {
+      for (const [value, ok] of [
+        [1, true],
+        [36_500, true],
+        [0, false],
+        [36_501, false],
+        [1.5, false],
+      ] as const) {
+        assert.equal(
+          Value.Check(schema, { ...base(), [name]: value }),
+          ok,
+          `${name} ${value}`,
+        );
+      }
+    }
+  });
+});

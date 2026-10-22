@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-06-2026 12:00
-last_updated: 10-22-2026 17:23
+last_updated: 10-22-2026 18:19
 project: watchdog
 project_key: NOKEY
 tracking_system: file-system
@@ -109,7 +109,7 @@ development_status:
   6-6-work-out-who-is-owed-each-public-change: done
   6-7-send-owed-emails-with-retries: done
   6-8-follow-a-status-page-as-an-atom-feed: done
-  6-9-prune-old-deliveries-and-subscribers: backlog
+  6-9-prune-old-deliveries-and-subscribers: review
   6-10-prove-subscribe-to-unsubscribe-end-to-end: backlog
   epic-6-retrospective: optional
 

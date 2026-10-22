@@ -28,6 +28,44 @@ type LockedRow = { id: string; status: string; throttled: boolean };
 export default function subscriberRepository() {
   return {
     /**
+     * Deletes subscribers unsubscribed longer than `retentionDays` ago, and
+     * their deliveries with them through the foreign key's cascade. The whole
+     * rule is in the `delete`, so a row a concurrent resubscribe changed is
+     * re-checked after its lock and survives. Returns how many.
+     */
+    async pruneUnsubscribed(
+      tx: TenantTransaction,
+      retentionDays: number,
+    ): Promise<number> {
+      const rows = await tx.sql`
+        delete from subscribers
+        where org_id = ${tx.orgId}
+          and status = 'unsubscribed'
+          and updated_at < now() - make_interval(days => ${retentionDays})
+        returning 1
+      `;
+      return rows.length;
+    },
+
+    /**
+     * Deletes pending subscribers whose token expired more than `graceDays`
+     * ago. A confirmed subscriber is never deleted. Returns how many.
+     */
+    async pruneNeverConfirmed(
+      tx: TenantTransaction,
+      graceDays: number,
+    ): Promise<number> {
+      const rows = await tx.sql`
+        delete from subscribers
+        where org_id = ${tx.orgId}
+          and status = 'pending'
+          and confirmation_expires_at < now() - make_interval(days => ${graceDays})
+        returning 1
+      `;
+      return rows.length;
+    },
+
+    /**
      * The address of `subscriberId` while it is `confirmed`, else undefined.
      * No row lock: unsubscribe locks the subscriber and then deletes its
      * deliveries, so a claim holding a delivery must not wait on the
