@@ -6,15 +6,23 @@ import {
 } from '@/shared/domain/status-inputs';
 
 /**
- * What the public page shows and the status it leads with, transcribed from
- * DOMAIN.md, "Public status page". Both rules are written once here, and
- * DOMAIN requires Epic 4's public event gate to apply the listing rule too.
+ * What is public, and the status the page leads with, transcribed from
+ * DOMAIN.md, "Public status page". Both rules are written once here. The
+ * listing rule decides what the public page, its live stream (Epic 4's public
+ * event gate), the Atom feed and subscriber emails may say, so none of them
+ * keeps a copy (ARCHITECTURE 5.6). Its SQL half, how a query computes
+ * `visible` and which timeline entries are public, is in
+ * `src/shared/db/public-page-sql.ts`.
  */
 
-/** A service an incident or window names, and whether the page may show it. */
+/** A service an incident or window names, and whether it may be published. */
 export type AffectedService = {
   serviceId: string;
-  /** `is_public` and not archived: the only services the page lists. */
+  /**
+   * `is_public` and not archived, computed by `visibleService` in
+   * `src/shared/db/public-page-sql.ts`: the only services the page lists and
+   * the feed and emails may name.
+   */
   visible: boolean;
 };
 
@@ -25,7 +33,8 @@ export type Published<T extends { affectedServices: AffectedService[] }> = Omit<
 > & { affectedServiceIds: string[] };
 
 /**
- * The incidents or windows the page lists, in the order given.
+ * The incidents or windows that may be published, in the order given: the
+ * ones the page lists, and the only ones the feed and emails may speak of.
  *
  * One naming no service is listed: blast radius is often unknown at first. One
  * naming at least one visible service is listed with only those. One naming

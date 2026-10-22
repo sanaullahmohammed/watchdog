@@ -38,9 +38,11 @@ services:
       MONITOR_ALLOWED_CIDRS: 10.213.7.10/32
       WORKER_MONITOR_INTERVAL_MS: '1000'
       # The overdue window must exceed every loop's interval, or the worker
-      # refuses to boot (src/config/worker-intervals.ts). The maintenance
-      # loop's default, 30 s, would exceed it, so it is brought under too.
+      # refuses to boot (src/config/worker-intervals.ts). The maintenance and
+      # notification loops' default, 30 s, would exceed it, so both are
+      # brought under too.
       WORKER_MAINTENANCE_INTERVAL_MS: '5000'
+      NOTIFICATION_PASS_INTERVAL_MS: '5000'
       WORKER_PASS_OVERDUE_MS: '10000'
 
   # The controlled target: answers 503 to every path, so a monitor on it fails

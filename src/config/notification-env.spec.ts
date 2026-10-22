@@ -276,3 +276,49 @@ describe('story 6.3: the subscribe settings', () => {
     );
   });
 });
+
+describe('story 6.6: the notification pass settings', () => {
+  const base = () =>
+    Value.Default(schema, {
+      NOTIFICATION_LINK_SECRET: SECRET,
+    }) as Record<string, number>;
+
+  it('defaults to a 30 s pass that re-reads 300 s behind its cursor', () => {
+    const value = base();
+    assert.equal(value.NOTIFICATION_PASS_INTERVAL_MS, 30_000);
+    assert.equal(value.NOTIFICATION_CURSOR_OVERLAP_SECONDS, 300);
+    assert.equal(Value.Check(schema, value), true);
+  });
+
+  it('accepts each bound', () => {
+    for (const [name, ok] of [
+      ['NOTIFICATION_PASS_INTERVAL_MS', 1_000],
+      ['NOTIFICATION_PASS_INTERVAL_MS', 2_147_483_647],
+      ['NOTIFICATION_CURSOR_OVERLAP_SECONDS', 1],
+      ['NOTIFICATION_CURSOR_OVERLAP_SECONDS', 86_400],
+    ] as const) {
+      assert.equal(
+        Value.Check(schema, { ...base(), [name]: ok }),
+        true,
+        `${name} ${ok}`,
+      );
+    }
+  });
+
+  it('refuses a value outside the bounds, and a fraction', () => {
+    for (const [name, bad] of [
+      ['NOTIFICATION_PASS_INTERVAL_MS', 999],
+      ['NOTIFICATION_PASS_INTERVAL_MS', 2_147_483_648],
+      ['NOTIFICATION_PASS_INTERVAL_MS', 1000.5],
+      ['NOTIFICATION_CURSOR_OVERLAP_SECONDS', 0],
+      ['NOTIFICATION_CURSOR_OVERLAP_SECONDS', 86_401],
+      ['NOTIFICATION_CURSOR_OVERLAP_SECONDS', 1.5],
+    ] as const) {
+      assert.equal(
+        Value.Check(schema, { ...base(), [name]: bad }),
+        false,
+        `${name} ${bad}`,
+      );
+    }
+  });
+});

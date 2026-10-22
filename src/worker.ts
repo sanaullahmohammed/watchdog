@@ -26,6 +26,10 @@ import {
   listMonitorsAtThresholdQuery,
 } from '@/modules/monitoring/queries/list-monitors-at-threshold/list-monitors-at-threshold.handler';
 import {
+  type QueueEmailNotificationCommandResult,
+  queueEmailNotificationCommand,
+} from '@/modules/notification/commands/queue-email-notifications/queue-email-notifications.handler';
+import {
   type RecomputeServiceStatusCommandResult,
   recomputeServiceStatusCommand,
 } from '@/modules/service/commands/recompute-service-status/recompute-service-status.event-handler';
@@ -39,6 +43,7 @@ import { createWorkerHealth, type WorkerHealth } from '@/worker-health';
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const MAINTENANCE_LOOP = 'maintenance';
 const MONITOR_LOOP = 'monitor';
+const NOTIFICATION_LOOP = 'notification';
 
 /**
  * One step of a pass for one organization. A step that throws is logged under
@@ -364,6 +369,55 @@ export async function runMonitorPass(
 }
 
 /**
+ * One notification pass: each organization's QueueEmailNotificationCommand,
+ * which works out who is owed each public change recorded since its cursor
+ * and writes the ledger. ARCHITECTURE 5.6, run as 6.0's per-organization loop.
+ *
+ * Organizations run one after another, each in its own transaction, and one
+ * organization's failure is logged and the rest still run. The pass rejects,
+ * with no cause, only when discovery failed or every visited organization
+ * failed, the rule runWorkerPass applies. startLoop keeps it from overlapping
+ * itself.
+ */
+export async function runNotificationPass(
+  app: FastifyInstance,
+  logger: FastifyBaseLogger,
+  // Tests pass their own organizations. The worker never passes this.
+  options: { orgIds?: readonly string[] } = {},
+): Promise<void> {
+  let orgIds: readonly string[];
+  try {
+    orgIds = options.orgIds ?? (await listOrganizationIds());
+  } catch (error) {
+    logger.error({ err: error }, 'tenant discovery failed; skipping this pass');
+    throw new Error('tenant discovery failed');
+  }
+
+  let failed = 0;
+  for (const orgId of orgIds) {
+    try {
+      const { queued } =
+        await app.commandBus.execute<QueueEmailNotificationCommandResult>(
+          queueEmailNotificationCommand({ orgId }),
+        );
+      if (queued > 0) {
+        logger.info({ orgId, queued }, 'notification emails queued');
+      }
+    } catch (error) {
+      failed += 1;
+      logger.error(
+        { orgId, err: error },
+        'notification pass failed for organization',
+      );
+    }
+  }
+
+  if (orgIds.length > 0 && failed === orgIds.length) {
+    throw new Error(`every organization failed (${orgIds.length})`);
+  }
+}
+
+/**
  * The closing steps of shutdown. Never rejects: a failed app.close() is logged
  * and the pool is still ended, so the process can exit.
  */
@@ -441,10 +495,11 @@ export function startLoop(options: {
 }
 
 /**
- * Background entrypoint. Two loops share the process: maintenance (runWorkerPass:
- * ORGANIZATION_STEPS for each organization, then partition maintenance) and the
- * monitor loop (due checks). One image, two commands, separate processes that
- * share no memory.
+ * Background entrypoint. Three loops share the process: maintenance
+ * (runWorkerPass: ORGANIZATION_STEPS for each organization, then partition
+ * maintenance), the monitor loop (due checks) and the notification loop (who
+ * is owed each public change). One image, two commands, separate processes
+ * that share no memory.
  */
 export async function startWorker(
   // Only the test seam passes this; src/index.ts passes nothing.
@@ -472,7 +527,7 @@ export async function startWorker(
 
   const health = createWorkerHealth({
     path: env.worker.heartbeatPath,
-    loops: [MAINTENANCE_LOOP, MONITOR_LOOP],
+    loops: [MAINTENANCE_LOOP, MONITOR_LOOP, NOTIFICATION_LOOP],
     logger,
   });
   health.write();
@@ -495,6 +550,13 @@ export async function startWorker(
     health,
     logger,
   });
+  const notification = startLoop({
+    name: NOTIFICATION_LOOP,
+    pass: () => runNotificationPass(app, logger, { orgIds: options.orgIds }),
+    intervalMs: env.worker.notificationIntervalMs,
+    health,
+    logger,
+  });
 
   logger.info('Worker is ready');
 
@@ -507,6 +569,7 @@ export async function startWorker(
     logger.info({ signal }, 'Worker is shutting down');
     maintenance.stop();
     monitor.stop();
+    notification.stop();
     // Stop taking new work: checks still waiting for a slot are dropped and
     // stay due for the next worker; checks already running finish.
     checkLimiter.close();
@@ -517,6 +580,7 @@ export async function startWorker(
     const inFlight = [
       ['maintenance', maintenance.inFlight],
       ['monitor', monitor.inFlight],
+      ['notification', notification.inFlight],
     ] as const;
     for (const [name, pending] of inFlight) {
       if (pending) {

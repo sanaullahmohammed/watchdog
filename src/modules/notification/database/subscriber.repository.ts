@@ -55,6 +55,13 @@ export default function subscriberRepository() {
      * Unsubscribes `subscriberId` under a row lock and clears its confirm
      * token. `unsubscribed` is true only when this call changed the row, so
      * of two concurrent calls one reports it. `missing` when no such row.
+     *
+     * Under the same lock, and whether or not the row was already
+     * unsubscribed, it deletes the subscriber's `pending` deliveries: an
+     * unsubscribe stops every one (DOMAIN, NotificationDelivery). The
+     * notification pass locks the subscribers it writes for `for share`, so
+     * a pass in flight finishes first and its rows are deleted here, and a
+     * pass that comes later no longer finds the subscriber confirmed.
      */
     async unsubscribe(
       tx: TenantTransaction,
@@ -67,6 +74,12 @@ export default function subscriberRepository() {
       `;
       const row = locked[0];
       if (!row) return 'missing';
+      await tx.sql`
+        delete from notification_deliveries
+        where subscriber_id = ${row.id}
+          and org_id = ${tx.orgId}
+          and status = 'pending'
+      `;
       if (row.status === 'unsubscribed') return 'unchanged';
       await tx.sql`
         update subscribers
@@ -76,6 +89,23 @@ export default function subscriberRepository() {
         where id = ${row.id} and org_id = ${tx.orgId}
       `;
       return 'unsubscribed';
+    },
+
+    /**
+     * The ids of every confirmed subscriber, locked `for share` until the
+     * transaction ends, for the notification pass to write deliveries for.
+     * `status` is in the `where`, so a row whose unsubscribe commits while
+     * this waits for its lock is re-checked and left out. An unsubscribe that
+     * starts later waits for this transaction, then deletes what it wrote.
+     */
+    async lockConfirmed(tx: TenantTransaction): Promise<string[]> {
+      const rows = await tx.sql<{ id: string }[]>`
+        select id from subscribers
+        where org_id = ${tx.orgId} and status = 'confirmed'
+        order by id asc
+        for share
+      `;
+      return rows.map((row) => row.id);
     },
 
     /**

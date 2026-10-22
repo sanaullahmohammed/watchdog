@@ -381,12 +381,19 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-5-one-rule-for-what-is-public.md`
   summary: The "visible service" predicate (`is_public and archived_at is null`) is SQL in the status-page repository (`src/modules/status-page/database/public-status.repository.ts:226,304`), not in `src/shared/domain/public-page.ts`. Stories 6.6 and 6.8 would have to restate it. The shared `AffectedService.visible` is documented in words ("`is_public` and not archived"), so the shared rule trusts each caller to compute `visible` the same way in SQL. That is why a shared SQL fragment or view matters. ARCHITECTURE 5.6 says nobody keeps a copy, so they should share it and not copy it.
   evidence: Story 6.5 spec review, owner decision A (the move stays pure); Review Triage Log #7.
-  target: Story 6.6 (first reader), then 6.8.
+  target: Story 6.6 (first reader), then 6.8. RESOLVED by story 6.6 (2026-10-22): `visibleService(tx, alias)` and `publicTimelineEntry(tx, alias)` in `src/shared/db/public-page-sql.ts` return SQL fragments (no view, which would run as its owner and skip RLS). The status page's repository uses them at every site that held the predicate or `status <> 'draft'`, with its tests unedited, and the notification pass reads through them. Story 6.8's feed imports the same fragments.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-5-one-rule-for-what-is-public.md`
   summary: Nothing stops a copy of `publishable` or `overallStatus` from coming back. The "no copy in `src/modules`" check was a one-time grep, and dependency-cruiser blocks only imports. A spec in the style of `test-globs.spec.ts` that fails on a definition of either under `src/modules` would hold ARCHITECTURE 5.6's "none keeps a copy".
   evidence: Story 6.5 Review Triage Log #6.
-  target: Story 6.6 (first reader of the rule outside status-page).
+  target: Story 6.6 (first reader of the rule outside status-page). RESOLVED by story 6.6 (2026-10-22): `src/shared/domain/public-rule-copies.spec.ts` fails on a function, method, or function-valued variable or property named `publishable` or `overallStatus` under `src/modules`, and on `is_public` in any `sql` template outside the `service` module. A renamed copy gets past it, which the spec accepts.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-5-one-rule-for-what-is-public.md`
   summary: The moved file's doc comments still speak only of the public page. The header at `src/shared/domain/public-page.ts:8-12` names "Epic 4's public event gate", and `visible` says "the only services the page lists". Now the feed and emails share it, so 6.6 should widen the wording when it first imports the rule.
   evidence: Story 6.5 Review Triage Log #8; the spec kept comment edits out of scope so the move stays pure.
-  target: Story 6.6.
+  target: Story 6.6. RESOLVED by story 6.6 (2026-10-22): the header, `AffectedService.visible` and `publishable` now speak of the page, its stream, the feed and emails, and point to the SQL half in `src/shared/db/public-page-sql.ts`.
+
+## From Story 6.6 (2026-10-22)
+
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-6-work-out-who-is-owed-each-public-change.md`
+  summary: A window an operator completes while still `scheduled` (DOMAIN's "completes/cancels as completed") keeps `started_at` null, and 6.6 owes it a `maintenance_completed` delivery as DOMAIN "What notifies" requires. If 6.7 words every `maintenance_completed` email as "maintenance has completed", subscribers are told work finished that never started. 6.7 should word a completion with no `started_at` as a window that ended without starting.
+  evidence: Story 6.6 Review Triage Log (edge case hunter, cancelled window). `maintenance.repository.ts` `completeDue` and `complete` leave `started_at` alone; the 6.6 test "owes two changes for a window that went straight to completed" pins the delivery.
+  target: Story 6.7.

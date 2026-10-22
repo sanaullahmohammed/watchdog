@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { describe, it } from 'node:test';
-import ts from 'typescript';
+import {
+  PLACEHOLDER,
+  sourceFiles,
+  sqlTemplates,
+} from '@/shared/testing/source-scan';
 
 /**
  * A module reads only its own tables, plus the foreign ones listed here.
@@ -37,17 +41,38 @@ const OWNED: Readonly<Record<string, readonly string[]>> = {
     'uptime_rollup_progress',
   ],
   service: ['services', 'service_groups'],
-  notification: ['subscribers'],
+  notification: [
+    'subscribers',
+    'notification_deliveries',
+    'notification_cursors',
+  ],
   'status-page': [],
   'better-auth': authTables,
 };
 
-/** Module -> the foreign tables it may read, each decided on purpose. */
+/**
+ * Module -> the foreign tables it may read, each decided on purpose.
+ *
+ * Reads inside the fragments of `src/shared/db/public-page-sql.ts` are
+ * invisible to this scan: it walks `src/modules` only, and blanks every
+ * interpolation. A module that interpolates `publicTimelineEntry` reads
+ * `incident_updates` through it and must list that table here; one that
+ * interpolates `visibleService` must list `services`.
+ */
 const FOREIGN: Readonly<Record<string, readonly string[]>> = {
   incident: [],
   maintenance: [],
-  // The subscribe route resolves the organization by slug.
-  notification: ['organization'],
+  notification: [
+    // The subscribe route resolves the organization by slug.
+    'organization',
+    // The notification pass (story 6.6) reads the durable history of public
+    // changes, and the services each names, to judge them by the public rule.
+    'incident_updates',
+    'incident_service_impacts',
+    'maintenance',
+    'maintenance_services',
+    'services',
+  ],
   // The due query and the at-threshold query (Story 5.16) skip archived
   // services (Story 5.8).
   monitoring: ['services'],
@@ -104,54 +129,8 @@ const KEYWORDS = new Set([
   'default',
 ]);
 
-const PLACEHOLDER = '\uE000';
-
-function sourceFiles(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return sourceFiles(path);
-    const isTest = /\.(spec|test)\.ts$|\.integration\.test\.ts$/.test(
-      entry.name,
-    );
-    return entry.name.endsWith('.ts') && !isTest ? [path] : [];
-  });
-}
-
-/** The literal text of every `sql` template in a source, interpolations blanked. */
-export function sqlTemplates(source: string): string[] {
-  const file = ts.createSourceFile(
-    'scan.ts',
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-  );
-  const found: string[] = [];
-  const visit = (node: ts.Node) => {
-    if (ts.isTaggedTemplateExpression(node)) {
-      const tag = node.tag;
-      const isSql =
-        (ts.isIdentifier(tag) && tag.text === 'sql') ||
-        (ts.isPropertyAccessExpression(tag) && tag.name.text === 'sql');
-      if (isSql) {
-        const { template } = node;
-        found.push(
-          ts.isNoSubstitutionTemplateLiteral(template)
-            ? template.text
-            : template.head.text +
-                template.templateSpans
-                  .map((span) => PLACEHOLDER + span.literal.text)
-                  .join(''),
-        );
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
-  return found;
-}
-
 /** Table names a piece of SQL reads or writes. */
-export function tablesIn(text: string): string[] {
+function tablesIn(text: string): string[] {
   const clean = text.replace(/--[^\n]*/g, ' ').toLowerCase();
   const tables: string[] = [];
   const pattern =
@@ -164,16 +143,16 @@ export function tablesIn(text: string): string[] {
   return tables;
 }
 
-export type Read = { module: string; table: string; file: string };
+type Read = { module: string; table: string; file: string };
 
-export function readsIn(source: string, module: string, file: string): Read[] {
+function readsIn(source: string, module: string, file: string): Read[] {
   return sqlTemplates(source).flatMap((text) =>
     tablesIn(text).map((table) => ({ module, table, file })),
   );
 }
 
 /** The reads that neither belong to the module nor are allowlisted. */
-export function violations(reads: readonly Read[]): string[] {
+function violations(reads: readonly Read[]): string[] {
   const known = new Set(Object.values(OWNED).flat());
   return reads.flatMap(({ module, table, file }) => {
     const own = OWNED[module] ?? [];
