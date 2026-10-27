@@ -15,9 +15,14 @@ import {
  * through. So does mercurius's `ErrorWithProps`, the type a resolver throws
  * to address the caller in GraphQL's own terms, as every authenticated
  * resolver's `UNAUTHENTICATED` refusal does. So does an error with no
- * `originalError`, which is GraphQL's own:
- * a syntax, validation or variable-coercion error describing the caller's
- * query, and mercurius's validation wrapper, which carries a list of them.
+ * `originalError`, which is GraphQL's own: a syntax, validation or
+ * variable-coercion error describing the caller's query. So does mercurius's
+ * validation wrapper, which is itself the `originalError`. It is recognised by
+ * its code and by every member being a `GraphQLError` or Fastify's own
+ * request-validation error, never by carrying a list: a native
+ * `AggregateError` has one too, and names internal addresses. The wrapper for
+ * a mutation sent by `GET` passes as well, on its code and its one fixed
+ * message.
  * Anything else a resolver threw is an internal fault, such as a Postgres
  * message or a connection failure naming the database host, and the caller
  * sees only "Internal Server Error" and the correlation id. The original is
@@ -90,10 +95,52 @@ function statusOf(original: Error | undefined): number {
     const status = original.statusCode ?? 200;
     return status >= 400 ? status : 400;
   }
-  return 400;
+  const { statusCode } = (original ?? {}) as { statusCode?: unknown };
+  return typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500
+    ? statusCode
+    : 400;
 }
 
-/** mercurius's `MER_ERR_GQL_VALIDATION`: the query's own validation errors. */
+/**
+ * mercurius's own wrappers, by what they are. `MER_ERR_GQL_VALIDATION` carries
+ * the query's errors, each a `GraphQLError`, or Fastify's own request
+ * validation error (`FST_ERR_VALIDATION`); mercurius does not export the
+ * class, so its code is its only identity, and the members check refuses any
+ * other error that copies the code. `MER_ERR_METHOD_NOT_ALLOWED` carries one
+ * fixed literal. Anything else with an `errors` list, such as an
+ * `AggregateError`, is an internal fault. mercurius's `queryDepth`, which is
+ * not configured here, would wrap `MER_ERR_GQL_QUERY_DEPTH` members, which
+ * this check masks, so enabling it means revisiting the check.
+ */
 function isValidation(error: Error): boolean {
-  return Array.isArray((error as { errors?: unknown }).errors);
+  const { code, errors } = error as { code?: unknown; errors?: unknown };
+  if (code === 'MER_ERR_METHOD_NOT_ALLOWED') {
+    return (
+      Array.isArray(errors) &&
+      errors.length === 1 &&
+      (errors[0] as { message?: unknown } | undefined)?.message ===
+        'Operation cannot be performed via a GET request'
+    );
+  }
+  return (
+    code === 'MER_ERR_GQL_VALIDATION' &&
+    Array.isArray(errors) &&
+    errors.length > 0 &&
+    errors.every(
+      (member) => member instanceof GraphQLError || isRequestValidation(member),
+    )
+  );
+}
+
+/**
+ * Fastify's own refusal of a malformed request, such as a POST with no body.
+ * mercurius wraps it in `MER_ERR_GQL_VALIDATION`, and its message describes
+ * the request's shape, so it is a 4xx the caller may read.
+ */
+function isRequestValidation(member: unknown): boolean {
+  const { code, validation } = (member ?? {}) as {
+    code?: unknown;
+    validation?: unknown;
+  };
+  return code === 'FST_ERR_VALIDATION' && Array.isArray(validation);
 }
