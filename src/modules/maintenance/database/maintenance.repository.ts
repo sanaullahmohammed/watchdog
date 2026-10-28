@@ -206,9 +206,18 @@ export default function maintenanceRepository({
       );
     },
 
-    async findById(tx: TenantTransaction, id: string) {
+    async findById(
+      tx: TenantTransaction,
+      id: string,
+      options: { lock?: 'update' } = {},
+    ) {
+      // A fixed fragment, never interpolated text. `no key update` rather than
+      // `update`, so the `for key share` that a `maintenance_services`
+      // insert's foreign-key check takes on this row is not blocked.
+      const lock =
+        options.lock === 'update' ? tx.sql`for no key update` : tx.sql``;
       const rows = await tx.sql<MaintenanceModel[]>`
-        select * from maintenance where id = ${id} limit 1
+        select * from maintenance where id = ${id} limit 1 ${lock}
       `;
       if (!rows[0]) return undefined;
       return maintenanceMapper.toDomain(

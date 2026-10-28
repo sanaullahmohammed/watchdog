@@ -11,6 +11,7 @@ import subscriberRepository from '@/modules/notification/database/subscriber.rep
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
 import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import { holdTransaction, waitUntilBlockedBy } from '@/shared/testing/locks';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 import { runNotificationPass } from '@/worker';
 
@@ -154,58 +155,6 @@ const subscriberStatus = (orgId: string, id: string) =>
         `
       )[0]?.status,
   );
-
-async function holdTransaction(
-  orgId: string,
-  work: (tx: typeof sql) => Promise<unknown>,
-) {
-  let release!: () => void;
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let ready!: (pid: number) => void;
-  let failed!: (error: unknown) => void;
-  const started = new Promise<number>((resolve, reject) => {
-    ready = resolve;
-    failed = reject;
-  });
-  const done = sql.begin(async (raw) => {
-    const tx = raw as unknown as typeof sql;
-    await tx`select set_config('app.current_org_id', ${orgId}, true)`;
-    const [{ pid }] = await tx<
-      { pid: number }[]
-    >`select pg_backend_pid() as pid`;
-    await work(tx);
-    ready(pid);
-    await released;
-  });
-  done.catch(failed);
-  const pid = await started;
-  return {
-    pid,
-    async commit() {
-      release();
-      await done;
-    },
-  };
-}
-
-async function waitUntilBlockedBy(pid: number, what: string) {
-  const deadline = Date.now() + 10_000;
-  for (;;) {
-    const [{ blocked }] = await sql<{ blocked: boolean }[]>`
-      select exists (
-        select 1 from pg_stat_activity
-        where ${pid} = any(pg_blocking_pids(pid))
-      ) as blocked
-    `;
-    if (blocked) return;
-    if (Date.now() > deadline) {
-      throw new Error(`${what} never waited on the test's transaction`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-}
 
 describe('Story 6.9: prune old deliveries and subscribers', () => {
   before(async () => {

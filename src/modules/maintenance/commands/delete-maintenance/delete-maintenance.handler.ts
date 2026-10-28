@@ -29,7 +29,9 @@ export default function makeDeleteMaintenance({
       // first so the refusal can name the status it found; the repository
       // refuses a non-scheduled window too.
       const removed = await withTenantTransaction(payload.orgId, async (tx) => {
-        const current = await maintenanceRepository.findById(tx, payload.id);
+        const current = await maintenanceRepository.findById(tx, payload.id, {
+          lock: 'update',
+        });
         if (!current) {
           throw new NotFoundException(`Maintenance ${payload.id} not found`);
         }

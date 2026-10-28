@@ -25,9 +25,15 @@ export interface MaintenanceRepository {
     window: MaintenanceEntity,
     serviceIds: string[],
   ): Promise<void>;
+  /**
+   * `lock: 'update'` takes `for no key update` on the window, held to the end
+   * of the transaction. Update, complete and delete take it, so each judges the
+   * committed row. It does not block the `for key share` of a child insert.
+   */
   findById(
     tx: TenantTransaction,
     id: string,
+    options?: { lock?: 'update' },
   ): Promise<MaintenanceEntity | undefined>;
   /**
    * Starts every scheduled window whose start time has passed and whose end
