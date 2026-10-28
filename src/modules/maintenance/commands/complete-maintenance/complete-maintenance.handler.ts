@@ -27,7 +27,9 @@ export default function makeCompleteMaintenance({
       assertUuid(id, 'id');
 
       const completed = await withTenantTransaction(orgId, async (tx) => {
-        const current = await maintenanceRepository.findById(tx, id);
+        const current = await maintenanceRepository.findById(tx, id, {
+          lock: 'update',
+        });
         if (!current) {
           throw new NotFoundException(`Maintenance ${id} not found`);
         }

@@ -66,7 +66,9 @@ export default function makeUpdateMaintenance({
       }
 
       const updated = await withTenantTransaction(orgId, async (tx) => {
-        const current = await maintenanceRepository.findById(tx, id);
+        const current = await maintenanceRepository.findById(tx, id, {
+          lock: 'update',
+        });
         if (!current) {
           throw new NotFoundException(`Maintenance ${id} not found`);
         }
@@ -107,8 +109,9 @@ export default function makeUpdateMaintenance({
           // had against the cover it has. An edit that changed nothing
           // announces nothing, which would otherwise trigger a recomputation
           // and, from Epic 4, wake every subscriber (Epic 2 retrospective,
-          // D-3). Two concurrent edits are not serialized here, so both may
-          // announce; neither can stay silent about a change it made.
+          // D-3). The window is read under its row lock and held through the
+          // write, so concurrent edits are judged one after another and each
+          // announces exactly its own change (DOMAIN, `*.updated`).
           changed:
             anyChanged(current, window, [
               'title',

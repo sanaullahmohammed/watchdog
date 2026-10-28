@@ -49,9 +49,9 @@ export interface IncidentRepository {
     incident: IncidentEntity,
   ): Promise<boolean>;
   /**
-   * `lock` holds a row lock until the transaction ends. Transitions take
-   * `update` (FOR NO KEY UPDATE), so two of them cannot both pass the legality
-   * check against the same status. Posted updates take `share`, so they record
+   * `lock` holds a row lock until the transaction ends. Transitions and edits
+   * (update-incident) take `update` (FOR NO KEY UPDATE), so two of them cannot
+   * both pass the legality check against the same status. Posted updates take `share`, so they record
    * the committed status, never one a transition is about to replace. Neither
    * blocks the `for key share` that foreign-key checks take.
    */

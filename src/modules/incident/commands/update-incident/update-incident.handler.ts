@@ -46,10 +46,14 @@ export default function makeUpdateIncident({
       const { updated, changed } = await withTenantTransaction(
         orgId,
         async (tx) => {
-          // The row as it was, to compare against the row as it is. A patch
+          // Read under the row lock, held through the write: concurrent edits
+          // are judged one after another (DOMAIN, `*.updated`). The row as it
+          // was, to compare against the row as it is. A patch
           // that omits a field says nothing about it, so comparing the request
           // with the row would read an omission as a change.
-          const before = await incidentRepository.findById(tx, id);
+          const before = await incidentRepository.findById(tx, id, {
+            lock: 'update',
+          });
           if (!before) {
             throw new NotFoundException(`Incident ${id} not found`);
           }
@@ -95,9 +99,9 @@ export default function makeUpdateIncident({
       //
       // An edit that changed nothing announces nothing: it would otherwise
       // trigger a recomputation and, from Epic 4, wake every subscriber
-      // (Epic 2 retrospective, D-3). Two concurrent edits are not serialized
-      // here, so both may announce; neither can stay silent about a change it
-      // made.
+      // (Epic 2 retrospective, D-3). Edits run under the row lock, so each is
+      // compared with the committed row and announces exactly its own change
+      // (DOMAIN, `*.updated`).
       if (changed) {
         eventBus.emit(
           incidentUpdatedEvent({ id: updated.id, orgId: updated.orgId }),
