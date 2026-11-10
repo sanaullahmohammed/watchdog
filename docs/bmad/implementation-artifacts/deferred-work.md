@@ -313,19 +313,11 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
   summary: Fastify's request log records each request's URL (`incoming request`, under `req.url`). A confirm or unsubscribe token carried in a GET link's path or query string is therefore written to the log of every request that follows the link. Story 6.1 scrubs errors only; it leaves request URLs alone.
   evidence: Story 6.1 Boundaries (Never): request URLs in Fastify's request log are not covered. Epic 6 context: the links act on GET.
-  target: Epic 6, story 6.4.
-- source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
-  summary: The seed's failure logging is held only by inspection. No suite runs `db/seeds/seed.ts`, so putting `console.error(error)` back, or building its logger without `scrubbedLoggerOptions`, passes every check.
-  evidence: Story 6.1 Review Triage Log #1. The scrub itself is unit-tested; the seed's two call sites are not executed by any test. Closing it needs a subprocess test or pulling the reporter out of the script.
-  target: Epic 8 (default).
+  target: Epic 6, story 6.4. RESOLVED by story 6.4 (2026-10-22): the links carry the token in the query string (`/status/:orgSlug/subscribers/confirm?token=…`, `…/unsubscribe?token=…`), and `serializeRequest` in `src/shared/db/sql-debug.ts`, the `req` serializer of every application logger, cuts the logged URL at the first `?`. `sql-debug.spec.ts` pins the cut.
 - source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
   summary: AGENTS.md's pitfall "Log a database error only as a top-level `err` or `error`..." still says redaction covers only `parameters` and `args` and that `message`, `detail`, nested errors and `console.error` print. After story 6.1 the serializer and `logMethod` hook scrub all of those, and a logger built outside Fastify uses `scrubbedLoggerOptions`.
   evidence: Story 6.1 Review Triage Log #3. AGENTS.md is changed only with the owner's approval.
   target: Owner decision, raised with story 6.1's PR. RESOLVED by story 6.1 (2026-10-21, owner approved): the pitfall now describes the scrub, `scrubbedLoggerOptions`, the rule against quoting input or a database error's text in a message, and the two paths that bypass it.
-- source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
-  summary: postgres.js prints every server notice with `console.log(parseError(x))` when no `onnotice` is set, and neither client sets one (`src/shared/db/postgres.ts`, `src/server/realtime/listener.ts`). A notice's `message`, `detail`, `where` and `hint` would print unscrubbed.
-  evidence: Story 6.1 Review Triage Log #5; `node_modules/postgres/src/connection.js:915-918`. No migration raises a notice today (`grep -i "raise notice" db/migrations` is empty), so nothing prints now.
-  target: Epic 6, the first story that adds a function or trigger raising a notice; Epic 8 (default) otherwise.
 - source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
   summary: `logFailure` logs a 4xx `ExceptionBase` by its message, so a subscriber slice's refusal must never interpolate the caller's address into an exception message (e.g. "x@y is already subscribed").
   evidence: Story 6.1 Review Triage Log #7. No such message exists yet; story 6.3 adds the first refusals that see an address.
@@ -340,44 +332,29 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
     - An abandoned send's socket stays open while a server keeps trickling replies inside the 15 s inactivity limit. 6.7's shutdown wait does not cover it: the wait ends when `send` resolves at `EDEADLINE`, and the socket can still be open after that.
   evidence: Story 6.2 Boundaries (fixed timeouts; the late result is caught, never acted on). nodemailer 10.0.16 exposes no abort signal (`dist/cjs/smtp-connection/index.js`). Story 6.2 review.
   target: Epic 6, story 6.7. RESOLVED by story 6.7 (2026-10-22, `spec-6-7-send-owed-emails-with-retries.md`): leases are per row and measured from the claim; `NOTIFICATION_RETRY_BASE_SECONDS` has a minimum of the overall plus socket limit, pinned by `smtp-email-sender.spec.ts`; each pass logs transient diagnostics once as counts at `warn`; the at-least-once duplicate is commented where the transient outcome is recorded; the socket outliving `EDEADLINE` stays accepted (spec Design Notes).
-- source_spec: `docs/bmad/implementation-artifacts/spec-6-2-send-email-through-smtp.md`
-  summary: Mailpit is `axllent/mailpit:latest` in both Compose and CI's database job, so a new release can change the `/api/v1` shapes that `src/shared/testing/mailpit.ts` reads (`messages: null`, `Headers` as arrays, CRLF in `Text`) and break CI without warning.
-  evidence: Story 6.2 Review Triage Log #20. Compose used `latest` before story 6.2; CI's service now follows it.
-  target: Epic 8 (default), or the first story whose Mailpit read breaks.
 
 ## From Story 6.3 (2026-10-21)
 
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-3-subscribe-to-an-organization-s-status-page.md`
   summary: ARCHITECTURE 5.6 says the subscribe route has its own IP limit "besides section 5.4.1's bounds", which reads as two limiters. As built, the route has one, the stricter, and a boot check (`assertSubscribeLimits`) refuses a subscribe limit looser than the page's. 5.4.1 also has no paragraph, like the stream's, saying how `/status/:orgSlug/subscribers` inherits the bounds: a bucket of its own, `no-store` instead of cache validators, and its own `OPTIONS` route in front of the catch-all.
   evidence: Story 6.3 Review Triage Log #2. The behaviour meets both bounds; only the wording differs. A genesis edit needs the owner's OK.
-  target: Owner decision, raised with story 6.3's PR.
   addendum (story 6.4): the confirm and unsubscribe links also differ from 5.4.1's bounds. They are `cache-control: no-store` with no validators, and have no `OPTIONS` route, because a link that changes state is never cached and is a navigation, not a cross-origin read. Record both in 5.4.1's paragraph for the subscriber routes.
-- source_spec: `docs/bmad/implementation-artifacts/spec-6-3-subscribe-to-an-organization-s-status-page.md`
-  summary: The subscribe limit keys on the socket address with `trustProxy` off. Behind a reverse proxy, every visitor of every organization shares one bucket of 5 subscribes an hour, so one client can lock the form for everyone. And a caller with an IPv6 /64 gets a new bucket per address. ARCHITECTURE 5.4.1 records the proxy point (F-18) for the page's 120 a minute; at 5 an hour it decides whether the form works at all.
-  evidence: Story 6.3 Review Triage Log #6. `trustProxy` and the key are pre-existing choices of the public surface, not this story's.
-  target: Epic 8 (default), with the deployment and proxy settings.
+  target: Epic 6 close-out PR 2, genesis wording (owner approves the text).
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-3-subscribe-to-an-organization-s-status-page.md`
   summary: Confirmation emails have no global or per-organization budget, only the per-IP limit and the per-address throttle (decision D7). Callers spread over many addresses, or an IPv6 range, can make the api mail any number of distinct third-party addresses once each, which can hurt the sender's reputation. In-flight sends are not capped either.
   evidence: Story 6.3 Review Triage Log #7. D7 set the bounds; a budget is a new product rule.
-  target: Epic 6 retrospective, for the owner to decide.
+  target: Epic 6 close-out PR 8, the owner's decision on a confirmation budget (formerly: Epic 6 retrospective).
 
 ## From Story 6.4 (2026-10-22)
 
-- source_spec: `docs/bmad/implementation-artifacts/spec-6-4-confirm-and-unsubscribe-through-the-emailed-links.md`
-  summary: `NOTIFICATION_LINK_SECRET` cannot be rotated. Verify accepts one secret only, so an operator whose secret leaks must choose between forged unsubscribes and breaking every link already emailed. A second, previous secret that verify also accepts would allow a rotation window.
-  evidence: Story 6.4 Review Triage Log #2. DOMAIN and D17 say changing the secret breaks old links, as decided; rotation is a new rule.
-  target: Epic 8 (default), with deployment hardening.
-- source_spec: `docs/bmad/implementation-artifacts/spec-6-4-confirm-and-unsubscribe-through-the-emailed-links.md`
-  summary: Compose gives api and worker `${NOTIFICATION_LINK_SECRET:-dev_only…}` and `${BETTER_AUTH_SECRET:-dev_only…}`, values printed in the repository. A self-hosted deployment that forgets either variable boots with a known key, so anyone could sign unsubscribe links (or sessions). Nothing refuses a known dev value when `NODE_ENV=production`.
-  evidence: Story 6.4 Review Triage Log #3. The pattern predates this story (`BETTER_AUTH_SECRET`).
-  target: Epic 8 (default), with deployment hardening.
+The story's two open entries (secret rotation, Compose dev secrets) moved to "Aimed at Epic 8" below.
 
 ## From Story 6.5 (2026-10-22)
 
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-5-one-rule-for-what-is-public.md`
   summary: ARCHITECTURE still names the old location in two places. Section 5.4.x, the "Decided 2026-10-18 (owner)" public-stream paragraph (about line 392), names `src/modules/status-page/domain/public-page.ts`. Section 5.6 "One rule for what is public" (about line 543) says the rule "moves from `status-page/domain/public-page.ts` into `src/shared`". Both should name `src/shared/domain/public-page.ts` as built. The first sits inside an owner-decided paragraph.
   evidence: Story 6.5 Review Triage Log #4; `grep -n public-page docs/genesis/ARCHITECTURE.md` finds both. A genesis edit needs the owner's OK.
-  target: Genesis edit (owner).
+  target: Epic 6 close-out PR 2, genesis wording (owner approves the text).
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-5-one-rule-for-what-is-public.md`
   summary: The "visible service" predicate (`is_public and archived_at is null`) is SQL in the status-page repository (`src/modules/status-page/database/public-status.repository.ts:226,304`), not in `src/shared/domain/public-page.ts`. Stories 6.6 and 6.8 would have to restate it. The shared `AffectedService.visible` is documented in words ("`is_public` and not archived"), so the shared rule trusts each caller to compute `visible` the same way in SQL. That is why a shared SQL fragment or view matters. ARCHITECTURE 5.6 says nobody keeps a copy, so they should share it and not copy it.
   evidence: Story 6.5 spec review, owner decision A (the move stays pure); Review Triage Log #7.
@@ -403,46 +380,92 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
   summary: `startWorker` aborts `stopClaiming` first in `shutdown`, and nothing tests that wiring. A spawned worker cannot stub `send`, so a test needs a stalling SMTP endpoint in the lifecycle harness to prove a shutdown during a send claims nothing more and waits for the record.
   evidence: Story 6.7 Review Triage Log #16 (verification gap). The abort inside `runNotificationPass` is tested; the `shutdown` call is not.
-  target: Story 6.10, or the next change to the worker lifecycle harness.
-- source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
-  summary: Dispatch sends one email at a time across every organization, each over a new SMTP connection, so a pass sends about one interval's worth and a large subscriber list takes hours. This is not stated as a limit anywhere.
-  evidence: Story 6.7 Review Triage Log #17 (blind hunter). Frozen Boundaries: one row per claim, no batch leases.
-  target: Before a deployment with a large subscriber list; a connection pool or bounded concurrency would need its own story.
+  target: Epic 6 close-out PR 3, worker lifecycle tests (formerly: story 6.10, or the next change to the worker lifecycle harness).
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
   summary: Nothing pins that the dispatch budget counts from the start of the pass, queueing included. Moving `started` below the queueing loop in `runNotificationPass` fails no test, and a slow queue would then let a pass plus one send overrun `WORKER_PASS_OVERDUE_MS`.
   evidence: Story 6.7 Review Triage Log #34 (blind hunter; verification gap). The mid-round budget test spends its budget on the first send whichever way the clock starts.
-  target: The next change to `runNotificationPass`, with a hook or lock that makes queueing slow.
+  target: Epic 6 close-out PR 4, notification pass pins.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
   summary: The worker's start-up `warn` when the dispatch budget is 0 is untested, so it could be inverted or dropped unnoticed.
   evidence: Story 6.7 Review Triage Log #35 (verification gap). `startWorker` runs only in spawned processes, and no lifecycle test reads its log for this line.
-  target: With the `shutdown` wiring test above, in the worker lifecycle harness.
+  target: Epic 6 close-out PR 3, worker lifecycle tests, with the `shutdown` wiring test above.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
   summary: A `sent` row keeps its last failure's `last_error`, and abandon-at-claim keeps an existing diagnostic (writing `EUNRECORDED` only when it is null). Neither is pinned by a test.
   evidence: Story 6.7 Review Triage Log #36 (verification gap). Both `coalesce` calls in `delivery.repository.ts` could become plain assignments with every test passing; nothing reads `last_error` yet.
-  target: The first story that reads `last_error` (an admin delivery view, or story 6.9's pruning if it reports).
+  target: Epic 6 close-out PR 4, notification pass pins: fix or pin each (formerly: the first story that reads `last_error`).
+
+## From Story 6.8 (2026-10-22)
 
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-8-follow-a-status-page-as-an-atom-feed.md`
   summary: The public surface's revalidation compares `If-None-Match` exactly, so a tag list, `*`, or a proxy-weakened `W/` tag never gets a 304, and neither the page nor the feed sends `Last-Modified`.
   evidence: `get-public-status-page.public.route.ts` and `get-atom-feed.public.route.ts` both test `req.headers['if-none-match'] === etag`; RFC 9110 13.1.2 uses weak comparison over a list. A gzip-ing reverse proxy weakens strong tags, so pollers behind one pay a full body every time (story 6.8 review, triage 24).
+  target: Epic 6 close-out PR 5, public revalidation. `Last-Modified` is the owner's call in that PR.
+
+## From Story 6.9 (2026-10-22)
 
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-9-prune-old-deliveries-and-subscribers.md`
   summary: Nothing pins that `NOTIFICATION_RETENTION_DAYS` reaches `env.notification.retentionDays` and `SUBSCRIBER_PENDING_GRACE_DAYS` reaches `env.subscribe.pendingGraceDays`; swapping them in `env.ts` passes every test, because the prune suite ages rows from the mapped values.
   evidence: Story 6.9 Review Triage Log #27 (verification gap). No other `env.ts` mapping is pinned either (`maxAttempts`, for one); a general mapping check would cover them all.
+  target: Epic 6 close-out PR 4, notification pass pins.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-9-prune-old-deliveries-and-subscribers.md`
   summary: `requestConfirmation`'s retry when the row is deleted between its `on conflict do nothing` insert and its `for no key update` select is untested, and the prune now makes it reachable every 30 s.
   evidence: Story 6.9 Review Triage Log #28 (verification gap). Changing its `continue` to a return or a throw fails no test; hitting the window needs a hook between two statements.
+  target: Epic 6 close-out PR 4, notification pass pins.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-9-prune-old-deliveries-and-subscribers.md`
   summary: ARCHITECTURE 5.6 does not record that the notification pass prunes (after queueing, before dispatch, inside the dispatch budget), and line 178's list of the worker's retention jobs leaves it out.
   evidence: Story 6.9 Review Triage Log #29 (blind hunter). DOMAIN's Subscriber and NotificationDelivery sections already name both settings; ARCHITECTURE owns runtime wiring, and genesis wording is the owner's to change.
+  target: Epic 6 close-out PR 2, genesis wording (owner approves the text).
+
+## From GH #149 (2026-10-27)
 
 - source_spec: `docs/bmad/implementation-artifacts/spec-gh-149-mask-aggregate-errors.md`
   summary: GraphQL answers a caller's malformed request with a masked 500 that is logged at `error` with a stack. REST answers the same with a 4xx. The cases are malformed JSON in `GET /graphql`'s `variables` or `extensions` (mercurius stamps `MER_ERR_GQL_VALIDATION` on a bare `SyntaxError`, `routes.js:142-150`), a malformed JSON body, an unsupported media type such as `text/xml`, and `{"query":123}` ("Unknown query"). AGENTS.md says Fastify's own 4xx refusals pass through on both surfaces, and anonymous callers can write error-level lines on demand.
   evidence: GH #149 review triage #1 and #2. A probe confirmed each 500. The behaviour predates #149: none of these errors carries an `errors` list, so the old check masked them too. Fixing it means recognising refusals that carry no list, by `FST_ERR_` code or 4xx status, as `isRequestRefusal` does in `src/server/plugins/error-handler.ts`, and choosing what message a `SyntaxError` may show.
+  target: Epic 6 close-out PR 6, GraphQL malformed-request refusals.
+
+## From GH #148 (2026-10-29)
+
 - source_spec: `docs/bmad/implementation-artifacts/spec-gh-148-lock-incident-maintenance-edits.md`
   summary: DOMAIN's Maintenance state machine does not say that a window's update, complete and delete read it under its row lock and are judged one after another. Incidents have that statement ("Transitions of one incident are serialized"). It also does not record what #148 changed for a caller: a complete that races a delete now answers 404, not 200 `{changed: false}`, and a delete that races a start answers 409 `MaintenanceNotDeletableError`, not 404.
   evidence: GH #148 review triage #10. The owner approved only the `*.updated` paragraph (DOMAIN ~1448). Other genesis wording is the owner's to change.
-  target: Owner decision (genesis edit).
+  target: Epic 6 close-out PR 2, genesis wording (owner approves the text).
+
+## From GH #150 (2026-11-10)
+
 - source_spec: `docs/bmad/implementation-artifacts/spec-gh-150-maintenance-reads-one-snapshot.md`
   summary: The notification pass (`queue-email-notifications.handler.ts`) runs one READ COMMITTED transaction. It scans changes (`scanIncidentEntries`, `scanMaintenanceChanges`), then reads their services (`incidentServices`, `maintenanceServices`) in later statements, so `publishable` can judge a scanned change against services written after the scan. The handler decides "on current rows" on purpose, which covers an edit. A delete is different (unverified): a scheduled window scanned and then deleted before `maintenanceServices` would come back with no services, which `publishable` treats as organisation-wide, so a window that named only hidden services could be owed to every subscriber.
   evidence: Found while fixing GH #150 and outside it (review triage #5). No probe ran. Settling it needs a test that deletes a scanned window between the scan and the services read, and a check of whether the later content read (`sourceContent`) drops a deleted window first. The #150 one-line fix is not a drop-in here: the pass writes (`lockForPass`, `insertPending`, `advance`), so REPEATABLE READ could fail with 40001 and would need a retry, or the services could be read in the scan's own statement.
-  target: Owner decision.
+  target: Epic 6 close-out PR 7: investigate first, then the owner picks an option.
+
+## Aimed at Epic 8 (moved from Epic 6, 2026-11-10)
+
+Moved here by the owner's decision when Epic 6 closed out. Each entry's `source_spec` names the story it came from.
+
+- source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
+  summary: The seed's failure logging is held only by inspection. No suite runs `db/seeds/seed.ts`, so putting `console.error(error)` back, or building its logger without `scrubbedLoggerOptions`, passes every check.
+  evidence: Story 6.1 Review Triage Log #1. The scrub itself is unit-tested; the seed's two call sites are not executed by any test. Closing it needs a subprocess test or pulling the reporter out of the script.
+  target: Epic 8, full suite in CI (NFR28): a test that runs the seed's failure path, or a reporter pulled out of the script and unit-tested.
+- source_spec: `spec-6-1-subscriber-addresses-never-reach-the-logs.md`
+  summary: postgres.js prints every server notice with `console.log(parseError(x))` when no `onnotice` is set, and neither client sets one (`src/shared/db/postgres.ts`, `src/server/realtime/listener.ts`). A notice's `message`, `detail`, `where` and `hint` would print unscrubbed.
+  evidence: Story 6.1 Review Triage Log #5; `node_modules/postgres/src/connection.js:915-918`. No migration raises a notice today (`grep -i "raise notice" db/migrations` is empty, rechecked 2026-11-10 after Epic 6), so nothing prints now.
+  target: Epic 8, before release: give both clients an `onnotice` that logs through the scrub. Sooner if a migration adds `raise notice`.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-2-send-email-through-smtp.md`
+  summary: Mailpit is `axllent/mailpit:latest` in both Compose and CI's database job, so a new release can change the `/api/v1` shapes that `src/shared/testing/mailpit.ts` reads (`messages: null`, `Headers` as arrays, CRLF in `Text`) and break CI without warning.
+  evidence: Story 6.2 Review Triage Log #20. Compose used `latest` before story 6.2; CI's service now follows it.
+  target: Epic 8, CI hardening (audit F-11): pin one Mailpit version in Compose and CI. Sooner if a Mailpit read breaks.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-3-subscribe-to-an-organization-s-status-page.md`
+  summary: The subscribe limit keys on the socket address with `trustProxy` off. Behind a reverse proxy, every visitor of every organization shares one bucket of 5 subscribes an hour, so one client can lock the form for everyone. And a caller with an IPv6 /64 gets a new bucket per address. ARCHITECTURE 5.4.1 records the proxy point (F-18) for the page's 120 a minute; at 5 an hour it decides whether the form works at all.
+  evidence: Story 6.3 Review Triage Log #6. `trustProxy` and the key are pre-existing choices of the public surface, not this story's.
+  target: Epic 8, trusted proxy (code half of audit F-18): key the subscribe limit on the proxied client address, and IPv6 callers by /64.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-4-confirm-and-unsubscribe-through-the-emailed-links.md`
+  summary: `NOTIFICATION_LINK_SECRET` cannot be rotated. Verify accepts one secret only, so an operator whose secret leaks must choose between forged unsubscribes and breaking every link already emailed. A second, previous secret that verify also accepts would allow a rotation window.
+  evidence: Story 6.4 Review Triage Log #2. DOMAIN and D17 say changing the secret breaks old links, as decided; rotation is a new rule.
+  target: Epic 8, deployment hardening: the owner decides whether verify also accepts a previous secret during a rotation window (a DOMAIN edit first if so).
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-4-confirm-and-unsubscribe-through-the-emailed-links.md`
+  summary: Compose gives api and worker `${NOTIFICATION_LINK_SECRET:-dev_only…}` and `${BETTER_AUTH_SECRET:-dev_only…}`, values printed in the repository. A self-hosted deployment that forgets either variable boots with a known key, so anyone could sign unsubscribe links (or sessions). Nothing refuses a known dev value when `NODE_ENV=production`.
+  evidence: Story 6.4 Review Triage Log #3. The pattern predates this story (`BETTER_AUTH_SECRET`).
+  target: Epic 8, boot checks (audit F-11): api and worker refuse a known dev secret when `NODE_ENV=production`.
+- source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
+  summary: Dispatch sends one email at a time across every organization, each over a new SMTP connection, so a pass sends about one interval's worth and a large subscriber list takes hours. This is not stated as a limit anywhere.
+  evidence: Story 6.7 Review Triage Log #17 (blind hunter). Frozen Boundaries: one row per claim, no batch leases.
+  target: Epic 8, load evidence (audit F-11): measure send throughput and state the limit. A connection pool or bounded concurrency would be its own story, before a deployment with a large subscriber list.
