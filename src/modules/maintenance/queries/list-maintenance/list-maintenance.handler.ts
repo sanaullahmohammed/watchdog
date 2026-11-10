@@ -18,8 +18,12 @@ export default function makeListMaintenance({
       payload,
     }: ReturnType<typeof listMaintenanceQuery>): ListMaintenanceQueryResult {
       const { orgId, ...filter } = payload;
-      return withTenantTransaction(orgId, (tx) =>
-        maintenanceRepository.list(tx, filter),
+      // list reads the windows and then their services: one snapshot, so a
+      // concurrent edit cannot yield old fields with new services.
+      return withTenantTransaction(
+        orgId,
+        (tx) => maintenanceRepository.list(tx, filter),
+        { isolation: 'repeatable read', readOnly: true },
       );
     },
     init() {

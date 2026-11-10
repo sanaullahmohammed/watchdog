@@ -20,8 +20,12 @@ export default function makeGetMaintenance({
       payload,
     }: ReturnType<typeof getMaintenanceQuery>): GetMaintenanceQueryResult {
       assertUuid(payload.id, 'id');
-      const window = await withTenantTransaction(payload.orgId, (tx) =>
-        maintenanceRepository.findById(tx, payload.id),
+      // findById reads the row and then its services: one snapshot, so a
+      // concurrent edit cannot yield old fields with new services.
+      const window = await withTenantTransaction(
+        payload.orgId,
+        (tx) => maintenanceRepository.findById(tx, payload.id),
+        { isolation: 'repeatable read', readOnly: true },
       );
 
       // A window in another organization is invisible under RLS. Answering 404
