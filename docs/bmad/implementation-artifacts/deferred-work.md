@@ -339,7 +339,7 @@ Conventions, set by Epic 9 retro action item 8 (2026-10-09):
   summary: ARCHITECTURE 5.6 says the subscribe route has its own IP limit "besides section 5.4.1's bounds", which reads as two limiters. As built, the route has one, the stricter, and a boot check (`assertSubscribeLimits`) refuses a subscribe limit looser than the page's. 5.4.1 also has no paragraph, like the stream's, saying how `/status/:orgSlug/subscribers` inherits the bounds: a bucket of its own, `no-store` instead of cache validators, and its own `OPTIONS` route in front of the catch-all.
   evidence: Story 6.3 Review Triage Log #2. The behaviour meets both bounds; only the wording differs. A genesis edit needs the owner's OK.
   addendum (story 6.4): the confirm and unsubscribe links also differ from 5.4.1's bounds. They are `cache-control: no-store` with no validators, and have no `OPTIONS` route, because a link that changes state is never cached and is a navigation, not a cross-origin read. Record both in 5.4.1's paragraph for the subscriber routes.
-  target: Epic 6 close-out PR 2, genesis wording (owner approves the text).
+  target: Epic 6 close-out PR 2, genesis wording (owner approves the text). RESOLVED by close-out PR 2 (2026-11-10, owner approved): 5.4.1 has a paragraph on how the subscriber routes inherit the bounds (one stricter limit of its own, `no-store`, the subscribe route's own preflight; the links `no-store` with no validators and no `OPTIONS`), and 5.6 says the subscribe limit replaces the page's.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-3-subscribe-to-an-organization-s-status-page.md`
   summary: Confirmation emails have no global or per-organization budget, only the per-IP limit and the per-address throttle (decision D7). Callers spread over many addresses, or an IPv6 range, can make the api mail any number of distinct third-party addresses once each, which can hurt the sender's reputation. In-flight sends are not capped either.
   evidence: Story 6.3 Review Triage Log #7. D7 set the bounds; a budget is a new product rule.
@@ -354,7 +354,7 @@ The story's two open entries (secret rotation, Compose dev secrets) moved to "Ai
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-5-one-rule-for-what-is-public.md`
   summary: ARCHITECTURE still names the old location in two places. Section 5.4.x, the "Decided 2026-10-18 (owner)" public-stream paragraph (about line 392), names `src/modules/status-page/domain/public-page.ts`. Section 5.6 "One rule for what is public" (about line 543) says the rule "moves from `status-page/domain/public-page.ts` into `src/shared`". Both should name `src/shared/domain/public-page.ts` as built. The first sits inside an owner-decided paragraph.
   evidence: Story 6.5 Review Triage Log #4; `grep -n public-page docs/genesis/ARCHITECTURE.md` finds both. A genesis edit needs the owner's OK.
-  target: Epic 6 close-out PR 2, genesis wording (owner approves the text).
+  target: Epic 6 close-out PR 2, genesis wording (owner approves the text). RESOLVED by close-out PR 2 (2026-11-10, owner approved): both places name `src/shared/domain/public-page.ts`; 5.6 also names `src/shared/db/public-page-sql.ts` and `public-rule-copies.spec.ts`.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-5-one-rule-for-what-is-public.md`
   summary: The "visible service" predicate (`is_public and archived_at is null`) is SQL in the status-page repository (`src/modules/status-page/database/public-status.repository.ts:226,304`), not in `src/shared/domain/public-page.ts`. Stories 6.6 and 6.8 would have to restate it. The shared `AffectedService.visible` is documented in words ("`is_public` and not archived"), so the shared rule trusts each caller to compute `visible` the same way in SQL. That is why a shared SQL fragment or view matters. ARCHITECTURE 5.6 says nobody keeps a copy, so they should share it and not copy it.
   evidence: Story 6.5 spec review, owner decision A (the move stays pure); Review Triage Log #7.
@@ -414,7 +414,7 @@ The story's two open entries (secret rotation, Compose dev secrets) moved to "Ai
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-9-prune-old-deliveries-and-subscribers.md`
   summary: ARCHITECTURE 5.6 does not record that the notification pass prunes (after queueing, before dispatch, inside the dispatch budget), and line 178's list of the worker's retention jobs leaves it out.
   evidence: Story 6.9 Review Triage Log #29 (blind hunter). DOMAIN's Subscriber and NotificationDelivery sections already name both settings; ARCHITECTURE owns runtime wiring, and genesis wording is the owner's to change.
-  target: Epic 6 close-out PR 2, genesis wording (owner approves the text).
+  target: Epic 6 close-out PR 2, genesis wording (owner approves the text). RESOLVED by close-out PR 2 (2026-11-10, owner approved): line 178 lists the notification prune among the worker's retention jobs, and 5.6 has a "Retention runs in the notification pass" bullet.
 
 ## From GH #149 (2026-10-27)
 
@@ -428,7 +428,7 @@ The story's two open entries (secret rotation, Compose dev secrets) moved to "Ai
 - source_spec: `docs/bmad/implementation-artifacts/spec-gh-148-lock-incident-maintenance-edits.md`
   summary: DOMAIN's Maintenance state machine does not say that a window's update, complete and delete read it under its row lock and are judged one after another. Incidents have that statement ("Transitions of one incident are serialized"). It also does not record what #148 changed for a caller: a complete that races a delete now answers 404, not 200 `{changed: false}`, and a delete that races a start answers 409 `MaintenanceNotDeletableError`, not 404.
   evidence: GH #148 review triage #10. The owner approved only the `*.updated` paragraph (DOMAIN ~1448). Other genesis wording is the owner's to change.
-  target: Epic 6 close-out PR 2, genesis wording (owner approves the text).
+  target: Epic 6 close-out PR 2, genesis wording (owner approves the text). RESOLVED by close-out PR 2 (2026-11-10, owner approved): DOMAIN's Maintenance invariants say changes to one window are serialized under its row lock, a complete racing a delete answers 404, and a delete racing a start answers 409.
 
 ## From GH #150 (2026-11-10)
 
