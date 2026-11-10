@@ -380,7 +380,7 @@ The story's two open entries (secret rotation, Compose dev secrets) moved to "Ai
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
   summary: `startWorker` aborts `stopClaiming` first in `shutdown`, and nothing tests that wiring. A spawned worker cannot stub `send`, so a test needs a stalling SMTP endpoint in the lifecycle harness to prove a shutdown during a send claims nothing more and waits for the record.
   evidence: Story 6.7 Review Triage Log #16 (verification gap). The abort inside `runNotificationPass` is tested; the `shutdown` call is not.
-  target: Epic 6 close-out PR 3, worker lifecycle tests (formerly: story 6.10, or the next change to the worker lifecycle harness).
+  target: Epic 6 close-out PR 3, worker lifecycle tests (formerly: story 6.10, or the next change to the worker lifecycle harness). RESOLVED by close-out PR 3 (2026-11-10): `stops claiming on SIGTERM and waits for the send in flight to be recorded` in `src/worker-lifecycle.integration.test.ts` sends SIGTERM mid-send to a spawned worker and asserts exit 0, the "waiting for the notification pass in flight" log, one `sent` and one untouched `pending` delivery, and a single `MAIL FROM` at the stub.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
   summary: Nothing pins that the dispatch budget counts from the start of the pass, queueing included. Moving `started` below the queueing loop in `runNotificationPass` fails no test, and a slow queue would then let a pass plus one send overrun `WORKER_PASS_OVERDUE_MS`.
   evidence: Story 6.7 Review Triage Log #34 (blind hunter; verification gap). The mid-round budget test spends its budget on the first send whichever way the clock starts.
@@ -388,7 +388,7 @@ The story's two open entries (secret rotation, Compose dev secrets) moved to "Ai
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
   summary: The worker's start-up `warn` when the dispatch budget is 0 is untested, so it could be inverted or dropped unnoticed.
   evidence: Story 6.7 Review Triage Log #35 (verification gap). `startWorker` runs only in spawned processes, and no lifecycle test reads its log for this line.
-  target: Epic 6 close-out PR 3, worker lifecycle tests, with the `shutdown` wiring test above.
+  target: Epic 6 close-out PR 3, worker lifecycle tests, with the `shutdown` wiring test above. RESOLVED by close-out PR 3 (2026-11-10): `warns at start-up when the dispatch budget is 0` in `src/worker-lifecycle.integration.test.ts` asserts a spawned worker with a budget of 0 logs the warn at level 40, and the shutdown test above asserts a worker with a budget above 0 does not.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
   summary: A `sent` row keeps its last failure's `last_error`, and abandon-at-claim keeps an existing diagnostic (writing `EUNRECORDED` only when it is null). Neither is pinned by a test.
   evidence: Story 6.7 Review Triage Log #36 (verification gap). Both `coalesce` calls in `delivery.repository.ts` could become plain assignments with every test passing; nothing reads `last_error` yet.
