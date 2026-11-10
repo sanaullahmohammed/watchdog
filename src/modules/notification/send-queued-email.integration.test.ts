@@ -26,6 +26,7 @@ import {
   declareIncident,
   scheduleMaintenance,
 } from '@/shared/testing/fixtures';
+import { holdTransaction, waitUntilBlockedBy } from '@/shared/testing/locks';
 import { messagesTo, uniqueRecipient } from '@/shared/testing/mailpit';
 import { signUpWithOrg, TEST_ORIGIN } from '@/shared/testing/tenant';
 import { runNotificationPass } from '@/worker';
@@ -46,7 +47,14 @@ import { runNotificationPass } from '@/worker';
  * - removing the `attempts` guard on the record: "lets a stale record change
  *   nothing and announce nothing";
  * - removing the drop of a deleted window: "drops a delivery about a deleted
- *   window".
+ *   window";
+ * - moving `started` in `runNotificationPass` below the queueing loop: "counts
+ *   the dispatch budget from the start of the pass, queueing included" (Epic 6
+ *   close-out);
+ * - `record`'s `coalesce` on `last_error` made a plain assignment: "keeps the
+ *   earlier failure's last_error when a later claim sends";
+ * - `abandon`'s `coalesce` made a plain `'EUNRECORDED'`: "keeps a recorded
+ *   last_error when it abandons at claim".
  */
 
 const tag = `snd-${randomBytes(4).toString('hex')}`;
@@ -424,6 +432,52 @@ describe('story 6.7: send owed emails, with retries', () => {
     assert.equal((await messagesTo(address)).length, 0);
   });
 
+  it("keeps the earlier failure's last_error when a later claim sends", async () => {
+    const { org } = await oneOwed();
+    let calls = 0;
+    stubSend(async () => {
+      calls += 1;
+      if (calls === 1) return { outcome: 'transient', diagnostic: 'ETIMEDOUT' };
+      return { outcome: 'accepted' };
+    });
+
+    assert.equal((await send(org.orgId)).outcome, 'retrying');
+    await makeDue(org.orgId);
+    assert.deepEqual(await send(org.orgId), { outcome: 'sent' });
+
+    const [row] = await deliveries(org.orgId);
+    assert.equal(row.status, 'sent');
+    assert.equal(row.attempts, 2);
+    assert.ok(row.sent_at);
+    // Pinned as is: nothing reads it, and it records why retries were needed.
+    assert.equal(row.last_error, 'ETIMEDOUT');
+  });
+
+  it('keeps a recorded last_error when it abandons at claim', async () => {
+    const { org, address } = await oneOwed();
+    await setDelivery(org.orgId, 'attempts', 8);
+    await withTenantTransaction(
+      org.orgId,
+      ({ sql: tx }) =>
+        tx`update notification_deliveries set last_error = 'ETIMEDOUT'`,
+    );
+    const failed = await capturing(app, notificationEmailFailedEvent.type, () =>
+      send(org.orgId),
+    );
+    // The pass's summary counts the reason it gave up, an unrecorded attempt;
+    // the row keeps the transport's own diagnostic from before.
+    assert.deepEqual(failed.result, {
+      outcome: 'abandoned',
+      diagnostic: 'EUNRECORDED',
+    });
+    const [row] = await deliveries(org.orgId);
+    assert.equal(row.status, 'abandoned');
+    assert.equal(row.attempts, 8);
+    assert.equal(row.last_error, 'ETIMEDOUT');
+    assert.equal(failed.captured.length, 1);
+    assert.equal((await messagesTo(address)).length, 0);
+  });
+
   it('lets a stale record change nothing and announce nothing', async () => {
     const { org } = await oneOwed();
     let calls = 0;
@@ -571,6 +625,61 @@ describe('story 6.7: send owed emails, with retries', () => {
       assert.ok(row.wait <= 2, 'still due, not leased');
     }
   });
+
+  it(
+    'counts the dispatch budget from the start of the pass, queueing included',
+    { timeout: 60_000 },
+    async () => {
+      const org = await newOrg();
+      await subscribe(org.orgId, uniqueRecipient('snd'));
+      for (let i = 0; i < 3; i += 1) await scheduleMaintenance(app, org.cookie);
+      // Queued first, so the pass owes three sends and has nothing new to
+      // queue: the only delay before dispatch is the lock wait below.
+      await queue(org.orgId);
+      assert.equal((await deliveries(org.orgId)).length, 3);
+      stubSend(async () => ({ outcome: 'accepted' }));
+
+      // The pass's queueing step blocks on the cursor row for longer than the
+      // budget, so the budget is gone before dispatch begins.
+      const held = await holdTransaction(org.orgId, async (tx) => {
+        await tx`
+        select org_id from notification_cursors
+        where org_id = ${org.orgId}
+        for update
+      `;
+      });
+      let released = false;
+      const release = async () => {
+        if (released) return;
+        released = true;
+        await held.commit();
+      };
+      let pass: Promise<unknown> | undefined;
+      try {
+        pass = runNotificationPass(app, logger, {
+          orgIds: [org.orgId],
+          dispatchBudgetMs: 1_000,
+        });
+        // Settle the rejection path so a failed wait cannot leave it unhandled.
+        pass.catch(() => undefined);
+        await waitUntilBlockedBy(held.pid, 'the pass');
+        await sleep(1_500);
+        await release();
+        await pass;
+      } finally {
+        await release();
+        // A failed wait must not leave the pass running into the next test.
+        await pass?.catch(() => undefined);
+      }
+
+      const rows = await deliveries(org.orgId);
+      assert.deepEqual(rows.map((r) => r.status).sort(), [
+        'pending',
+        'pending',
+        'sent',
+      ]);
+    },
+  );
 
   it('summarises transient failures in one warn line, with no address anywhere', async () => {
     const org = await newOrg();

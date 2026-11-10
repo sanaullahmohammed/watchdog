@@ -384,7 +384,7 @@ The story's two open entries (secret rotation, Compose dev secrets) moved to "Ai
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
   summary: Nothing pins that the dispatch budget counts from the start of the pass, queueing included. Moving `started` below the queueing loop in `runNotificationPass` fails no test, and a slow queue would then let a pass plus one send overrun `WORKER_PASS_OVERDUE_MS`.
   evidence: Story 6.7 Review Triage Log #34 (blind hunter; verification gap). The mid-round budget test spends its budget on the first send whichever way the clock starts.
-  target: Epic 6 close-out PR 4, notification pass pins.
+  target: Epic 6 close-out PR 4, notification pass pins. RESOLVED by close-out PR 4 (2026-11-10): `counts the dispatch budget from the start of the pass, queueing included` in `src/modules/notification/send-queued-email.integration.test.ts` holds the org's cursor row past a 1 s budget and asserts one of three owed rows is sent; moving `started` below the queueing loop sends all three.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
   summary: The worker's start-up `warn` when the dispatch budget is 0 is untested, so it could be inverted or dropped unnoticed.
   evidence: Story 6.7 Review Triage Log #35 (verification gap). `startWorker` runs only in spawned processes, and no lifecycle test reads its log for this line.
@@ -392,7 +392,7 @@ The story's two open entries (secret rotation, Compose dev secrets) moved to "Ai
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-7-send-owed-emails-with-retries.md`
   summary: A `sent` row keeps its last failure's `last_error`, and abandon-at-claim keeps an existing diagnostic (writing `EUNRECORDED` only when it is null). Neither is pinned by a test.
   evidence: Story 6.7 Review Triage Log #36 (verification gap). Both `coalesce` calls in `delivery.repository.ts` could become plain assignments with every test passing; nothing reads `last_error` yet.
-  target: Epic 6 close-out PR 4, notification pass pins: fix or pin each (formerly: the first story that reads `last_error`).
+  target: Epic 6 close-out PR 4, notification pass pins: fix or pin each (formerly: the first story that reads `last_error`). RESOLVED by close-out PR 4 (2026-11-10), pinned as is (DOMAIN leaves it unspecified; the diagnostic records why retries were needed): `keeps the earlier failure's last_error when a later claim sends` and `keeps a recorded last_error when it abandons at claim` in `src/modules/notification/send-queued-email.integration.test.ts` fail if either `coalesce` becomes a plain assignment.
 
 ## From Story 6.8 (2026-10-22)
 
@@ -406,11 +406,11 @@ The story's two open entries (secret rotation, Compose dev secrets) moved to "Ai
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-9-prune-old-deliveries-and-subscribers.md`
   summary: Nothing pins that `NOTIFICATION_RETENTION_DAYS` reaches `env.notification.retentionDays` and `SUBSCRIBER_PENDING_GRACE_DAYS` reaches `env.subscribe.pendingGraceDays`; swapping them in `env.ts` passes every test, because the prune suite ages rows from the mapped values.
   evidence: Story 6.9 Review Triage Log #27 (verification gap). No other `env.ts` mapping is pinned either (`maxAttempts`, for one); a general mapping check would cover them all.
-  target: Epic 6 close-out PR 4, notification pass pins.
+  target: Epic 6 close-out PR 4, notification pass pins. RESOLVED by close-out PR 4 (2026-11-10): `src/config/notification-env-mapping.integration.test.ts` loads the real config in a spawned process with the two variables set to 11 and 22, and asserts each reaches its own field. The other `env.ts` mappings are a new entry under "Aimed at Epic 8".
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-9-prune-old-deliveries-and-subscribers.md`
   summary: `requestConfirmation`'s retry when the row is deleted between its `on conflict do nothing` insert and its `for no key update` select is untested, and the prune now makes it reachable every 30 s.
   evidence: Story 6.9 Review Triage Log #28 (verification gap). Changing its `continue` to a return or a throw fails no test; hitting the window needs a hook between two statements.
-  target: Epic 6 close-out PR 4, notification pass pins.
+  target: Epic 6 close-out PR 4, notification pass pins. RESOLVED by close-out PR 4 (2026-11-10): `inserts again once when the conflicting row is deleted before the lock` in `src/modules/notification/create-subscriber.integration.test.ts` deletes the seeded row right after the first insert, through a forwarding `TenantTransaction`, and asserts the second insert and its `inserted` result.
 - source_spec: `docs/bmad/implementation-artifacts/spec-6-9-prune-old-deliveries-and-subscribers.md`
   summary: ARCHITECTURE 5.6 does not record that the notification pass prunes (after queueing, before dispatch, inside the dispatch budget), and line 178's list of the worker's retention jobs leaves it out.
   evidence: Story 6.9 Review Triage Log #29 (blind hunter). DOMAIN's Subscriber and NotificationDelivery sections already name both settings; ARCHITECTURE owns runtime wiring, and genesis wording is the owner's to change.
@@ -469,3 +469,7 @@ Moved here by the owner's decision when Epic 6 closed out. Each entry's `source_
   summary: Dispatch sends one email at a time across every organization, each over a new SMTP connection, so a pass sends about one interval's worth and a large subscriber list takes hours. This is not stated as a limit anywhere.
   evidence: Story 6.7 Review Triage Log #17 (blind hunter). Frozen Boundaries: one row per claim, no batch leases.
   target: Epic 8, load evidence (audit F-11): measure send throughput and state the limit. A connection pool or bounded concurrency would be its own story, before a deployment with a large subscriber list.
+- source_spec: `docs/bmad/implementation-artifacts/spec-epic-6-closeout-4-notification-pass-pins.md`
+  summary: Most of `src/config/env.ts`'s variable-to-field mappings are pinned by no test. A swap between two values of the same type passes every suite, as the retention pair did until Epic 6 close-out PR 4. `NOTIFICATION_MAX_ATTEMPTS` → `notification.maxAttempts` is one example.
+  evidence: Story 6.9 Review Triage Log #27 named the general gap, and close-out PR 4 pinned only the two retention settings. A general check would load the config with a distinct value for every variable and compare each field. `env.ts` validates at import, so that needs a pure mapping function or a spawned process.
+  target: Epic 8, full suite in CI (NFR28): one mapping check over every `env.ts` field.

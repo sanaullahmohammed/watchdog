@@ -4,10 +4,14 @@ import { after, before, describe, it } from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import { env } from '@/config';
 import { createSubscriberCommand } from '@/modules/notification/commands/create-subscriber/create-subscriber.handler';
+import subscriberRepository from '@/modules/notification/database/subscriber.repository';
 import type { EmailSender } from '@/modules/notification/domain/email-sender.port';
 import { buildApp } from '@/server/build-app';
 import sql from '@/shared/db/postgres';
-import { withTenantTransaction } from '@/shared/db/tenant-transaction';
+import {
+  type TenantTransaction,
+  withTenantTransaction,
+} from '@/shared/db/tenant-transaction';
 import { subscriberCreatedEvent } from '@/shared/events/subscriber.events';
 import { ArgumentInvalidException } from '@/shared/exceptions';
 import { capturing } from '@/shared/testing/events';
@@ -550,5 +554,69 @@ describe('Story 6.3: subscribe to an organization s status page', () => {
     } finally {
       await limited.close();
     }
+  });
+
+  // Story 6.9's prune deletes subscribers every pass, so a delete can land
+  // between requestConfirmation's insert and its lock (Epic 6 close-out).
+  it('inserts again once when the conflicting row is deleted before the lock', async () => {
+    const email = `${randomBytes(6).toString('hex')}@example.test`;
+    await seed(email, 'pending', 3_600);
+    let inserts = 0;
+    const result = await withTenantTransaction(orgId, async (real) => {
+      // Forwards every call and property to the real handle. Right after the
+      // first insert resolves (it hit the seeded row and returned nothing), the
+      // row is deleted on the same transaction. That leaves the select the
+      // same view a delete committed between the two statements would.
+      const forwarding = new Proxy(real.sql, {
+        apply(target, thisArg, args) {
+          const outcome = Reflect.apply(target, thisArg, args);
+          const first = args[0];
+          const text = Array.isArray(first) ? first.join('?') : '';
+          if (!text.includes('insert into subscribers')) return outcome;
+          inserts += 1;
+          if (inserts > 1) return outcome;
+          return Promise.resolve(outcome).then(async (rows) => {
+            assert.equal(
+              rows.length,
+              0,
+              'the first insert found the seeded row',
+            );
+            await real.sql`delete from subscribers where lower(email) = ${email}`;
+            return rows;
+          });
+        },
+      });
+      const tx: TenantTransaction = { orgId: real.orgId, sql: forwarding };
+      return subscriberRepository().requestConfirmation(tx, {
+        email,
+        tokenHash: sha256('retry'),
+        ttlHours: 24,
+        resendSeconds: 0,
+      });
+    });
+
+    assert.equal(inserts, 2, 'the insert ran a second time');
+    assert.equal(result.outcome, 'inserted');
+    const rows = await withTenantTransaction(
+      orgId,
+      ({ sql: tx }) => tx<
+        {
+          id: string;
+          status: string;
+          confirmation_token_hash: string;
+          expires: boolean;
+        }[]
+      >`
+        select id, status, confirmation_token_hash,
+               confirmation_expires_at > now() as expires
+        from subscribers where lower(email) = ${email}
+      `,
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].id, result.subscriberId);
+    assert.equal(rows[0].status, 'pending');
+    // Written by the retry's insert, not left over from the seeded row.
+    assert.equal(rows[0].confirmation_token_hash, sha256('retry'));
+    assert.equal(rows[0].expires, true);
   });
 });
