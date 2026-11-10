@@ -15,8 +15,10 @@ import {
   createCheckResultPartitions,
   createMonitor,
   createService,
+  scheduleMaintenance,
   updateMonitor,
 } from '@/shared/testing/fixtures';
+import { startSmtpStub } from '@/shared/testing/smtp-stub';
 import { signUpWithOrg } from '@/shared/testing/tenant';
 import {
   startTestEndpoints,
@@ -27,6 +29,7 @@ import {
   type ScopedWorker,
   spawnScopedWorker,
 } from '@/shared/testing/worker-process';
+import { dispatchBudgetMs } from '@/worker-dispatch-budget';
 import { createWorkerHealth, type WorkerHealthRecord } from '@/worker-health';
 import { runMonitorPass, startLoop } from './worker';
 
@@ -151,6 +154,10 @@ const quietLogger = {
   error() {},
   info() {},
 } as unknown as FastifyBaseLogger;
+
+/** `startWorker`'s start-up warn when the dispatch budget is 0 (story 6.7). */
+const BUDGET_ZERO_WARNING =
+  'WORKER_PASS_OVERDUE_MS leaves no time beside NOTIFICATION_PASS_INTERVAL_MS for a send: the notification pass will try one delivery per pass';
 
 describe('Story 5.9: checks run on the worker loop', () => {
   before(async () => {
@@ -525,6 +532,104 @@ describe('Story 5.9: checks run on the worker loop', () => {
     );
     worker.child.kill('SIGTERM');
     assert.equal(await exitWithin(worker, 20_000), 0, worker.output());
+  });
+
+  describe('Story 6.7: shutdown and the dispatch budget in a spawned worker', () => {
+    it(
+      'stops claiming on SIGTERM and waits for the send in flight to be recorded',
+      { timeout: 90_000 },
+      async () => {
+        const org = await newOrg();
+        await withTenantTransaction(
+          org.orgId,
+          ({ sql: tx }) => tx`
+      insert into subscribers (org_id, email, status, confirmed_at)
+      values (${org.orgId}, ${`${tag}-shutdown@example.test`}, 'confirmed',
+              now() - interval '1 day')
+    `,
+        );
+        await scheduleMaintenance(app, org.cookie);
+        await scheduleMaintenance(app, org.cookie);
+        // Every reply waits 2 s, so a send takes about 14 s, and after the stub
+        // receives DATA the send still needs two replies (354, then 250): about
+        // 4 s for SIGTERM to land. Each reply stays well inside the 15 s socket
+        // limit and the whole send inside the 45 s overall limit.
+        const stub = await startSmtpStub({ replyDelayMs: 2_000 });
+        try {
+          const path = join(directory, 'shutdown-send');
+          // The budget must outlast one slow send, so only shutdown's abort can
+          // stop a second. With childEnv's 1 s interval it is 1 s, which would
+          // end the pass after one send anyway.
+          assert.ok(
+            dispatchBudgetMs(30_000, 120_000) >= 20_000,
+            'the dispatch budget leaves no room for a second send',
+          );
+          const worker = startChild([org.orgId], {
+            ...childEnv(path, 120_000),
+            NOTIFICATION_PASS_INTERVAL_MS: '30000',
+            SMTP_HOST: '127.0.0.1',
+            SMTP_PORT: String(stub.port),
+          });
+          await waitFor(
+            'the stub to receive DATA',
+            () => (stub.commands.includes('DATA') ? true : null),
+            30_000,
+          );
+          worker.child.kill('SIGTERM');
+
+          assert.equal(await exitWithin(worker, 30_000), 0, worker.output());
+          const output = worker.output();
+          assert.match(output, /waiting for the notification pass in flight/);
+          assert.doesNotMatch(output, /leaves no time beside/);
+          assert.doesNotMatch(output, /"level":50/);
+          const rows = await withTenantTransaction(
+            org.orgId,
+            ({ sql: tx }) => tx<{ status: string; attempts: number }[]>`
+          select status, attempts from notification_deliveries
+        `,
+          );
+          assert.deepEqual(
+            rows.map((r) => `${r.status}:${r.attempts}`).sort(),
+            ['pending:0', 'sent:1'],
+          );
+          assert.equal(
+            stub.commands.filter((c) => c.startsWith('MAIL FROM')).length,
+            1,
+          );
+        } finally {
+          await stub.close();
+        }
+      },
+    );
+
+    it(
+      'warns at start-up when the dispatch budget is 0',
+      { timeout: 60_000 },
+      async () => {
+        const org = await newOrg();
+        const path = join(directory, 'budget-zero');
+        const worker = startChild([org.orgId], childEnv(path, 20_000));
+        // The warn is logged before "Worker is ready". Wait for that line, not
+        // the heartbeat file, which can land before the child's stdout does.
+        await waitFor('the worker to be ready', () =>
+          worker.output().includes('"msg":"Worker is ready"') ? true : null,
+        );
+        const warning = worker
+          .output()
+          .split('\n')
+          .map((line) => {
+            try {
+              return JSON.parse(line) as { level?: number; msg?: string };
+            } catch {
+              return null;
+            }
+          })
+          .find((entry) => entry?.msg === BUDGET_ZERO_WARNING);
+        assert.equal(warning?.level, 40, worker.output());
+        worker.child.kill('SIGTERM');
+        assert.equal(await exitWithin(worker, 20_000), 0, worker.output());
+      },
+    );
   });
 
   it('refuses to start a worker with no organizations', async () => {
